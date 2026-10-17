@@ -165,8 +165,8 @@ has one.
   them; pass `nil` to clear one (`ignore nil`, `keywords nil`)
 - `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`
   (`parse!(input, formatter: f)` words it your way).
-  Input nested too deeply for Ruby's stack (several hundred levels)
-  is a `Failure` too, with `reason` set.
+  Input nested too deeply for Ruby's stack is a `Failure` too, with
+  `reason` set (see Limits).
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
@@ -177,6 +177,29 @@ has one.
 - A rule can't be named after a method the grammar relies on (`send`,
   `class`, `match`, `token`...). Defining one raises `ArgumentError`
   instead of silently breaking the grammar. Redefining a rule is fine.
+
+## Limits
+
+- **Deep nesting.** Each level of nesting in the input uses Ruby
+  stack. With default settings a simple nested grammar handles about
+  750 levels on the main thread, but only about 250 on other threads
+  (Puma, Sidekiq, `Thread.new`). Past that, `parse` returns a `Failure`
+  whose `reason` is "input is nested too deeply". To allow more, raise
+  Ruby's thread stack sizes when starting the process:
+
+  ```sh
+  RUBY_THREAD_VM_STACK_SIZE=16777216 RUBY_THREAD_MACHINE_STACK_SIZE=67108864 ruby app.rb
+  ```
+
+  That took the same grammar to about 12,000 levels on a thread. The
+  main thread gets less (about 2,000), because its machine stack comes
+  from the operating system (`ulimit -s`).
+- **Changing rules after parsing.** `Grammar.parse` reuses one
+  instance per class, so each rule is built once. Defining a rule or
+  changing a setting on a class resets that class's instance, but a
+  subclass that has already parsed keeps its own: it won't see a rule
+  redefined later on its parent. Define rules before parsing, or call
+  `Subclass.new.parse(input)` to get a fresh instance.
 
 ## Not yet
 
