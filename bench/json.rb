@@ -165,10 +165,15 @@ def document(records)
   end)
 end
 
+# Best of three runs, each after a full GC, so one parser's garbage
+# doesn't land on the next one's clock.
 def time
-  start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  result = yield
-  [Process.clock_gettime(Process::CLOCK_MONOTONIC) - start, result]
+  Array.new(3) do
+    GC.start
+    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    result = yield
+    [Process.clock_gettime(Process::CLOCK_MONOTONIC) - start, result]
+  end.min_by(&:first)
 end
 
 parsers = {

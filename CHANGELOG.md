@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+- **Faster:** about 1.75x on the JSON benchmark (159 KB: 0.37s to 0.21s),
+  from allocating 60% fewer objects per parse: no temporary arrays in
+  failure tracking, a per-rule memo table instead of `[rule, pos]` keys,
+  a plain `Match` class instead of `Data`, and literals checked in place
+  instead of sliced out. No API changes.
+- API documentation as TOML comment blocks in `lib/`, and a Limits
+  section in the README.
+
 ## [0.2.1] - 2026-10-17
 
 - **Fixed:** `rep` and `maybe` over something that can match empty.

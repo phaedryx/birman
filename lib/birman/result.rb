@@ -5,8 +5,17 @@
 # responsibility = "Success and Failure values, and the ParseError that parse! raises"
 # pattern = "Result objects (Data), pattern-matchable"
 module Birman
-  # Internal: one matcher succeeded, ending at `pos` with `value`.
-  Match = Data.define(:pos, :value)
+  # Internal: one matcher succeeded, ending at `pos` with `value`. A
+  # plain class rather than Data: one is made for every successful
+  # match, and Data.new allocates a keyword Hash each time.
+  class Match
+    attr_reader :pos, :value
+
+    def initialize(pos, value)
+      @pos = pos
+      @value = value
+    end
+  end
 
   # Returned by Grammar#parse when the whole input parsed.
   # [class.Success]

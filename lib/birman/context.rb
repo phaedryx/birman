@@ -12,16 +12,20 @@ module Birman
     # Marks a memo entry whose rule is still being matched.
     IN_PROGRESS = Object.new.freeze
 
+    # The expectations of a frame that hasn't failed anywhere yet. Shared
+    # and frozen; fail_at replaces it rather than appending.
+    NOTHING_EXPECTED = [].freeze
+
     # position: where the most recently entered rule started. When the
     # input nests too deeply for Ruby's stack, that's where it happened.
-    attr_reader :input, :grammar, :memo, :furthest, :expected, :position
+    attr_reader :input, :grammar, :furthest, :expected, :position, :isolated_furthest, :isolated_expected
 
     def initialize(input, grammar)
       @input = input
       @grammar = grammar
       @memo = {}
       @furthest = 0
-      @expected = []
+      @expected = NOTHING_EXPECTED
       @token_ends = {}
     end
 
@@ -46,7 +50,7 @@ module Birman
         @furthest = pos
         @expected = [what]
       elsif pos == @furthest
-        @expected << what
+        @expected = @expected.frozen? ? [what] : @expected << what
       end
       nil
     end
@@ -54,17 +58,22 @@ module Birman
     def merge(pos, expected) = expected.each { fail_at(pos, _1) }
 
     # Run the block with fresh failure tracking starting at pos, then
-    # restore the outer state. Returns [result, furthest, expected] so
-    # the caller decides what to keep: Ref memoizes it, Label rewrites
-    # it, Not throws it away.
+    # restore the outer state, and return the block's result. What the
+    # block recorded is left in isolated_furthest and isolated_expected
+    # for the caller to keep or drop: Ref memoizes it, Label rewrites
+    # it, Not throws it away. No arrays: this runs for every rule call.
     def isolate(pos)
-      outer = [@furthest, @expected]
+      outer_furthest = @furthest
+      outer_expected = @expected
       @furthest = pos
-      @expected = []
+      @expected = NOTHING_EXPECTED
       result = yield
-      [result, @furthest, @expected]
+      @isolated_furthest = @furthest
+      @isolated_expected = @expected
+      result
     ensure
-      @furthest, @expected = outer
+      @furthest = outer_furthest
+      @expected = outer_expected
     end
 
     def commit_failure! = raise(Committed.new(@furthest, @expected.dup))
@@ -74,8 +83,11 @@ module Birman
     # moves past, so they're dropped. If it fails, that's recorded at
     # pos, as what it expected there or as the lookahead itself.
     def peek?(matcher, pos)
-      result, furthest, expected = isolate(pos) { lookahead { matcher.match(self, pos) } }
+      result = isolate(pos) { lookahead { matcher.match(self, pos) } }
       return true if result
+
+      furthest = isolated_furthest
+      expected = isolated_expected
 
       if furthest == pos && expected.any?
         merge(pos, expected)
@@ -91,13 +103,13 @@ module Birman
     # input: left recursion, which would never terminate. That's a bug
     # in the grammar, not the input, so it raises.
     def memoize(name, pos, &)
-      key = [name, pos]
-      entry = @memo[key]
+      table = @memo[name] ||= {}
+      entry = table[pos]
       return entry if entry && !entry.equal?(IN_PROGRESS)
       raise ArgumentError, "left recursion in rule :#{name}: it can reach itself without consuming input" if entry
 
       @position = pos
-      compute(key, &)
+      compute(table, pos, &)
     end
 
     # Run a lookahead's inner match. A lookahead only asks whether
@@ -111,13 +123,14 @@ module Birman
 
     private
 
-    def compute(key)
-      @memo[key] = IN_PROGRESS
-      @memo[key] = yield
+    # The memo is a Hash per rule, keyed by position, so no key arrays.
+    def compute(table, pos)
+      table[pos] = IN_PROGRESS
+      table[pos] = yield
     ensure
       # A commit failure caught by a lookahead unwinds through here; the
       # rule may be tried again at this position afterwards.
-      @memo.delete(key) if @memo[key].equal?(IN_PROGRESS)
+      table.delete(pos) if table[pos].equal?(IN_PROGRESS)
     end
   end
 end

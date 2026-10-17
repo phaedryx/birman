@@ -141,12 +141,16 @@ module Birman
   Str = Data.define(:str) do
     include Matcher
 
+    # The error text is worked out once, not on every failed attempt.
+    def initialize(str:)
+      @expected = str.inspect.freeze
+      super
+    end
+
     def match(ctx, pos)
-      if ctx.input.byteslice(pos, str.bytesize) == str
-        Match.new(pos + str.bytesize, str)
-      else
-        ctx.fail_at(pos, str.inspect)
-      end
+      scanner = ctx.scanner
+      scanner.pos = pos
+      scanner.match?(str) ? Match.new(pos + str.bytesize, str) : ctx.fail_at(pos, @expected)
     end
 
     def to_ast = [:str, str]
@@ -186,14 +190,11 @@ module Birman
     def >>(other) = with(parts: [*parts, Birman.coerce(other)])
 
     def match(ctx, pos)
-      values = parts.each_with_index.map do |part, i|
-        r = part.match(ctx, pos)
-        unless r
-          fail_committed!(ctx, part, pos) if commit_at && i >= commit_at
-          return nil
-        end
+      values = Array.new(parts.size)
+      parts.each_with_index do |part, i|
+        r = part.match(ctx, pos) or return failed(ctx, part, pos, i)
+        values[i] = r.value
         pos = r.pos
-        r.value
       end
       Match.new(pos, shape(values))
     end
@@ -204,6 +205,11 @@ module Birman
     def capture_key = only_at && parts[only_at].capture_key
 
     private
+
+    def failed(ctx, part, pos, index)
+      fail_committed!(ctx, part, pos) if commit_at && index >= commit_at
+      nil
+    end
 
     # If the failed part recorded nothing at or past pos (it's quiet,
     # or a negative lookahead), describe the part itself so the error
@@ -319,7 +325,7 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
-      r, = ctx.isolate(pos) { ctx.lookahead { inner.match(ctx, pos) } }
+      r = ctx.isolate(pos) { ctx.lookahead { inner.match(ctx, pos) } }
       r ? nil : Match.new(pos, nil)
     end
 
@@ -350,7 +356,7 @@ module Birman
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
-      r.with(value: fn.call(r.value))
+      Match.new(r.pos, fn.call(r.value))
     end
 
     def to_ast = [:action, inner.to_ast]
@@ -366,7 +372,9 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
-      result, furthest, expected = ctx.isolate(pos) { inner.match(ctx, pos) }
+      result = ctx.isolate(pos) { inner.match(ctx, pos) }
+      furthest = ctx.isolated_furthest
+      expected = ctx.isolated_expected
       if furthest == pos && (result.nil? || (result.pos == pos && expected.any?))
         ctx.fail_at(pos, name)
       else
@@ -396,7 +404,7 @@ module Birman
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
       fields = r.value.is_a?(Hash) ? r.value : { node.members.first => r.value }
-      r.with(value: Birman.build(node, fields, ctx, pos, r.pos))
+      Match.new(r.pos, Birman.build(node, fields, ctx, pos, r.pos))
     end
 
     def to_ast = [:action, inner.to_ast]
@@ -409,13 +417,16 @@ module Birman
   Lexeme = Data.define(:inner, :ignore, :source) do
     include Matcher
 
-    def initialize(inner:, ignore:, source: nil) = super
+    def initialize(inner:, ignore:, source: nil)
+      @ignore_ref = ignore && Ref.new(ignore) # built once, not per token
+      super
+    end
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
       return r unless ignore
 
-      s = Ref.new(ignore).match(ctx, r.pos) or return r
+      s = @ignore_ref.match(ctx, r.pos) or return r
       ctx.ignored_after(r.pos, s.pos)
       Match.new(s.pos, r.value)
     end
@@ -458,8 +469,7 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
-      result, = ctx.isolate(pos) { inner.match(ctx, pos) }
-      result
+      ctx.isolate(pos) { inner.match(ctx, pos) }
     end
 
     def to_ast = [:quiet, inner.to_ast]
@@ -474,7 +484,8 @@ module Birman
 
     def match(ctx, pos)
       result, furthest, expected = ctx.memoize(name, pos) do
-        ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }
+        r = ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }
+        [r, ctx.isolated_furthest, ctx.isolated_expected]
       end
       ctx.merge(furthest, expected)
       result
