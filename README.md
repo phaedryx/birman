@@ -80,7 +80,9 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 |-------------------------------|------------------------------------------------------|
 | `seq(a, b, c)`                | sequence                                             |
 | `seq(a, commit, b, c)`        | after `a`, the rest must match or parsing stops here |
+| `seq("[", only(x), "]")`      | value is just `x`; the rest must match but is dropped |
 | `either(a, b, c)`             | ordered choice                                       |
+| `one_of("true" => true, ...)` | one of these literals, producing its value (tried in order) |
 | `x.as(:key)`                  | name a part; the sequence's value becomes a hash     |
 | `x.to(Node)`                  | build a node from that hash (or from a single value) |
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |

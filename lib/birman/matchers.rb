@@ -6,6 +6,7 @@ module Birman
     when Matcher then x
     when String  then Lit.new(x)
     when Regexp  then Pat.new(x)
+    when Only    then raise ArgumentError, "only(...) works inside seq, to make one part the seq's value"
     else raise ArgumentError, "can't make a matcher from #{x.inspect}"
     end
   end
@@ -63,7 +64,7 @@ module Birman
 
     private
 
-    def uncommitted_parts(m) = m.is_a?(Seq) && m.commit_at.nil? ? m.parts : [m]
+    def uncommitted_parts(m) = m.is_a?(Seq) && m.commit_at.nil? && m.only_at.nil? ? m.parts : [m]
   end
 
   # A bare string: a literal (see Combinators#literal_matcher). What a
@@ -110,11 +111,17 @@ module Birman
   # Sequence: parts match in order. The value is an array, or a hash
   # of the named parts if any are named (see Matcher#as). Parts at
   # index `commit_at` and beyond are committed: if one fails, parsing stops.
-  Seq = Data.define(:parts, :commit_at) do
+  Seq = Data.define(:parts, :commit_at, :only_at) do
     include Matcher
 
     # Arrays are copied and frozen so a matcher is immutable all the way down.
-    def initialize(parts:, commit_at: nil) = super(parts: parts.dup.freeze, commit_at:)
+    def initialize(parts:, commit_at: nil, only_at: nil)
+      if only_at && parts.each_with_index.any? { |part, i| i != only_at && part.capture_key }
+        raise ArgumentError, "a seq with only(...) can't also name parts with .as"
+      end
+
+      super(parts: parts.dup.freeze, commit_at:, only_at:)
+    end
 
     def >>(other) = with(parts: [*parts, Birman.coerce(other)])
 
@@ -133,6 +140,9 @@ module Birman
 
     def to_ast = [:seq, commit_at, parts.map(&:to_ast)]
 
+    # With only(...), the kept part's name (if any) passes outward.
+    def capture_key = only_at && parts[only_at].capture_key
+
     private
 
     # If the failed part recorded nothing at or past pos (it's quiet,
@@ -144,6 +154,8 @@ module Birman
     end
 
     def shape(values)
+      return values[only_at] if only_at
+
       keys = parts.map(&:capture_key)
       return values if keys.none?
 

@@ -23,22 +23,18 @@ module JSONExample
 
     rule(:value) do
       either(object, array, string, number,
-             lit("true").map { true }, lit("false").map { false }, lit("null").map { nil }).label("value")
+             one_of("true" => true, "false" => false, "null" => nil)).label("value")
     end
 
     # Once "{" or "[" has matched, it can only be an object or array, so
     # commit: a mistake inside is reported where it is.
-    rule(:object) do
-      seq("{", commit, sep_by(member, ",").as(:members), "}").map { _1[:members].to_h }
-    end
+    rule(:object) { seq("{", commit, only(sep_by(member, ",")), "}").map(&:to_h) }
 
     rule(:member) do
       seq(string.as(:key), commit, ":", value.as(:value)).map { [_1[:key], _1[:value]] }
     end
 
-    rule(:array) do
-      seq("[", commit, sep_by(value, ",").as(:items), "]").map { _1[:items] }
-    end
+    rule(:array) { seq("[", commit, only(sep_by(value, ",")), "]") }
 
     # Strings are matched with str and match, which are exact: inside the
     # quotes nothing is skipped. lexeme skips the spacing after the

@@ -225,6 +225,42 @@ class BirmanTest < Minitest::Test
     assert_equal [], g.parse!("")
   end
 
+  def test_one_of_a_hash_maps_literals_to_values
+    g = grammar do
+      ignore :spacing
+      rule(:top) { one_of("true" => true, "false" => false, "null" => nil).rep }
+    end
+    assert_equal [true, nil, false], g.parse!("true null false")
+    g = grammar { rule(:top) { one_of("true" => true, "false" => false, "null" => nil) } }
+    assert_equal ['"true"', '"false"', '"null"'], g.parse("maybe").expected
+    assert g.parse("truex").failure?, "word-like keys are keywords"
+
+    g = grammar { rule(:top) { one_of("<=" => :le, "<" => :lt) } }
+    assert_equal :le, g.parse!("<="), "tried in the order given"
+  end
+
+  def test_only_makes_one_part_the_value_of_a_seq
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq("[", commit, only(sep_by(match(/\d/), ",")), "]") }
+    end
+    assert_equal %w[1 2], g.parse!("[1, 2]")
+    assert g.parse("[1, x]").committed, "commit still applies"
+    assert_equal 'top     = "[" ~ (/\d/ ("," /\d/)*)? "]" ;', g.to_ebnf.lines.first.chomp
+  end
+
+  def test_only_passes_its_name_to_the_enclosing_seq
+    g = grammar { rule(:top) { seq("f", seq("(", only(match(/\d/).as(:arg)), ")")) } }
+    assert_equal({ arg: "1" }, g.parse!("f(1)"))
+  end
+
+  def test_only_is_used_once_inside_seq_without_other_names
+    assert_raises(ArgumentError) { grammar { rule(:top) { seq(only("a"), only("b")) } }.parse("ab") }
+    assert_raises(ArgumentError) { grammar { rule(:top) { seq(only("a"), match(/b/).as(:b)) } }.parse("ab") }
+    error = assert_raises(ArgumentError) { grammar { rule(:top) { only("a") } }.parse("a") }
+    assert_match(/inside seq/, error.message)
+  end
+
   def test_between_and_one_of
     g = grammar { rule(:top) { between("[", "]", one_of("x", "y")) } }
     assert_equal "y", g.parse!("[y]")

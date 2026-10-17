@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+- **Added:** `one_of` takes a hash mapping literals to the values they
+  produce: `one_of("true" => true, "false" => false, "null" => nil)`.
+- **Added:** `only(x)` inside `seq` makes that part the sequence's
+  whole value; the other parts must still match but are dropped:
+  `seq("[", commit, only(sep_by(value, ",")), "]")`. Its `.as` name, if
+  any, passes outward. Using it twice, mixing it with other `.as`
+  names, or using it outside `seq` raises `ArgumentError`.
 - **Changed:** a bare string is a literal everywhere a matcher goes, not
   just inside `seq`, `either` and the other helpers. A string used as a
   rule body (`rule(:semi) { ";" }`) or after `>>`, `|`, `&` or `>` now
