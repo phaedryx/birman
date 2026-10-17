@@ -301,7 +301,7 @@ module Birman
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
       fields = r.value.is_a?(Hash) ? r.value : { node.members.first => r.value }
-      r.with(value: Birman.build(node, fields, ctx.input, pos, r.pos))
+      r.with(value: Birman.build(node, fields, ctx, pos, r.pos))
     end
 
     def to_ast = [:action, inner.to_ast]
@@ -320,8 +320,9 @@ module Birman
       r = inner.match(ctx, pos) or return nil
       return r unless ignore
 
-      s = Ref.new(ignore).match(ctx, r.pos)
-      s ? Match.new(s.pos, r.value) : r
+      s = Ref.new(ignore).match(ctx, r.pos) or return r
+      ctx.ignored_after(r.pos, s.pos)
+      Match.new(s.pos, r.value)
     end
 
     def to_ast = display ? [:str, display] : inner.to_ast
@@ -345,7 +346,7 @@ module Birman
         o = op.match(ctx, pos) or break
         right = operand.match(ctx, o.pos) or break
         fields = { op: o.value, left:, right: right.value }
-        left = Birman.build(node, fields, ctx.input, start, right.pos)
+        left = Birman.build(node, fields, ctx, start, right.pos)
         pos = right.pos
       end
 

@@ -17,7 +17,18 @@ module Birman
       @memo = {}
       @furthest = 0
       @expected = []
+      @token_ends = {}
     end
+
+    # A lexeme ended at token_end, then the ignore rule consumed spacing
+    # (whitespace, comments) up to pos. Spans use this to stop at the
+    # token instead of including what was ignored after it.
+    def ignored_after(token_end, pos)
+      @token_ends[pos] = token_end if pos > token_end
+    end
+
+    # Where the last token ended, for a match that ended at pos.
+    def token_end(pos) = @token_ends.fetch(pos, pos)
 
     # fixed_anchor: \A, ^ and lookbehind see the whole input, not just
     # the text from the current position on.

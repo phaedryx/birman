@@ -75,12 +75,15 @@ module Birman
   extend Nodes
 
   # Build a node (or any Data class) from a hash of fields, attaching a
-  # span when the class supports one. Trailing whitespace the parser
-  # skipped is trimmed from the span.
-  def self.build(node, fields, input, from, to)
+  # span when the class supports one. The span ends where the last
+  # token did, leaving out spacing the ignore rule consumed after it;
+  # any whitespace consumed some other way (Rules' token helper, say)
+  # is trimmed too.
+  def self.build(node, fields, ctx, from, to)
     return node.new(**fields) unless node.include?(Node)
 
-    span = Span.new(input, from, from + input.byteslice(from, to - from).rstrip.bytesize)
+    to = ctx.token_end(to)
+    span = Span.new(ctx.input, from, from + ctx.input.byteslice(from, to - from).rstrip.bytesize)
     Node.new_with_span(node, span, fields)
   end
 end

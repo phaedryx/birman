@@ -330,6 +330,15 @@ class BirmanTest < Minitest::Test
     assert_equal ["wörld", 6, 11, 2, 1], [span.text, span.from, span.to, span.line, span.column]
   end
 
+  def test_spans_stop_before_ignored_comments
+    let, = Calc::Grammar.parse!("let a = 1   # one\nprint a")
+    assert_equal "let a = 1", let.span.text
+    assert_equal "1", let.value.span.text
+
+    sum, = Calc::Grammar.parse!("1 + 2 # three\n")
+    assert_equal "1 + 2", sum.span.text
+  end
+
   def test_span_is_ignored_by_equality_and_kept_by_with
     span = Birman::Span.new("abc", 1, 2)
     leaf = Leaf.new(value: 1, span:)
