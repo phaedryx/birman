@@ -1,13 +1,20 @@
 # frozen_string_literal: true
 
 module Birman
-  # Where a node came from in the source.
-  Span = Data.define(:input, :from, :to) do
-    def line   = input[0, from].count("\n") + 1
-    def column = from - (input[0, from].rindex("\n") || -1)
-    def text   = input[from...to]
+  # Where a node came from in the source. Stored as byte offsets (see
+  # Context); from, to, line and column count characters.
+  Span = Data.define(:input, :byte_from, :byte_to) do
+    def from   = Birman.char_offset(input, byte_from)
+    def to     = Birman.char_offset(input, byte_to)
+    def text   = input.byteslice(byte_from...byte_to)
+    def line   = before.count("\n") + 1
+    def column = before.length - (before.rindex("\n") || -1)
     def to_s   = "line #{line}, column #{column}"
     def inspect = "#<Birman::Span #{line}:#{column} #{text.inspect}>"
+
+    private
+
+    def before = input.byteslice(0, byte_from)
   end
 
   # Mixed into every class made with Nodes#node. Adds an optional
@@ -73,7 +80,7 @@ module Birman
   def self.build(node, fields, input, from, to)
     return node.new(**fields) unless node.include?(Node)
 
-    span = Span.new(input, from, from + input[from...to].rstrip.size)
+    span = Span.new(input, from, from + input.byteslice(from, to - from).rstrip.bytesize)
     Node.new_with_span(node, span, fields)
   end
 end

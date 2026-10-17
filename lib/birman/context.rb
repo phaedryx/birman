@@ -3,6 +3,11 @@
 module Birman
   # Per-parse state: input, memo table, and failure tracking. It
   # mutates constantly, so it's a plain class rather than Data.
+  #
+  # Positions here, and in every matcher, are byte offsets: slicing a
+  # non-ASCII string by character offset costs time proportional to
+  # the offset, which made parsing quadratic. Failure and Span convert
+  # back to characters for anything public.
   class Context
     attr_reader :input, :grammar, :memo, :furthest, :expected
 
@@ -13,6 +18,10 @@ module Birman
       @furthest = 0
       @expected = []
     end
+
+    # fixed_anchor: \A, ^ and lookbehind see the whole input, not just
+    # the text from the current position on.
+    def scanner = @scanner ||= StringScanner.new(input, fixed_anchor: true)
 
     # Record that something was expected at pos. Only the furthest
     # position matters: that's where the parser got stuck.

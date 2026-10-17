@@ -59,12 +59,12 @@ module Birman
       ctx = Context.new(input, self)
       start = (ignore_rule && Ref.new(ignore_rule).match(ctx, 0)&.pos) || 0
       result = Ref.new(root_rule).match(ctx, start)
-      return Success.new(result.value) if result && result.pos == input.size
+      return Success.new(result.value) if result && result.pos == input.bytesize
 
       ctx.fail_at(result.pos, "end of input") if result
-      Failure.new(input:, pos: ctx.furthest, expected: ctx.expected.uniq, committed: false)
+      Failure.new(input:, pos: Birman.char_offset(input, ctx.furthest), expected: ctx.expected.uniq, committed: false)
     rescue Committed => e
-      Failure.new(input:, pos: e.pos, expected: e.expected.uniq, committed: true)
+      Failure.new(input:, pos: Birman.char_offset(input, e.pos), expected: e.expected.uniq, committed: true)
     end
 
     # Returns the value or raises ParseError.

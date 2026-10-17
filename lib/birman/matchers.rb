@@ -71,8 +71,8 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
-      if ctx.input[pos, str.size] == str
-        Match.new(pos + str.size, str)
+      if ctx.input.byteslice(pos, str.bytesize) == str
+        Match.new(pos + str.bytesize, str)
       else
         ctx.fail_at(pos, str.inspect)
       end
@@ -85,13 +85,13 @@ module Birman
   Pat = Data.define(:re, :source) do
     include Matcher
 
-    def initialize(re:, source: re.inspect)
-      super(re: Regexp.new("\\G(?:#{re.source})", re.options), source:)
-    end
+    def initialize(re:, source: re.inspect) = super
 
     def match(ctx, pos)
-      m = re.match(ctx.input, pos)
-      m ? Match.new(m.end(0), m[0]) : ctx.fail_at(pos, source)
+      scanner = ctx.scanner
+      scanner.pos = pos
+      len = scanner.match?(re) or return ctx.fail_at(pos, source)
+      Match.new(pos + len, scanner.matched)
     end
 
     def to_ast = [:pat, source]

@@ -67,6 +67,29 @@ class BirmanTest < Minitest::Test
     assert_pattern { g.parse("ab") => Birman::Failure(pos: 1, expected: ["end of input"]) }
   end
 
+  def test_extended_patterns_with_trailing_comments
+    g = grammar { rule(:top) { match(/a # the letter a/x) } }
+    assert_equal "a", g.parse!("a")
+  end
+
+  def test_patterns_see_text_before_the_current_position
+    g = grammar { rule(:top) { str("a") >> match(/(?<=a)b/) } }
+    assert_equal %w[a b], g.parse!("ab")
+
+    g = grammar { rule(:top) { str("a") >> match(/^b/) } }
+    assert g.parse("ab").failure?, "^ means start of line, not current position"
+    assert_equal ["a\n", "b"], (grammar { rule(:top) { str("a\n") >> match(/^b/) } }).parse!("a\nb")
+  end
+
+  def test_non_ascii_input
+    g = grammar { rule(:top) { seq(match(/\p{L}+/), " ", match(/\p{L}+/)) } }
+    assert_equal ["héllo", " ", "wörld"], g.parse!("héllo wörld")
+
+    g = grammar { rule(:top) { seq("é", "x") } }
+    failure = g.parse("éy")
+    assert_equal [1, 1, 2, '"y"'], [failure.pos, failure.line, failure.column, failure.found]
+  end
+
   # --- Commit ---
 
   def test_commit_reports_the_error_inside_the_construct
@@ -295,6 +318,16 @@ class BirmanTest < Minitest::Test
     assert pair.frozen?
     assert_equal '(Pair (Leaf 1) (Leaf "x"))', pair.inspect
     assert_pattern { pair => Pair(Leaf(1), Leaf("x")) }
+  end
+
+  def test_spans_count_characters_in_non_ascii_input
+    g = grammar do
+      const_set(:Word, node(:text))
+      rule(:top) { seq(match(/\p{L}+\n?/), match(/\p{L}+/).to(self.class::Word)).map(&:last) }
+    end
+
+    span = g.parse!("héllo\nwörld").span
+    assert_equal ["wörld", 6, 11, 2, 1], [span.text, span.from, span.to, span.line, span.column]
   end
 
   def test_span_is_ignored_by_equality_and_kept_by_with

@@ -19,7 +19,15 @@
 #   in Birman::Failure => f   then warn f.message
 #   end
 module Birman
+  # The character offset of a byte offset into input. Free for ASCII
+  # input (Ruby caches ascii_only?), linear otherwise; used once per
+  # parse for a Failure, and only on demand for a Span.
+  def self.char_offset(input, byte_pos)
+    input.ascii_only? ? byte_pos : input.byteslice(0, byte_pos).length
+  end
 end
+
+require "strscan"
 
 require_relative "birman/version"
 require_relative "birman/result"
