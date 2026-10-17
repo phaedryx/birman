@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-17
+
+- **Fixed:** `rep` and `maybe` over something that can match empty.
+  An empty first match now counts, so `match(/a*/).rep(1)` accepts `""`
+  and `match(/a*/).maybe` gives `""` instead of `nil`. After real
+  matches, an empty one still just ends the repetition. (A plain
+  `.rep` over such a matcher now gives `[""]` on empty input, not `[]`.)
+- **Fixed:** a `label` now replaces the low-level expectations when its
+  matcher succeeds without consuming anything, as it already did when
+  the matcher failed: `str("a").maybe.label("prefix") >> str("b")` on
+  `"x"` reports `expected prefix or "b"`.
+
 ## [0.2.0] - 2026-10-17
 
 - **Added:** `one_of` takes a hash mapping literals to the values they

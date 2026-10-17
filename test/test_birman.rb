@@ -194,7 +194,24 @@ class BirmanTest < Minitest::Test
     assert_equal %w[a b c], g.parse!("abc")
   end
 
+  def test_repetition_counts_one_empty_match
+    g = grammar { rule(:top) { match(/a*/).rep(1) } }
+    assert_equal [""], g.parse!(""), "an empty match is a match"
+    assert_equal ["aaa"], g.parse!("aaa")
+
+    g = grammar { rule(:top) { match(/a*/).maybe } }
+    assert_equal "", g.parse!(""), "maybe keeps the empty match's value"
+  end
+
   # --- Labels and quiet ---
+
+  def test_label_replaces_failures_when_its_matcher_consumed_nothing
+    g = grammar { rule(:top) { str("a").maybe.label("prefix") >> str("b") } }
+    assert_equal ["prefix", '"b"'], g.parse("x").expected
+
+    g = grammar { rule(:top) { str("a").rep.label("letters") >> str("b") } }
+    assert_equal ['"a"', '"b"'], g.parse("ax").expected, "it consumed something, so the deeper error stays"
+  end
 
   def test_label_replaces_low_level_expectations
     g = grammar { rule(:top) { (match(/\d+/) | match(/[a-z]+/)).label("value") } }

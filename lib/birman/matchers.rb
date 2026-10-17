@@ -235,7 +235,13 @@ module Birman
       values = []
       while max.nil? || values.size < max
         r = inner.match(ctx, pos) or break
-        break if r.pos == pos # an empty match would loop forever
+        # Matching nothing ends the loop (repeating it would never stop).
+        # It still counts as the first match, so `x.rep(1)` and `x.maybe`
+        # work when x can match empty; after real matches it's just the end.
+        if r.pos == pos
+          values << r.value if values.empty?
+          break
+        end
 
         values << r.value
         pos = r.pos
@@ -291,8 +297,9 @@ module Birman
     def capture_key = inner.capture_key
   end
 
-  # Names a matcher for error messages. If inner fails without getting
-  # past its starting position, the error says "expected <name>"
+  # Names a matcher for error messages. If inner fails (or succeeds
+  # while consuming nothing) without getting past its starting
+  # position, the error says "expected <name>"
   # instead of listing every low-level alternative. If it got further,
   # the deeper (more specific) error is kept.
   Label = Data.define(:inner, :name) do
@@ -300,7 +307,7 @@ module Birman
 
     def match(ctx, pos)
       result, furthest, expected = ctx.isolate(pos) { inner.match(ctx, pos) }
-      if result.nil? && furthest == pos
+      if furthest == pos && (result.nil? || (result.pos == pos && expected.any?))
         ctx.fail_at(pos, name)
       else
         ctx.merge(furthest, expected)
