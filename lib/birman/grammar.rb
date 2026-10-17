@@ -3,13 +3,25 @@
 module Birman
   # Include this to make a class a grammar. The class body also gets
   # `node` (see Nodes), so AST nodes can live beside their rules.
+  #
+  # Including it in a module makes a module of shared rules: whatever
+  # includes that module (a class, or another such module) becomes a
+  # grammar too.
   module Grammar
     include Combinators
 
     def self.included(base)
       base.extend(RuleSet)
-      base.extend(ClassMethods)
       base.extend(Nodes)
+      base.extend(base.is_a?(Class) ? ClassMethods : Shared)
+    end
+
+    # Extended onto a module that includes Grammar.
+    module Shared
+      def included(base)
+        super
+        base.include(Grammar)
+      end
     end
 
     module ClassMethods

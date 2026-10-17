@@ -9,6 +9,7 @@ module Birman
   # any other Ruby method.
   module RuleSet
     def rule(name, &body)
+      check_rule_name!(name)
       define_method(:"__rule_#{name}", &body)
       private :"__rule_#{name}"
       define_method(name) { Ref.new(name) }
@@ -18,6 +19,20 @@ module Birman
     # trailing whitespace when the grammar declares `skip`.
     def lexeme(name, &body)
       rule(name) { Lexeme.new(Birman.coerce(instance_exec(&body)), skip_rule) }
+    end
+
+    private
+
+    # A rule named after a method the grammar relies on (send, class,
+    # match, token...) would silently replace it. Redefining a rule is
+    # fine, and so are private Kernel names like print or select.
+    def check_rule_name!(name)
+      return if private_method_defined?(:"__rule_#{name}")
+
+      owner = [Object, Combinators, Grammar].find { _1.public_method_defined?(name) } ||
+              [Combinators, Grammar].find { _1.private_method_defined?(name) } ||
+              (instance_method(name).owner if method_defined?(name))
+      raise ArgumentError, "rule :#{name} would replace #{owner}##{name}; give the rule another name" if owner
     end
   end
 end

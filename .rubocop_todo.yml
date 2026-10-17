@@ -57,13 +57,6 @@ Metrics/AbcSize:
     - 'lib/birman/ast.rb'
     - 'lib/birman/grammar.rb'
     - 'lib/birman/matchers.rb'
-    - 'test/test_birman.rb'
-
-# Offense count: 1
-# Configuration parameters: CountComments, Max, CountAsOne.
-Metrics/ClassLength:
-  Exclude:
-    - 'test/test_birman.rb'
 
 # Offense count: 3
 # Configuration parameters: AllowedMethods, AllowedPatterns, Max.

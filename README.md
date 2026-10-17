@@ -118,7 +118,13 @@ as `Birman.node`) is `Data.define` plus:
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
-  Write your own rule module with `extend Birman::RuleSet`.
+  Write your own rule module with `extend Birman::RuleSet`, or
+  `include Birman::Grammar` in a module to share rules, nodes and
+  combinators; any class that includes it is a grammar. Settings
+  (`root`, `skip`, `keywords`) still go on the class.
+- A rule can't be named after a method the grammar relies on (`send`,
+  `class`, `match`, `token`...). Defining one raises `ArgumentError`
+  instead of silently breaking the grammar. Redefining a rule is fine.
 
 ## Not yet
 

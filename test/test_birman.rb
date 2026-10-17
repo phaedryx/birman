@@ -435,6 +435,39 @@ class BirmanTest < Minitest::Test
     assert_equal ['")"'], g.parse("(4").expected
   end
 
+  def test_rule_names_cannot_replace_methods_birman_relies_on
+    %i[send class match str keywords token].each do |name|
+      error = assert_raises(ArgumentError) { grammar { rule(name) { str("x") } } }
+      assert_match(/rule :#{name} would replace/, error.message)
+    end
+  end
+
+  def test_rule_names_can_reuse_private_kernel_methods_and_redefine_rules
+    g = grammar do
+      rule(:top)   { print }
+      rule(:print) { str("a") }
+      rule(:print) { str("b") }
+    end
+    assert_equal "b", g.parse!("b")
+  end
+
+  def test_grammar_can_be_shared_through_modules
+    digits = Module.new do
+      include Birman::Grammar
+      rule(:digit) { match(/\d/) }
+    end
+    numbers = Module.new do
+      include digits
+      rule(:number) { digit.rep(1).map(&:join) }
+    end
+    g = Class.new do
+      include numbers
+      root :top
+      rule(:top) { sep_by(number, ",") }
+    end
+    assert_equal %w[12 3], g.parse!("12,3")
+  end
+
   def test_settings_are_inherited
     base = grammar do
       skip :sp
