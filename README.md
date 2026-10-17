@@ -96,7 +96,10 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
 | `.rep(min, max)`, `.maybe`    | repetition, optional                                 |
 | `.absent`, `.present`         | negative / positive lookahead                        |
-| `.map { }`                    | transform the value                                  |
+| `.map(:to_i)`                 | call that method on the value                        |
+| `.action(:name)`              | pass the value to the grammar's method `name`        |
+| `.means(v)`                   | the value is `v` (`lit("null").means(nil)`)          |
+| `.map { }`                    | transform the value with a block (prefer the above)  |
 | `.label("name")`              | "expected name" in errors                            |
 | `.quiet`                      | never mention in errors                              |
 

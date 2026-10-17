@@ -75,7 +75,7 @@ module Birman
     # [method.maybe]
     # returns = "Optional self"
     # value = "self's value, or nil when absent"
-    def maybe = rep(0, 1).map(&:first)
+    def maybe = Maybe.new(self)
 
     # [method.absent]
     # returns = "Negative lookahead: succeeds, consuming nothing, when self doesn't match here"
@@ -87,10 +87,33 @@ module Birman
     # value = "nil"
     def present = And.new(self)
 
+    # Prefer a Symbol to a block: a Symbol is data a compiler can read,
+    # while a block's source is lost and it can capture local variables.
     # [method.map]
-    # params = ["fn: block taking self's value"]
-    # returns = "Matcher whose value is fn's result (self's .as name is kept)"
-    def map(&fn) = Action.new(self, fn)
+    # params = ["method_name: Symbol, called on self's value", "or fn: block taking self's value"]
+    # returns = "Matcher whose value is the method's (or block's) result (self's .as name is kept)"
+    # raises = ["ArgumentError (both a Symbol and a block, or neither)"]
+    def map(method_name = nil, &fn)
+      return Send.new(self, method_name) if method_name && !fn
+      return Map.new(self, fn) if fn && !method_name
+
+      raise ArgumentError, "map takes a method name or a block (one, not both)"
+    end
+
+    # Pass the value to a method of the grammar, for real work such as
+    # decoding escapes or parsing numbers. The method may be private,
+    # and subclasses can override it.
+    # [method.action]
+    # params = ["method_name: Symbol, a grammar instance method taking one argument"]
+    # returns = "Matcher whose value is grammar.method_name(self's value) (self's .as name is kept)"
+    def action(method_name) = Action.new(self, method_name)
+
+    # Replace the value with a constant: lit("null").means(nil). The
+    # same object comes back from every match.
+    # [method.means]
+    # params = ["value: any object"]
+    # returns = "Matcher whose value is always value (self's .as name is kept)"
+    def means(value) = Const.new(self, value)
 
     # [method.label]
     # params = ["name: String"]
@@ -251,13 +274,16 @@ module Birman
     def capture_key = parts[index].capture_key
   end
 
-  # One or more items separated by sep. The value is an array of the
-  # items, and the name (see Matcher#as) is the item's.
-  SepBy = Data.define(:item, :sep) do
+  # Items separated by sep: at least one, or with min 0 possibly none.
+  # The value is an array of the items (a new one each time, even when
+  # empty), and the name (see Matcher#as) is the item's.
+  SepBy = Data.define(:item, :sep, :min) do
     include Matcher
 
+    def initialize(item:, sep:, min: 1) = super
+
     def match(ctx, pos)
-      r = item.match(ctx, pos) or return nil
+      r = item.match(ctx, pos) or return (min.zero? ? Match.new(pos, []) : nil)
       values = [r.value]
       pos = r.pos
       loop do
@@ -271,7 +297,11 @@ module Birman
       Match.new(pos, values)
     end
 
-    def to_ast = [:seq, nil, [item.to_ast, [:rep, 0, nil, [:seq, nil, [sep.to_ast, item.to_ast]]]]]
+    def to_ast
+      list = [:seq, nil, [item.to_ast, [:rep, 0, nil, [:seq, nil, [sep.to_ast, item.to_ast]]]]]
+      min.zero? ? [:rep, 0, 1, list] : list
+    end
+
     def capture_key = item.capture_key
   end
 
@@ -350,17 +380,55 @@ module Birman
     def to_ast = [:both, left.to_ast, right.to_ast]
   end
 
-  # Semantic action: transform the value of a successful match.
-  Action = Data.define(:inner, :fn) do
+  # Optional (see Matcher#maybe): inner's value, or nil. Never fails.
+  Maybe = Data.define(:inner) do
+    include Matcher
+
+    def match(ctx, pos) = inner.match(ctx, pos) || Match.new(pos, nil)
+    def to_ast = [:rep, 0, 1, inner.to_ast]
+    def capture_key = inner.capture_key
+  end
+
+  # A successful match whose value is replaced: the shared shape of
+  # Const, Map, Send and Action, each defining transform(value, ctx).
+  module Transform
     include Matcher
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
-      Match.new(r.pos, fn.call(r.value))
+      Match.new(r.pos, transform(r.value, ctx))
     end
 
     def to_ast = [:action, inner.to_ast]
     def capture_key = inner.capture_key
+  end
+
+  # See Matcher#means.
+  Const = Data.define(:inner, :constant) do
+    include Transform
+
+    def transform(_value, _ctx) = constant
+  end
+
+  # Transform the value with a block (see Matcher#map).
+  Map = Data.define(:inner, :fn) do
+    include Transform
+
+    def transform(value, _ctx) = fn.call(value)
+  end
+
+  # Transform the value by calling one of its methods (see Matcher#map).
+  Send = Data.define(:inner, :method_name) do
+    include Transform
+
+    def transform(value, _ctx) = value.public_send(method_name)
+  end
+
+  # Semantic action: pass the value to a grammar method (see Matcher#action).
+  Action = Data.define(:inner, :method_name) do
+    include Transform
+
+    def transform(value, ctx) = ctx.grammar.__send__(method_name, value)
   end
 
   # Names a matcher for error messages. If inner fails (or succeeds

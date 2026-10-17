@@ -28,10 +28,10 @@ module JSONExample
 
     # Once "{" or "[" has matched, it can only be an object or array, so
     # commit: a mistake inside is reported where it is.
-    rule(:object) { seq("{", commit, only(sep_by(member, ",")), "}").map(&:to_h) }
+    rule(:object) { seq("{", commit, only(sep_by(member, ",")), "}").map(:to_h) }
 
     rule(:member) do
-      seq(string.as(:key), commit, ":", value.as(:value)).map { [_1[:key], _1[:value]] }
+      seq(string.as(:key), commit, ":", value.as(:value)).action(:pair)
     end
 
     rule(:array) { seq("[", commit, only(sep_by(value, ",")), "]") }
@@ -40,8 +40,8 @@ module JSONExample
     # quotes nothing is skipped. lexeme skips the spacing after the
     # closing quote.
     lexeme(:string) do
-      (str('"') > (string_part.rep >> str('"').label("closing quote")))
-        .map { |(_, parts, _)| parts.join }
+      seq(str('"'), commit, only(string_part.rep), str('"').label("closing quote"))
+        .map(:join)
         .label("string")
     end
 
@@ -51,18 +51,31 @@ module JSONExample
     rule(:string_part) do
       either(
         match(/[^"\\\x00-\x1f]+/), # plain characters
-        match(/\\u[dD][89abAB]\h{2}\\u[dD][c-fC-F]\h{2}/).map { surrogate_pair(_1) },
-        match(/\\u\h{4}/).map { [_1[2, 4].hex].pack("U") },
-        match(%r{\\["\\/bfnrt]}).map { ESCAPES.fetch(_1[1]) }
+        match(/\\u[dD][89abAB]\h{2}\\u[dD][c-fC-F]\h{2}/).action(:surrogate_pair),
+        match(/\\u\h{4}/).action(:unicode_escape),
+        match(%r{\\["\\/bfnrt]}).action(:short_escape)
       ).label("string character")
     end
 
     # An integer unless it has a fraction or an exponent, as in JSON.parse.
     lexeme(:number) do
-      match(/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/)
-        .map { _1.match?(/[.eE]/) ? Float(_1) : Integer(_1) }
-        .label("number")
+      match(/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/).action(:json_number).label("number")
     end
+
+    # Actions: rules hand their values to these by name (.action), so
+    # the grammar holds no blocks. Private, so they don't look like rules.
+
+    private
+
+    def pair(member) = [member[:key], member[:value]]
+
+    def json_number(text) = text.match?(/[.eE]/) ? Float(text) : Integer(text)
+
+    # \" \\ \/ \b \f \n \r \t
+    def short_escape(text) = ESCAPES.fetch(text[1])
+
+    # \u00e9
+    def unicode_escape(text) = [text[2, 4].hex].pack("U")
 
     # Characters outside the Basic Multilingual Plane (emoji, say) are
     # written as two \u escapes, a high and a low surrogate.
