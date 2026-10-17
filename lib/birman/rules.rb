@@ -8,6 +8,8 @@ module Birman
   # Value rules (number, string, identifier) are lexemes: in a grammar
   # that declares `ignore :spacing`, they skip trailing spacing on their own.
   module Rules
+    # Whitespace as the `spacing` rule, plus a `token` helper for grammars
+    # that don't declare `ignore`.
     module Whitespace
       extend RuleSet
 
@@ -30,6 +32,7 @@ module Birman
       def token(m) = Pick.new([Birman.coerce(m), spacing], 0)
     end
 
+    # Integers and floats, as Ruby numbers.
     module Numbers
       extend RuleSet
 
@@ -67,7 +70,7 @@ module Birman
       rule(:reserved_word) do
         next never if keywords.empty?
 
-        match(/(?:#{keywords.map { Regexp.escape(_1) }.join('|')})\b/)
+        match(/(?:#{keywords.map { Regexp.escape(_1) }.join("|")})\b/)
       end
     end
   end

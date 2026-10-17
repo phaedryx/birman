@@ -9,6 +9,8 @@
 require_relative "../lib/birman"
 
 module Calc
+  # Statements (let, print) and expressions (if, + - * /, numbers,
+  # strings, variables), with # comments.
   class Grammar
     include Birman::Grammar
     include Birman::Rules::Comments
@@ -28,29 +30,31 @@ module Calc
     ignore :spacing
     keywords "let", "print", "if", "then", "else"
 
-    rule(:program)    { statement.rep }
-    rule(:statement)  { either(let_stmt, print_stmt, expr).label("statement") }
+    rule(:program)   { statement.rep }
+    rule(:statement) { either(let_statement, print_statement, expr).label("statement") }
 
-    rule(:let_stmt)   { seq("let", commit, name.as(:name), "=", expr.as(:value)).to(Let) }
-    rule(:print_stmt) { seq("print", commit, expr.as(:value)).to(Print) }
+    rule(:let_statement)   { seq("let", commit, name.as(:name), "=", expr.as(:value)).to(Let) }
+    rule(:print_statement) { seq("print", commit, expr.as(:value)).to(Print) }
 
-    rule(:expr)       { either(if_expr, sum) }
+    rule(:expr) { either(if_expr, sum) }
     rule(:if_expr) do
       seq("if", commit, expr.as(:cond),
-          "then",    expr.as(:then_branch),
-          "else",    expr.as(:else_branch)).to(If)
+          "then", expr.as(:then_branch),
+          "else", expr.as(:else_branch)).to(If)
     end
 
-    rule(:sum)        { infix(product, "+", "-", node: BinOp) }
-    rule(:product)    { infix(atom, "*", "/", node: BinOp) }
-    rule(:atom)       { either(number.to(Num), string.to(Text), name.to(Var), parens(expr)).label("expression") }
-    rule(:name)       { identifier.map(&:to_sym) }
+    rule(:sum)     { infix(product, "+", "-", node: BinOp) }
+    rule(:product) { infix(atom, "*", "/", node: BinOp) }
+    rule(:atom)    { either(number.to(Num), string.to(Text), name.to(Var), parens(expr)).label("expression") }
+    rule(:name)    { identifier.map(&:to_sym) }
   end
 
+  # An error while running a program, located by the node's span.
   class RuntimeError < StandardError
     def initialize(message, node) = super("#{message} at #{node.span}")
   end
 
+  # Evaluates a parsed program, printing to out.
   class Interpreter
     def initialize(out: $stdout)
       @out = out
@@ -59,7 +63,8 @@ module Calc
 
     def run(statements) = statements.map { evaluate(_1) }.last
 
-    def evaluate(node)
+    # One branch per node type, so its size grows with the language.
+    def evaluate(node) # rubocop:disable Metrics
       case node
       in Grammar::Num(value)        then value
       in Grammar::Text(value)       then value
@@ -67,8 +72,11 @@ module Calc
       in Grammar::Let(name, value)  then @env[name] = evaluate(value)
       in Grammar::Print(value)      then evaluate(value).tap { @out.puts(_1) }
       in Grammar::BinOp(op, left, right)
-        lhs, rhs = evaluate(left), evaluate(right)
-        raise RuntimeError.new("can't apply #{op} to #{lhs.inspect} and #{rhs.inspect}", node) unless lhs.class == rhs.class
+        lhs = evaluate(left)
+        rhs = evaluate(right)
+        unless lhs.instance_of?(rhs.class)
+          raise RuntimeError.new("can't apply #{op} to #{lhs.inspect} and #{rhs.inspect}", node)
+        end
 
         lhs.public_send(op, rhs)
       in Grammar::If(cond, then_branch, else_branch)

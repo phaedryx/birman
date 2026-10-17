@@ -8,11 +8,12 @@ module Birman
   # methods, they travel through `include` and can be overridden like
   # any other Ruby method.
   module RuleSet
-    def rule(name, &body)
+    def rule(name, &)
       check_rule_name!(name)
-      define_method(:"__rule_#{name}", &body)
+      define_method(:"__rule_#{name}", &)
       private :"__rule_#{name}"
       define_method(name) { Ref.new(name) }
+      @instance = nil # a grammar class's cached instance (see Grammar::ClassMethods)
     end
 
     # A rule for a token (a number, a string, an identifier): it skips

@@ -9,7 +9,8 @@ Gem::Specification.new do |spec|
   spec.email = ["phaedryx@gmail.com"]
 
   spec.summary = "A small PEG parser library for Ruby."
-  spec.description = "Module-based grammars, immutable Data matchers and AST nodes with source spans, packrat memoization, commit points, labels, and Success/Failure results."
+  spec.description = "Module-based grammars, immutable Data matchers and AST nodes with source spans, " \
+                     "packrat memoization, commit points, labels, and Success/Failure results."
   spec.homepage = "https://github.com/phaedryx/birman"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
@@ -23,7 +24,7 @@ Gem::Specification.new do |spec|
   # remembering to exclude them.
   spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).select do |f|
-      f.start_with?("lib/", "sig/") || %w[README.md LICENSE.txt CHANGELOG.md].include?(f)
+      f.start_with?("lib/") || %w[README.md LICENSE.txt CHANGELOG.md].include?(f)
     end
   end
   spec.bindir = "exe"

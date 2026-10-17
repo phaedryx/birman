@@ -47,7 +47,7 @@ module Birman
     # S-expression style: (BinOp "+" (Num 1) (Num 2))
     def inspect
       name = self.class.name&.split("::")&.last || "node"
-      ["(#{name}", *to_h.values.map(&:inspect)].join(" ") + ")"
+      "#{["(#{name}", *to_h.values.map(&:inspect)].join(" ")})"
     end
 
     def pretty_print(q) = q.text(inspect)
@@ -67,6 +67,7 @@ module Birman
 
       Data.define(*members) do
         include Node
+
         class_eval(&body) if body
       end
     end

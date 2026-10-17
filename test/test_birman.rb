@@ -9,6 +9,7 @@ class BirmanTest < Minitest::Test
     Class.new do
       include Birman::Grammar
       include Birman::Rules::Whitespace
+
       self.root(root)
       class_eval(&rules)
     end
@@ -38,6 +39,13 @@ class BirmanTest < Minitest::Test
     m = Birman::Str.new("x") >> "y"
     assert m.frozen?
     assert_equal m, Birman::Str.new("x") >> "y"
+
+    parts = [Birman::Str.new("a")]
+    [Birman::Seq.new(parts), Birman::Choice.new(parts), Birman::Pick.new(parts, 0)].each do |matcher|
+      list = matcher.to_h.values.first
+      assert list.frozen?, "#{matcher.class} keeps a mutable array"
+    end
+    refute parts.frozen?, "the caller's array is left alone"
   end
 
   # --- Results ---
@@ -60,6 +68,23 @@ class BirmanTest < Minitest::Test
     g = grammar { rule(:top) { str("hi") } }
     shouty = ->(f) { "NOPE AT #{f.pos}: #{f.expected.join}" }
     assert_equal 'NOPE AT 0: "hi"', g.parse("x").message(shouty)
+
+    error = assert_raises(Birman::ParseError) { g.parse!("x", formatter: shouty) }
+    assert_equal 'NOPE AT 0: "hi"', error.message
+    assert_equal "hi", g.parse!("hi", formatter: shouty)
+  end
+
+  def test_failure_inspect_shows_only_the_start_of_the_input
+    g = grammar { rule(:top) { str("hi") } }
+    shown = g.parse("x" * 10_000).inspect
+    assert_operator shown.size, :<, 200
+    assert_includes shown, "pos=0"
+  end
+
+  def test_error_caret_lines_up_under_tabs
+    g = grammar { rule(:top) { str("\t\t") >> str("x") } }
+    caret_line = g.parse("\t\ty").message.lines.last
+    assert_equal "  \t\t^", caret_line
   end
 
   def test_trailing_input_is_an_error
@@ -78,7 +103,7 @@ class BirmanTest < Minitest::Test
 
     g = grammar { rule(:top) { str("a") >> match(/^b/) } }
     assert g.parse("ab").failure?, "^ means start of line, not current position"
-    assert_equal ["a\n", "b"], (grammar { rule(:top) { str("a\n") >> match(/^b/) } }).parse!("a\nb")
+    assert_equal %W[a\n b], grammar { rule(:top) { str("a\n") >> match(/^b/) } }.parse!("a\nb")
   end
 
   def test_non_ascii_input
@@ -94,8 +119,8 @@ class BirmanTest < Minitest::Test
 
   def test_commit_reports_the_error_inside_the_construct
     g = grammar do
-      rule(:top)   { if_stmt | other }
-      rule(:if_stmt) { (token(keyword("if")) > token(match(/\d+/).label("condition"))) }
+      rule(:top) { if_statement | other }
+      rule(:if_statement) { token(keyword("if")) > token(match(/\d+/).label("condition")) }
       rule(:other) { match(/.*/) }
     end
 
@@ -107,9 +132,9 @@ class BirmanTest < Minitest::Test
 
   def test_without_commit_choice_backtracks
     g = grammar do
-      rule(:top)     { if_stmt | other }
-      rule(:if_stmt) { token(keyword("if")) >> token(match(/\d+/)) }
-      rule(:other)   { match(/.*/) }
+      rule(:top) { if_statement | other }
+      rule(:if_statement) { token(keyword("if")) >> token(match(/\d+/)) }
+      rule(:other) { match(/.*/) }
     end
 
     assert_equal "if oops", g.parse!("if oops")
@@ -272,10 +297,14 @@ class BirmanTest < Minitest::Test
   def test_rule_modules_compose_and_override
     loud = Module.new do
       extend Birman::RuleSet
+
       rule(:greeting) { str("HELLO") }
     end
 
-    base = grammar { rule(:top) { greeting }; rule(:greeting) { str("hello") } }
+    base = grammar do
+      rule(:top) { greeting }
+      rule(:greeting) { str("hello") }
+    end
     shouty = Class.new(base) { include loud }
 
     assert_equal "hello", base.parse!("hello")
@@ -287,6 +316,7 @@ class BirmanTest < Minitest::Test
     g = Class.new do
       include Birman::Grammar
       include Birman::Rules::Numbers
+
       root :number
     end
     assert_equal 42, g.parse!("42")
@@ -298,6 +328,7 @@ class BirmanTest < Minitest::Test
       include Birman::Grammar
       include Birman::Rules::Whitespace
       include Birman::Rules::Comments
+
       root :top
       rule(:top) { token("a").rep }
     end
@@ -308,6 +339,7 @@ class BirmanTest < Minitest::Test
     g = Class.new do
       include Birman::Grammar
       include Birman::Rules::Strings
+
       root :string
     end
 
@@ -321,6 +353,7 @@ class BirmanTest < Minitest::Test
     g = Class.new do
       include Birman::Grammar
       include Birman::Rules::Identifiers
+
       root :identifier
       keywords "if"
     end
@@ -340,7 +373,7 @@ class BirmanTest < Minitest::Test
     end
 
     assert_equal %i[top item unused_by_top], g.to_ast.keys
-    assert_equal [:rep, 0, nil, [:ref, :item]], g.to_ast[:top]
+    assert_equal [:rep, 0, nil, %i[ref item]], g.to_ast[:top]
   end
 
   def test_ebnf
@@ -398,6 +431,7 @@ class BirmanTest < Minitest::Test
   def test_nodes_module_defines_nodes_in_place
     mod = Module.new do
       extend Birman::Nodes
+
       const_set(:Thing, node(:a, :b) { def sum = a + b })
     end
     assert_equal 3, mod::Thing.new(1, 2).sum
@@ -406,6 +440,7 @@ class BirmanTest < Minitest::Test
   def test_nodes_with_their_own_initialize_still_get_spans
     g = Class.new do
       include Birman::Grammar
+
       const_set(:Pair, node(:left, :right) { def initialize(left:, right: "none") = super })
       root :top
       rule(:top) { match(/\w+/).as(:left).to(self.class::Pair) }
@@ -426,6 +461,7 @@ class BirmanTest < Minitest::Test
   def test_grammars_define_nodes_without_extending_nodes
     g = Class.new do
       include Birman::Grammar
+
       const_set(:Num, node(:value))
       root :top
       rule(:top) { match(/\d+/).map(&:to_i).as(:value).to(self.class::Num) }
@@ -477,7 +513,7 @@ class BirmanTest < Minitest::Test
       rule(:top) { either(seq("go", commit, match(/\d+/)), "stop") }
     end
 
-    assert_equal ["go", "5"], g.parse!("go 5")
+    assert_equal %w[go 5], g.parse!("go 5")
     assert_equal "stop", g.parse!("stop")
     assert g.parse("go x").committed
   end
@@ -502,6 +538,7 @@ class BirmanTest < Minitest::Test
       include Birman::Grammar
       include Birman::Rules::Whitespace
       include Birman::Rules::Numbers
+
       root :top
       ignore :spacing
       rule(:top) { number.rep }
@@ -564,18 +601,49 @@ class BirmanTest < Minitest::Test
   def test_grammar_can_be_shared_through_modules
     digits = Module.new do
       include Birman::Grammar
+
       rule(:digit) { match(/\d/) }
     end
     numbers = Module.new do
       include digits
+
       rule(:number) { digit.rep(1).map(&:join) }
     end
     g = Class.new do
       include numbers
+
       root :top
       rule(:top) { sep_by(number, ",") }
     end
     assert_equal %w[12 3], g.parse!("12,3")
+  end
+
+  def test_class_level_parses_build_each_rule_once
+    builds = 0
+    g = grammar do
+      rule(:top) do
+        builds += 1
+        str("a")
+      end
+    end
+    3.times { g.parse!("a") }
+    assert_equal 1, builds
+
+    g.class_eval { rule(:top) { str("b") } }
+    assert_equal "b", g.parse!("b"), "redefining a rule takes effect"
+  end
+
+  def test_subclasses_can_clear_inherited_settings
+    parent = grammar do
+      ignore :spacing
+      keywords "if"
+    end
+    child = Class.new(parent) do
+      ignore nil
+      keywords nil
+    end
+    assert_equal [nil, []], [child.ignore, child.keywords]
+    assert_equal [:spacing, ["if"]], [parent.ignore, parent.keywords]
   end
 
   def test_settings_are_inherited
@@ -629,10 +697,10 @@ class BirmanTest < Minitest::Test
 
   def test_calc_errors
     {
-      "let = 4"       => "expected identifier",
-      "print (1 + 2"  => 'expected operator or ")"',
-      "print 1 +"     => "expected expression",
-      "let if = 1"    => "expected identifier"
+      "let = 4" => "expected identifier",
+      "print (1 + 2" => 'expected operator or ")"',
+      "print 1 +" => "expected expression",
+      "let if = 1" => "expected identifier"
     }.each do |source, message|
       assert_includes Calc::Grammar.parse(source).message, message, source
     end

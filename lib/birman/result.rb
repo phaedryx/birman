@@ -8,7 +8,7 @@ module Birman
   Success = Data.define(:value) do
     def success? = true
     def failure? = false
-    def value!   = value
+    def value!(_formatter = nil) = value
   end
 
   # Returned by Grammar#parse when it didn't. Pure data: rendering it
@@ -24,15 +24,24 @@ module Birman
 
     def success? = false
     def failure? = true
-    def value!   = raise ParseError.new(self)
+    def value!(formatter = ErrorFormatter.new) = raise ParseError.new(self, formatter)
 
     def line   = input[0, pos].count("\n") + 1
     def column = pos - (input[0, pos].rindex("\n") || -1)
     def found  = input[pos]&.inspect || "end of input"
 
     def message(formatter = ErrorFormatter.new) = formatter.call(self)
+
+    # The input can be any size, so only its start is shown.
+    def inspect
+      shown = input.size > 40 ? "#{input[0, 40]}..." : input
+      fields = ["pos=#{pos}", "expected=#{expected.inspect}", "committed=#{committed}"]
+      fields << "reason=#{reason.inspect}" if reason
+      "#<data Birman::Failure #{fields.join(" ")} input=#{shown.inspect}>"
+    end
   end
 
+  # Raised by parse! (and Failure#value!) with the formatted message.
   class ParseError < StandardError
     attr_reader :failure
 

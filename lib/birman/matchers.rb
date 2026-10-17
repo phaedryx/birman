@@ -103,7 +103,8 @@ module Birman
   Seq = Data.define(:parts, :commit_at) do
     include Matcher
 
-    def initialize(parts:, commit_at: nil) = super
+    # Arrays are copied and frozen so a matcher is immutable all the way down.
+    def initialize(parts:, commit_at: nil) = super(parts: parts.dup.freeze, commit_at:)
 
     def >>(other) = with(parts: [*parts, Birman.coerce(other)])
 
@@ -145,6 +146,8 @@ module Birman
   # or reshapes, so the kept part comes through as it was.
   Pick = Data.define(:parts, :index) do
     include Matcher
+
+    def initialize(parts:, index:) = super(parts: parts.dup.freeze, index:)
 
     def match(ctx, pos)
       value = nil
@@ -188,6 +191,8 @@ module Birman
   Choice = Data.define(:alts) do
     include Matcher
 
+    def initialize(alts:) = super(alts: alts.dup.freeze)
+
     def |(other) = with(alts: [*alts, Birman.coerce(other)])
 
     def match(ctx, pos)
@@ -209,6 +214,7 @@ module Birman
       while max.nil? || values.size < max
         r = inner.match(ctx, pos) or break
         break if r.pos == pos # an empty match would loop forever
+
         values << r.value
         pos = r.pos
       end
@@ -309,12 +315,12 @@ module Birman
   end
 
   # A token: inner, then the grammar's ignore rule (usually spacing),
-  # keeping inner's value. With no ignore rule it's just inner. `display`
+  # keeping inner's value. With no ignore rule it's just inner. `source`
   # is how a literal shows up in EBNF ("let" rather than its internals).
-  Lexeme = Data.define(:inner, :ignore, :display) do
+  Lexeme = Data.define(:inner, :ignore, :source) do
     include Matcher
 
-    def initialize(inner:, ignore:, display: nil) = super
+    def initialize(inner:, ignore:, source: nil) = super
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
@@ -325,7 +331,7 @@ module Birman
       Match.new(s.pos, r.value)
     end
 
-    def to_ast = display ? [:str, display] : inner.to_ast
+    def to_ast = source ? [:str, source] : inner.to_ast
     def capture_key = inner.capture_key
   end
 

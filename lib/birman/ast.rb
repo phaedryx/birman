@@ -41,7 +41,8 @@ module Birman
       rules.map { |name, ast| "#{name.to_s.ljust(width)} = #{expr(ast, CHOICE)} ;" }.join("\n")
     end
 
-    def expr(node, prec)
+    # One branch per AST node type, so its size grows with the matcher set.
+    def expr(node, prec) # rubocop:disable Metrics
       case node
       in [:str, s]           then s.inspect
       in [:pat, source]      then source

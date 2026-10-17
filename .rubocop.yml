@@ -1,9 +1,3 @@
-inherit_from: .rubocop_todo.yml
-
-inherit_mode:
-  merge:
-    - Exclude
-
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
@@ -15,16 +9,61 @@ Style/StringLiterals:
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
 
+# `module Birman` is documented once, in lib/birman.rb; the other files
+# only reopen it.
+Style/Documentation:
+  AllowedConstants:
+    - Birman
+
+# Combinators read best with the short names parser libraries use:
+# m (matcher), s (string), x (anything), re, fn, q (pretty-print
+# queue). Listing names replaces RuboCop's defaults, so those are
+# repeated here.
+Naming/MethodParameterName:
+  AllowedNames:
+    - m
+    - q
+    - re
+    - s
+    - x
+    - fn
+    - as
+    - at
+    - by
+    - id
+    - in
+    - io
+    - of
+    - on
+    - to
+
+# Pattern-matching branches that bind variables can't be merged with
+# `|`, so identical bodies there are deliberate.
+Lint/DuplicateBranch:
+  Enabled: false
+
+# Limits just above the largest methods today, so new complexity is
+# flagged. The node-type dispatchers (EBNF#expr, Calc's evaluate) are
+# exempted inline instead: they grow by one branch per node type.
+Metrics/AbcSize:
+  Max: 25
+  Exclude:
+    - "test/**/*"
+
+Metrics/CyclomaticComplexity:
+  Max: 8
+
+Metrics/MethodLength:
+  Max: 12
+  Exclude:
+    - "test/**/*"
+
+# matchers.rb is a catalog of small matcher classes in one module.
+Metrics/ModuleLength:
+  Max: 250
+
 # Tests are long, linear scripts; size limits only push them toward
 # helpers that hide what's being checked.
-Metrics/MethodLength:
-  Exclude:
-    - "test/**/*"
-
-Metrics/AbcSize:
-  Exclude:
-    - "test/**/*"
-
 Metrics/ClassLength:
   Exclude:
     - "test/**/*"

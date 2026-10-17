@@ -147,8 +147,10 @@ has one.
 
 - `Birman::Rules`: `Whitespace`, `Comments`, `Numbers`, `Strings`,
   `Identifiers`
-- Grammar settings: `root`, `ignore`, `keywords` (all inherited)
-- `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`.
+- Grammar settings: `root`, `ignore`, `keywords`. Subclasses inherit
+  them; pass `nil` to clear one (`ignore nil`, `keywords nil`)
+- `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`
+  (`parse!(input, formatter: f)` words it your way).
   Input nested too deeply for Ruby's stack (several hundred levels)
   is a `Failure` too, with `reason` set.
 - `Failure#message(formatter)` takes anything with `#call(failure)`

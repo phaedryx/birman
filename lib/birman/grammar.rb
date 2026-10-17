@@ -24,31 +24,47 @@ module Birman
       end
     end
 
+    # Settings are inherited by subclasses. Passing nil clears an
+    # inherited one: `ignore nil`, `keywords nil`.
     module ClassMethods
+      UNSET = Object.new.freeze
+
       # The rule a parse starts from.
-      def root(name = nil) = name ? @root = name : inherited_setting(:root, @root)
+      def root(name = UNSET) = setting(:root, name)
 
       # A rule the parser matches and discards after every literal and
       # lexeme, and at the start of input. Usually :spacing (from
       # Birman::Rules::Whitespace or Comments).
-      def ignore(name = nil) = name ? @ignore = name : inherited_setting(:ignore, @ignore)
+      def ignore(name = UNSET) = setting(:ignore, name)
 
       # Reserved words, which Birman::Rules::Identifiers won't accept.
       def keywords(*words)
-        return @keywords = words.map(&:to_s) if words.any?
+        return setting(:keywords) || [] if words.empty?
 
-        inherited_setting(:keywords, @keywords) || []
+        setting(:keywords, words == [nil] ? [] : words.map(&:to_s))
       end
 
-      def parse(input)  = new.parse(input)
-      def parse!(input) = new.parse!(input)
-      def to_ast        = new.to_ast
+      # These share one instance, so each rule's matcher is built once
+      # rather than on every parse. Defining a rule or changing a
+      # setting starts a fresh one.
+      def parse(input)  = instance.parse(input)
+      def parse!(input, **) = instance.parse!(input, **)
+      def to_ast        = instance.to_ast
       def to_ebnf       = EBNF.call(to_ast)
 
       private
 
-      def inherited_setting(setting, own)
-        own || (superclass.public_send(setting) if superclass.respond_to?(setting))
+      def instance = @instance ||= new
+
+      def setting(key, value = UNSET)
+        ivar = :"@#{key}"
+        unless value.equal?(UNSET)
+          @instance = nil
+          return instance_variable_set(ivar, value)
+        end
+        return instance_variable_get(ivar) if instance_variable_defined?(ivar)
+
+        superclass.public_send(key) if superclass.respond_to?(key)
       end
     end
 
@@ -69,8 +85,8 @@ module Birman
       build_failure(input, ctx.position, [], reason: "input is nested too deeply")
     end
 
-    # Returns the value or raises ParseError.
-    def parse!(input) = parse(input).value!
+    # Returns the value or raises ParseError, worded by formatter.
+    def parse!(input, formatter: ErrorFormatter.new) = parse(input).value!(formatter)
 
     def matcher_for(name)
       (@matchers ||= {})[name] ||= begin
