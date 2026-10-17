@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-17
+
 - **Faster:** about 1.75x on the JSON benchmark (159 KB: 0.37s to 0.21s),
   from allocating 60% fewer objects per parse: no temporary arrays in
   failure tracking, a per-rule memo table instead of `[rule, pos]` keys,
