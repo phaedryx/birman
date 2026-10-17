@@ -4,7 +4,7 @@ module Birman
   def self.coerce(x)
     case x
     when Matcher then x
-    when String  then Str.new(x)
+    when String  then Lit.new(x)
     when Regexp  then Pat.new(x)
     else raise ArgumentError, "can't make a matcher from #{x.inspect}"
     end
@@ -66,7 +66,17 @@ module Birman
     def uncommitted_parts(m) = m.is_a?(Seq) && m.commit_at.nil? ? m.parts : [m]
   end
 
-  # Literal string.
+  # A bare string: a literal (see Combinators#literal_matcher). What a
+  # literal matches depends on the grammar's ignore rule, so the grammar
+  # supplies the real matcher when this one runs.
+  Lit = Data.define(:text) do
+    include Matcher
+
+    def match(ctx, pos) = ctx.grammar.literal_matcher(text).match(ctx, pos)
+    def to_ast = [:str, text]
+  end
+
+  # Exact string, nothing skipped (see Combinators#str).
   Str = Data.define(:str) do
     include Matcher
 

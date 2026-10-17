@@ -8,10 +8,10 @@ module Birman
   # every grammar. They're plain methods, so a module can override
   # them or add more.
   #
-  # Strings passed to seq, either, infix, one_of, sep_by, between and
-  # parens are literals (see #lit): they skip trailing spacing when
-  # the grammar declares `ignore`, and word-like ones are keywords. Use
-  # str and match for exact, raw matching.
+  # A bare string anywhere a matcher is expected (in seq or either, as
+  # a rule body, after >> or |) is a literal: it skips trailing spacing
+  # when the grammar declares `ignore`, and word-like ones are keywords.
+  # Use str and match for exact, raw matching.
   module Combinators
     # --- Raw matchers ---
 
@@ -26,14 +26,18 @@ module Birman
 
     # --- Literals and the readable forms ---
 
-    # A string literal as a token. "let" becomes a keyword, "=" an
-    # exact string; either way followed by the grammar's ignore rule.
-    # Non-strings pass through unchanged.
-    def lit(x)
-      return Birman.coerce(x) unless x.is_a?(String)
+    # Anything usable as a matcher: strings become literals, regexps
+    # raw patterns, and matchers pass through unchanged.
+    def lit(x) = Birman.coerce(x)
 
-      base = x.match?(/\A\w+\z/) ? keyword(x) : str(x)
-      Lexeme.new(base, ignore_rule, x)
+    # The matcher a literal stands for: "let" is a keyword, "=" an exact
+    # string, either way followed by the grammar's ignore rule. Built
+    # once per grammar instance.
+    def literal_matcher(text)
+      (@literal_matchers ||= {})[text] ||= begin
+        base = text.match?(/\A\w+\z/) ? keyword(text) : str(text)
+        Lexeme.new(base, ignore_rule, text)
+      end
     end
 
     # Sequence. Put `commit` where the construct becomes unambiguous:

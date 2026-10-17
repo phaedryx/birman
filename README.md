@@ -100,9 +100,11 @@ first: `>>`, `&`, `|`, `>`.
 Declare `ignore :spacing` and whitespace (and comments, with
 `Rules::Comments`) takes care of itself:
 
-- Strings passed to `seq`, `either`, `infix`, `parens` and friends are
-  **literals**. They skip trailing spacing, and word-like ones
-  (`"let"`) are keywords, so `"let"` won't match the start of `letter`.
+- Bare strings are **literals** wherever a matcher goes: in `seq`,
+  `either`, `parens` and friends, as a rule body (`rule(:semi) { ";" }`),
+  or after `>>`, `|`, `&` and `>`. They skip trailing spacing, and
+  word-like ones (`"let"`) are keywords, so `"let"` won't match the
+  start of `letter`.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
   no skipping.
 - Rules for tokens (numbers, names, strings) should be declared with

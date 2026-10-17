@@ -528,6 +528,25 @@ class BirmanTest < Minitest::Test
     assert g.parse("a = b c").failure?, "str() is raw, so no whitespace after it"
   end
 
+  def test_bare_strings_are_literals_everywhere
+    g = grammar do
+      ignore :spacing
+      rule(:top)  { seq(semi, "x") }
+      rule(:semi) { ";" }
+    end
+    assert_equal [";", "x"], g.parse!("; x"), "as a rule body"
+
+    g = grammar do
+      ignore :spacing
+      rule(:top) { (either("a") >> "b") | "c" }
+    end
+    assert_equal %w[a b], g.parse!("a b "), "after >>"
+    assert_equal "c", g.parse!("c "), "after |"
+
+    g = grammar { rule(:top) { match(/x/) >> "if" >> match(/\w*/) } }
+    assert g.parse("xiffy").failure?, "word-like literals are keywords after >> too"
+  end
+
   def test_word_literals_are_keywords
     g = grammar { rule(:top) { seq("if", match(/\w+/)) } }
     assert g.parse("ifx").failure?

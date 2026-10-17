@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+- **Changed:** a bare string is a literal everywhere a matcher goes, not
+  just inside `seq`, `either` and the other helpers. A string used as a
+  rule body (`rule(:semi) { ";" }`) or after `>>`, `|`, `&` or `>` now
+  skips trailing spacing and, if word-like, is a keyword. Before, it
+  matched exactly those characters, so `seq(semi, "x")` failed on
+  `"; x"`. Use `str("...")` for the old exact match.
+
 ## [0.1.0] - 2026-10-17
 
 First release: a small PEG parser library for Ruby 3.2+.
