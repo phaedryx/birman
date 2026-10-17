@@ -4,6 +4,9 @@
 
 # Birman
 
+[![Gem Version](https://img.shields.io/gem/v/birman)](https://rubygems.org/gems/birman)
+[![CI](https://github.com/phaedryx/birman/actions/workflows/main.yml/badge.svg)](https://github.com/phaedryx/birman/actions/workflows/main.yml)
+
 A small PEG parser library for Ruby 3.2+: module-based grammars,
 immutable `Data` matchers and AST nodes with source spans, packrat
 memoization, commit points, labels, and `Success`/`Failure` results.
