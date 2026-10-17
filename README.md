@@ -18,23 +18,49 @@ bundle add birman
 require "birman"
 
 module Lang
+  # A grammar is a class that includes Birman::Grammar. Each rule is a
+  # method on it, so rules can call each other by name.
   class Grammar
     include Birman::Grammar
+
+    # Ready-made rules: `spacing` (whitespace), `number` and `identifier`.
     include Birman::Rules::Whitespace
     include Birman::Rules::Numbers
     include Birman::Rules::Identifiers
 
+    # AST nodes: immutable Data classes that also record where in the
+    # input they came from (node.span).
     Let = node(:name, :value)
     Num = node(:value)
 
-    root :let_stmt
+    # Parsing starts at this rule.
+    root :let_statement
+
+    # Match `spacing` after every literal and token, and throw it away,
+    # so the rules below never have to mention whitespace.
     ignore :spacing
+
+    # Reserved words: `identifier` won't accept "let" as a name.
     keywords "let"
 
-    rule(:let_stmt) { seq("let", commit, identifier.as(:name), "=", number.to(Num).as(:value)).to(Let) }
+    # let_statement: "let", a name, "=", a number. Reading left to right:
+    #   "let"                  - a literal keyword ("let", not "letter")
+    #   commit                 - after "let", this must be a let statement;
+    #                            a mistake later is reported right there
+    #   identifier.as(:name)   - match a name and save it as :name
+    #   "="                    - another literal
+    #   number.to(Num)         - match a number and wrap it in a Num node,
+    #     .as(:value)            saved as :value
+    #   .to(Let)               - build a Let from the saved :name and :value
+    rule(:let_statement) do
+      seq("let", commit, identifier.as(:name), "=", number.to(Num).as(:value)).to(Let)
+    end
   end
 end
 
+# parse returns Success or Failure (bad input never raises), so
+# pattern-match on the result.
+# (parse! returns the value or raises Birman::ParseError instead.)
 case Lang::Grammar.parse("let x = 42")
 in Birman::Success(ast)   then p ast        # => (Let "x" (Num 42))
 in Birman::Failure => f   then warn f.message
