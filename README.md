@@ -17,6 +17,12 @@ memoization, commit points, labels, and `Success`/`Failure` results.
 bundle add birman
 ```
 
+or in your Gemfile:
+
+```ruby
+gem "birman", "~> 0.2.1"
+```
+
 ```ruby
 require "birman"
 
