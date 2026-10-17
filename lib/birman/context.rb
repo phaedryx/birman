@@ -69,6 +69,22 @@ module Birman
 
     def commit_failure! = raise(Committed.new(@furthest, @expected.dup))
 
+    # A positive lookahead: does matcher match at pos? Nothing is
+    # consumed, and failures inside it describe input the parse never
+    # moves past, so they're dropped. If it fails, that's recorded at
+    # pos, as what it expected there or as the lookahead itself.
+    def peek?(matcher, pos)
+      result, furthest, expected = isolate(pos) { lookahead { matcher.match(self, pos) } }
+      return true if result
+
+      if furthest == pos && expected.any?
+        merge(pos, expected)
+      else
+        fail_at(pos, EBNF.expr(matcher.to_ast, EBNF::CHOICE))
+      end
+      false
+    end
+
     # Rule name's memo entry at pos, computed by the block the first
     # time. Meeting the rule again at the same position while it is
     # still being matched means it reaches itself without consuming

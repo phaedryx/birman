@@ -115,6 +115,22 @@ class BirmanTest < Minitest::Test
     assert_equal "if oops", g.parse!("if oops")
   end
 
+  def test_a_successful_lookahead_leaves_no_errors_behind
+    g = grammar { rule(:top) { str("a").rep.present >> str("b") } }
+    assert_pattern { g.parse("aaac") => Birman::Failure(pos: 0, expected: ['"b"']) }
+
+    g = grammar { rule(:top) { (str("a").rep & any) >> str("b") } }
+    assert_pattern { g.parse("aaac") => Birman::Failure(pos: 1, expected: ['"b"']) }
+  end
+
+  def test_a_failed_lookahead_reports_at_its_own_position
+    g = grammar { rule(:top) { str("x").present >> any } }
+    assert_pattern { g.parse("y") => Birman::Failure(pos: 0, expected: ['"x"']) }
+
+    g = grammar { rule(:top) { (str("a") >> str("b")) & any } }
+    assert_pattern { g.parse("ac") => Birman::Failure(pos: 0, expected: ['"a" "b"']) }
+  end
+
   def test_lookaheads_contain_commit_failures
     g = grammar { rule(:top) { (str("a") > str("b")).absent >> match(/.*/) } }
     assert_equal [nil, "ax"], g.parse!("ax")

@@ -236,7 +236,7 @@ module Birman
   And = Data.define(:inner) do
     include Matcher
 
-    def match(ctx, pos) = ctx.lookahead { inner.match(ctx, pos) } ? Match.new(pos, nil) : nil
+    def match(ctx, pos) = ctx.peek?(inner, pos) ? Match.new(pos, nil) : nil
 
     def to_ast = [:and, inner.to_ast]
   end
@@ -245,7 +245,7 @@ module Birman
   Both = Data.define(:left, :right) do
     include Matcher
 
-    def match(ctx, pos) = ctx.lookahead { left.match(ctx, pos) } && right.match(ctx, pos)
+    def match(ctx, pos) = ctx.peek?(left, pos) ? right.match(ctx, pos) : nil
 
     def to_ast = [:both, left.to_ast, right.to_ast]
   end
