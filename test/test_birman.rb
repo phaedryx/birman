@@ -15,6 +15,8 @@ class BirmanTest < Minitest::Test
     end
   end
 
+  def top_matcher(grammar) = grammar.new.matcher_for(:top)
+
   # --- Matchers ---
 
   def test_sequence_choice_and_repetition
@@ -254,6 +256,75 @@ class BirmanTest < Minitest::Test
 
     g = grammar { rule(:top) { one_of("<=" => :le, "<" => :lt) } }
     assert_equal :le, g.parse!("<="), "tried in the order given"
+  end
+
+  def test_sep_by_gives_a_fresh_array_each_time
+    g = grammar { rule(:top) { sep_by(match(/\d+/), ",") } }
+    first = g.parse!("")
+    refute first.frozen?
+    refute_same first, g.parse!("")
+  end
+
+  # --- Values without blocks ---
+
+  def test_maybe_never_fails
+    g = grammar { rule(:top) { str("a").maybe } }
+    assert_nil g.parse!("")
+    assert_equal "a", g.parse!("a")
+    assert_kind_of Birman::Maybe, top_matcher(g)
+    assert_equal 'top = "a"? ;', g.to_ebnf.lines.first.chomp
+  end
+
+  def test_means_replaces_the_value
+    g = grammar { rule(:top) { seq(str("yes").means(true).as(:answer), "!") } }
+    assert_equal({ answer: true }, g.parse!("yes!"))
+    assert_equal 'top = "yes" "!" ;', g.to_ebnf.lines.first.chomp
+  end
+
+  def test_map_with_a_symbol_calls_that_method_on_the_value
+    g = grammar { rule(:top) { match(/\d+/).as(:n).map(:to_i) } }
+    assert_equal 42, g.parse!("42")
+    assert_equal :to_i, top_matcher(g).method_name, "kept as data, not a Proc"
+    assert_raises(ArgumentError) { Birman::Str.new("x").map(:to_s) { _1 } }
+    assert_raises(ArgumentError) { Birman::Str.new("x").map }
+  end
+
+  def test_action_calls_a_grammar_method_with_the_value
+    g = grammar do
+      rule(:top) { seq(match(/\d+/).action(:double).as(:n), "!") }
+      define_method(:double) { |text| text.to_i * 2 }
+      private :double
+    end
+    assert_equal({ n: 84 }, g.parse!("42!"))
+
+    tripled = Class.new(g) { def double(text) = text.to_i * 3 }
+    assert_equal({ n: 126 }, tripled.parse!("42!"), "subclasses can override the method")
+  end
+
+  def test_names_pass_through_symbol_map_means_and_action
+    g = grammar do
+      rule(:top) { seq(match(/\d/).as(:a).map(:to_i), match(/x/).as(:b).means(true), match(/y/).as(:c).action(:up)) }
+      define_method(:up) { |text| text.upcase }
+    end
+    assert_equal({ a: 1, b: true, c: "Y" }, g.parse!("1xy"))
+  end
+
+  def test_library_rules_use_no_blocks
+    g = grammar do
+      include Birman::Rules::Comments
+      include Birman::Rules::Numbers
+      include Birman::Rules::Strings
+      include Birman::Rules::Identifiers
+
+      ignore :spacing
+      keywords "if"
+      rule(:top) do
+        seq(number, string, identifier, keyword("if"), one_of("on" => true),
+            sep_by(match(/\d/), ","), str("z").maybe)
+      end
+    end
+    assert_empty matchers_in(g).grep(Birman::Map)
+    assert_empty matchers_in(Calc::Grammar).grep(Birman::Map)
   end
 
   def test_only_makes_one_part_the_value_of_a_seq

@@ -48,8 +48,8 @@ module Birman
     module Numbers
       extend RuleSet
 
-      lexeme(:integer) { match(/\d+/).map(&:to_i).label("integer") }
-      lexeme(:float)   { match(/\d+\.\d+/).map(&:to_f).label("float") }
+      lexeme(:integer) { match(/\d+/).map(:to_i).label("integer") }
+      lexeme(:float)   { match(/\d+\.\d+/).map(:to_f).label("float") }
       lexeme(:number)  { (float | integer).label("number") }
     end
 
@@ -57,6 +57,7 @@ module Birman
     # commits, so an unterminated string is reported where it breaks.
     # [module.Rules.Strings]
     # rules = ["string: double-quoted, escapes \\n \\t \\r \\0, value is the String"]
+    # helpers = ["decode_escape(text): the character a backslash escape stands for"]
     # notes = "The opening quote commits, so an unterminated string is reported where it breaks"
     module Strings
       extend RuleSet
@@ -64,15 +65,19 @@ module Birman
       ESCAPES = { "n" => "\n", "t" => "\t", "r" => "\r", "0" => "\0" }.freeze
 
       lexeme(:string) do
-        (str('"') > (string_part.rep >> str('"').label("closing quote")))
-          .map { |(_, parts, _)| parts.join }
+        seq(str('"'), commit, only(string_part.rep), str('"').label("closing quote"))
+          .map(:join)
           .label("string")
       end
 
       rule(:string_part) do
-        (match(/\\./).map { ESCAPES.fetch(_1[1], _1[1]) } |
+        (match(/\\./).action(:decode_escape) |
           match(/[^"\\\n]+/)).label("string character")
       end
+
+      private
+
+      def decode_escape(text) = ESCAPES.fetch(text[1], text[1])
     end
 
     # Identifiers that can't be reserved words. Declare those in the

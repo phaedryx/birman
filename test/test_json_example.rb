@@ -22,6 +22,10 @@ class TestJSONExample < Minitest::Test
     "[1] [2]", "// comment\n1"
   ].freeze
 
+  def test_grammar_uses_no_blocks
+    assert_empty matchers_in(JSONExample::Grammar).grep(Birman::Map)
+  end
+
   def test_valid_documents_match_json_parse
     VALID.each do |source|
       assert_equal JSON.parse(source), JSONExample::Grammar.parse!(source), source

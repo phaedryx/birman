@@ -46,7 +46,7 @@ module Calc
     rule(:sum)     { infix(product, "+", "-", node: BinOp) }
     rule(:product) { infix(atom, "*", "/", node: BinOp) }
     rule(:atom)    { either(number.to(Num), string.to(Text), name.to(Var), parens(expr)).label("expression") }
-    rule(:name)    { identifier.map(&:to_sym) }
+    rule(:name)    { identifier.map(:to_sym) }
   end
 
   # An error while running a program, located by the node's span.

@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+- **Added:** ways to transform a value without a block, so a grammar
+  can be plain data (groundwork for compiling grammars later):
+  - `.map(:to_i)` calls that method on the value. The Symbol is kept,
+    not turned into a Proc; from `.map(&:to_i)`, just delete the `&`.
+  - `.action(:json_number)` passes the value to a grammar method,
+    which may be private and which subclasses can override.
+  - `.means(v)` replaces the value with `v`: `lit("null").means(nil)`.
+
+  `.map { }` blocks still work.
+- The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
+  `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
+  blocks. EBNF output is unchanged; about 4% fewer allocations per
+  JSON parse.
+- Internal: the block matcher `Birman::Action` is now `Birman::Map`;
+  `Birman::Action` is the `.action(:name)` matcher.
+
 ## [0.2.2] - 2026-10-17
 
 - **Faster:** about 1.75x on the JSON benchmark (159 KB: 0.37s to 0.21s),

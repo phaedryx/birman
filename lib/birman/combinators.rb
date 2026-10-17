@@ -57,7 +57,7 @@ module Birman
     # params = ["word: String"]
     # returns = "Matcher for word when not followed by a word character"
     # value = "word"
-    def keyword(word) = (str(word) >> match(/\w/).absent).map(&:first).label(word.inspect)
+    def keyword(word) = Pick.new([str(word), match(/\w/).absent], 0).label(word.inspect)
 
     # --- Literals and the readable forms ---
 
@@ -131,7 +131,7 @@ module Birman
     def one_of(*choices)
       return either(*choices) unless choices in [Hash => table]
 
-      either(*table.map { |text, value| lit(text).map { value } })
+      either(*table.map { |text, value| lit(text).means(value) })
     end
 
     # Left-associative binary operators, folded into nodes:
@@ -155,7 +155,7 @@ module Birman
     # params = ["item: String | Regexp | Matcher", "sep: String | Regexp | Matcher"]
     # returns = "Matcher for zero or more items separated by sep"
     # value = "Array of item values, [] when there are none"
-    def sep_by(item, sep) = sep_by1(item, sep).maybe.map { _1 || [] }
+    def sep_by(item, sep) = SepBy.new(lit(item), lit(sep), 0)
 
     # inner wrapped in open/close; value is inner's.
     # [method.between]
