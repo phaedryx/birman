@@ -137,3 +137,11 @@ ruby examples/calc.rb
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
+
+## The name
+
+Birman is named for Alexander Birman, whose 1970 Ph.D. thesis, *The
+TMG Recognition Schema*, was the origin of packrat parsing and parsing
+expression grammars.
+
+The cat in the logo is a Birman too.
