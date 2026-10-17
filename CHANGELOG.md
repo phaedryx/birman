@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
 - **Added:** `one_of` takes a hash mapping literals to the values they
   produce: `one_of("true" => true, "false" => false, "null" => nil)`.
 - **Added:** `only(x)` inside `seq` makes that part the sequence's
