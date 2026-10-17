@@ -1,10 +1,18 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "What a parse returns"
+# responsibility = "Success and Failure values, and the ParseError that parse! raises"
+# pattern = "Result objects (Data), pattern-matchable"
 module Birman
   # Internal: one matcher succeeded, ending at `pos` with `value`.
   Match = Data.define(:pos, :value)
 
   # Returned by Grammar#parse when the whole input parsed.
+  # [class.Success]
+  # purpose = "The whole input parsed"
+  # fields = ["value: whatever the root rule produced"]
+  # usage = "case grammar.parse(input) in Birman::Success(value) then ..."
   Success = Data.define(:value) do
     def success? = true
     def failure? = false
@@ -19,6 +27,16 @@ module Birman
   #
   # reason: set when the failure isn't about what was expected, such as
   # input nested too deeply for Ruby's stack.
+  # [class.Failure]
+  # purpose = "The input didn't parse"
+  # fields = [
+  # "input: String",
+  # "pos: Integer (character offset of the furthest failure)",
+  # "expected: Array of String (what would have matched there)",
+  # "committed: Boolean (failed after a commit)",
+  # "reason: String | nil (set when it isn't about expectations, e.g. nesting too deep)"
+  # ]
+  # methods = ["line", "column", "found", "message(formatter)", "value!(formatter) -> raises ParseError"]
   Failure = Data.define(:input, :pos, :expected, :committed, :reason) do
     def initialize(input:, pos:, expected:, committed:, reason: nil) = super
 
@@ -42,6 +60,9 @@ module Birman
   end
 
   # Raised by parse! (and Failure#value!) with the formatted message.
+  # [class.ParseError]
+  # purpose = "Raised by parse! and Failure#value!"
+  # fields = ["failure: Birman::Failure", "message: formatted by the formatter given"]
   class ParseError < StandardError
     attr_reader :failure
 

@@ -1,11 +1,17 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "Default wording for parse errors"
+# pattern = "Strategy: anything with #call(failure) can replace it"
 module Birman
   # Turns a Failure into readable text. Anything that responds to
   # #call(failure) works in its place, for custom wording or i18n:
   #
   #   failure.message(MyFormatter.new)
   class ErrorFormatter
+    # [method.call]
+    # params = ["failure: Birman::Failure"]
+    # returns = "String: \"line L, column C: expected ..., found ...\" plus the source line and a caret"
     def call(failure)
       source = source_line(failure)
       <<~MSG.chomp

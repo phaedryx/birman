@@ -1,6 +1,16 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "The matcher types and the methods every matcher responds to"
+# responsibility = "Matching at a byte position against a Context; building ASTs for EBNF"
+# dependencies = ["Birman::Context", "StringScanner (via Context#scanner)"]
+# pattern = "Immutable Data objects composed into a tree; packrat memoization at rule refs"
+# public_api = "Birman::Matcher (operators and modifiers below); the Data classes are internal"
 module Birman
+  # [method."Birman.coerce"]
+  # params = ["x: String | Regexp | Matcher"]
+  # returns = "Matcher: String -> literal (Lit), Regexp -> raw pattern (Pat), matcher unchanged"
+  # raises = ["ArgumentError (only(...) outside seq, or anything else)"]
   def self.coerce(x)
     case x
     when Matcher then x
@@ -22,41 +32,91 @@ module Birman
   #
   # So `a > b >> c` means `a > (b >> c)`, and a commit inside a choice
   # needs parentheses: `(keyword("if") > body) | other`.
+  # [module.Matcher]
+  # purpose = "Operators and modifiers shared by every matcher"
+  # notes = "Arguments go through Birman.coerce, so bare strings are literals"
   module Matcher
+    # [method.">>"]
+    # params = ["other: String | Regexp | Matcher"]
+    # returns = "Sequence of self then other (flattens into an existing sequence)"
     def >>(other) = Seq.new([self, Birman.coerce(other)])
-    def |(other)  = Choice.new([self, Birman.coerce(other)])
+
+    # [method."|"]
+    # params = ["other: String | Regexp | Matcher"]
+    # returns = "Ordered choice: self, else other"
+    def |(other) = Choice.new([self, Birman.coerce(other)])
 
     # Conjunction: self must match here (without consuming input),
     # then other is matched from the same spot. Value is other's.
+    # [method."&"]
+    # params = ["other: String | Regexp | Matcher"]
+    # returns = "self as a guard (lookahead), then other from the same position"
+    # value = "other's value"
     def &(other) = Both.new(self, Birman.coerce(other))
 
     # Commit: once self matches, everything after it must match too, or
     # parsing stops right here with an error instead of backtracking.
     # This is dry-logic's implication operator, applied to parsing.
+    # [method.">"]
+    # params = ["other: String | Regexp | Matcher"]
+    # returns = "Sequence of self then other, committed after self (like seq(self, commit, other))"
     def >(other)
       left  = uncommitted_parts(self)
       right = uncommitted_parts(Birman.coerce(other))
       Seq.new([*left, *right], left.size)
     end
 
+    # [method.rep]
+    # params = ["min: Integer = 0", "max: Integer | nil = nil (unbounded)"]
+    # returns = "Matcher for self repeated min..max times"
+    # value = "Array of values; an empty first match counts once, then ends the loop"
     def rep(min = 0, max = nil) = Rep.new(self, min, max)
-    def maybe       = rep(0, 1).map(&:first)
-    def absent      = Not.new(self)
-    def present     = And.new(self)
-    def map(&fn)    = Action.new(self, fn)
+
+    # [method.maybe]
+    # returns = "Optional self"
+    # value = "self's value, or nil when absent"
+    def maybe = rep(0, 1).map(&:first)
+
+    # [method.absent]
+    # returns = "Negative lookahead: succeeds, consuming nothing, when self doesn't match here"
+    # value = "nil"
+    def absent = Not.new(self)
+
+    # [method.present]
+    # returns = "Positive lookahead: succeeds, consuming nothing, when self matches here"
+    # value = "nil"
+    def present = And.new(self)
+
+    # [method.map]
+    # params = ["fn: block taking self's value"]
+    # returns = "Matcher whose value is fn's result (self's .as name is kept)"
+    def map(&fn) = Action.new(self, fn)
+
+    # [method.label]
+    # params = ["name: String"]
+    # returns = "self, reported as \"expected <name>\" when it fails without consuming input"
     def label(name) = Label.new(self, name)
 
     # Never mention this matcher in error messages (for whitespace,
     # comments, and other things nobody wants to be told to type).
+    # [method.quiet]
+    # returns = "self, never mentioned in error messages"
     def quiet = Quiet.new(self)
 
     # Name this part of a sequence. A sequence with any named parts
     # produces a hash of just those parts instead of an array.
+    # [method.as]
+    # params = ["key: Symbol"]
+    # returns = "self, named: the enclosing seq's value becomes a Hash of named parts"
     def as(key) = Named.new(self, key)
 
     # Build a node from the value: a hash of named parts becomes
     # keyword arguments; anything else fills the node's first field.
     # Nodes made with Birman.node get a source span.
+    # [method.to]
+    # params = ["node: node class (or any Data class)"]
+    # returns = "Matcher whose value is node built from self's value"
+    # value = "node.new(**hash), or node.new(first_field => value); with a span for node(...) classes"
     def to(node) = To.new(self, node)
 
     # The name given by #as, seen through wrappers like labels.

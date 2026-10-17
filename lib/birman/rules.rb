@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "Ready-made rule modules"
+# responsibility = "Whitespace, comments, numbers, strings and identifiers"
+# usage = "include the modules a grammar needs; later includes override earlier ones"
 module Birman
   # A standard library of rule modules. Include the ones you need;
   # later includes override earlier ones (Comments replaces
@@ -10,6 +14,9 @@ module Birman
   module Rules
     # Whitespace as the `spacing` rule, plus a `token` helper for grammars
     # that don't declare `ignore`.
+    # [module.Rules.Whitespace]
+    # rules = ["spacing: zero or more whitespace characters (quiet)"]
+    # helpers = ["token(m): m then spacing, for grammars without ignore"]
     module Whitespace
       extend RuleSet
 
@@ -22,6 +29,9 @@ module Birman
 
     # Whitespace including comments. Works on its own or after
     # Whitespace. Override comment_pattern for other comment syntaxes.
+    # [module.Rules.Comments]
+    # rules = ["spacing: whitespace and comments (quiet)", "comment: one comment"]
+    # helpers = ["comment_pattern: override for other syntaxes (default /#[^\\n]*/)", "token(m)"]
     module Comments
       extend RuleSet
 
@@ -33,6 +43,8 @@ module Birman
     end
 
     # Integers and floats, as Ruby numbers.
+    # [module.Rules.Numbers]
+    # rules = ["integer: Integer", "float: Float", "number: float or integer"]
     module Numbers
       extend RuleSet
 
@@ -43,6 +55,9 @@ module Birman
 
     # Double-quoted strings with backslash escapes. The opening quote
     # commits, so an unterminated string is reported where it breaks.
+    # [module.Rules.Strings]
+    # rules = ["string: double-quoted, escapes \\n \\t \\r \\0, value is the String"]
+    # notes = "The opening quote commits, so an unterminated string is reported where it breaks"
     module Strings
       extend RuleSet
 
@@ -62,6 +77,8 @@ module Birman
 
     # Identifiers that can't be reserved words. Declare those in the
     # grammar with `keywords "if", "then", ...`.
+    # [module.Rules.Identifiers]
+    # rules = ["identifier: [A-Za-z_]\\w*, not one of the grammar's keywords"]
     module Identifiers
       extend RuleSet
 

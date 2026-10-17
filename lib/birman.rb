@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "Entry point: require \"birman\" loads the whole library"
+# dependencies = ["strscan (standard library)"]
+# requires_ruby = ">= 3.2"
+
 # A small PEG parser library for Ruby 3.2+.
 #
 #   Greeting = Birman.node(:name)
@@ -22,6 +27,9 @@ module Birman
   # The character offset of a byte offset into input. Free for ASCII
   # input (Ruby caches ascii_only?), linear otherwise; used once per
   # parse for a Failure, and only on demand for a Span.
+  # [method."Birman.char_offset"]
+  # params = ["input: String", "byte_pos: Integer"]
+  # returns = "Integer: the character offset of byte_pos"
   def self.char_offset(input, byte_pos)
     input.ascii_only? ? byte_pos : input.byteslice(0, byte_pos).length
   end

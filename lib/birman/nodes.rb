@@ -1,8 +1,16 @@
 # frozen_string_literal: true
 
+# [file]
+# purpose = "AST nodes with source spans"
+# responsibility = "node(...) classes, Span, and building nodes during a parse"
+# pattern = "Data classes plus a mixin"
 module Birman
   # Where a node came from in the source. Stored as byte offsets (see
   # Context); from, to, line and column count characters.
+  # [class.Span]
+  # purpose = "Where a node came from in the input"
+  # fields = ["input: String", "byte_from, byte_to: Integer (byte offsets)"]
+  # methods = ["from, to: character offsets", "text", "line", "column", "to_s => \"line L, column C\""]
   Span = Data.define(:input, :byte_from, :byte_to) do
     def from   = Birman.char_offset(input, byte_from)
     def to     = Birman.char_offset(input, byte_to)
@@ -22,6 +30,9 @@ module Birman
   # not a Data member, so equality and pattern matching ignore it:
   # `in Num(value)` still works, and two nodes with the same contents
   # are equal wherever they came from.
+  # [module.Node]
+  # purpose = "Mixed into every node(...) class"
+  # adds = ["span (ignored by == and pattern matching)", "with(**changes) keeping the span", "s-expression inspect"]
   module Node
     attr_reader :span
 
@@ -61,7 +72,13 @@ module Birman
   #   end
   #
   # Also available as Birman.node.
+  # [module.Nodes]
+  # purpose = "Provides node(...); grammars get it automatically, other modules can extend it"
   module Nodes
+    # [method.node]
+    # params = ["*members: Symbol (field names; not :span)", "body: optional block of methods (may define initialize)"]
+    # returns = "A Data class including Birman::Node"
+    # raises = ["ArgumentError if a field is named span"]
     def node(*members, &body)
       raise ArgumentError, "a node can't have a field named span: every node already has one" if members.include?(:span)
 
