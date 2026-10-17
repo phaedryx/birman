@@ -18,12 +18,24 @@ module Birman
   module Node
     attr_reader :span
 
+    # node_class.new(**fields) with a span. The span is set before
+    # initialize runs rather than passed to it, so a node can define
+    # its own initialize (for field defaults, say) without knowing
+    # about spans.
+    def self.new_with_span(node_class, span, fields)
+      node = node_class.allocate
+      node.instance_variable_set(:@span, span)
+      node.__send__(:initialize, **fields)
+      node
+    end
+
+    # span: is still accepted here, for building nodes by hand.
     def initialize(span: nil, **fields)
-      @span = span
+      @span = span if span
       super(**fields)
     end
 
-    def with(**changes) = self.class.new(**to_h, span:, **changes)
+    def with(**changes) = Node.new_with_span(self.class, span, to_h.merge(changes))
 
     # S-expression style: (BinOp "+" (Num 1) (Num 2))
     def inspect
@@ -44,6 +56,8 @@ module Birman
   # Also available as Birman.node.
   module Nodes
     def node(*members, &body)
+      raise ArgumentError, "a node can't have a field named span: every node already has one" if members.include?(:span)
+
       Data.define(*members) do
         include Node
         class_eval(&body) if body
@@ -60,6 +74,6 @@ module Birman
     return node.new(**fields) unless node.include?(Node)
 
     span = Span.new(input, from, from + input[from...to].rstrip.size)
-    node.new(**fields, span:)
+    Node.new_with_span(node, span, fields)
   end
 end

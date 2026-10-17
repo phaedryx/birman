@@ -313,6 +313,26 @@ class BirmanTest < Minitest::Test
     assert_equal 3, mod::Thing.new(1, 2).sum
   end
 
+  def test_nodes_with_their_own_initialize_still_get_spans
+    g = Class.new do
+      include Birman::Grammar
+      const_set(:Pair, node(:left, :right) { def initialize(left:, right: "none") = super })
+      root :top
+      rule(:top) { match(/\w+/).as(:left).to(self.class::Pair) }
+    end
+
+    pair = g.parse!("abc")
+    assert_equal g::Pair.new(left: "abc"), pair
+    assert_equal "none", pair.right
+    assert_equal "abc", pair.span.text
+    assert_equal "abc", pair.with(right: "x").span.text
+  end
+
+  def test_span_is_not_a_field_name
+    error = assert_raises(ArgumentError) { Birman.node(:span) }
+    assert_match(/span/, error.message)
+  end
+
   def test_grammars_define_nodes_without_extending_nodes
     g = Class.new do
       include Birman::Grammar

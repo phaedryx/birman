@@ -109,6 +109,13 @@ as `Birman.node`) is `Data.define` plus:
   which equality and pattern matching ignore
 - s-expression `inspect`: `(BinOp "+" (Num 1) (Num 2))`
 
+A node can define its own `initialize`, for example to give a field a
+default: `node(:name, :args) { def initialize(name:, args: []) = super }`.
+The parser and `with` set the span without going through it. (Passing
+`span:` to `new` by hand only works for nodes without their own
+`initialize`.) `span` can't be a field name, since every node already
+has one.
+
 ## Pieces
 
 - `Birman::Rules`: `Whitespace`, `Comments`, `Numbers`, `Strings`,
