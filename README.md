@@ -187,7 +187,7 @@ bin/setup           # install dependencies
 bundle exec rake    # tests + rubocop
 ruby examples/calc.rb
 ruby examples/json.rb
-ruby bench/json.rb  # Birman vs JSON.parse vs Parslet (installs Parslet)
+ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them)
 ```
 
 ## License

@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 # Parses the same JSON with Ruby's JSON.parse (a C extension), Birman
-# (examples/json.rb) and Parslet, the best-known Ruby PEG library.
+# (examples/json.rb), and three other Ruby PEG libraries: Parslet,
+# Treetop and Citrus. Each grammar below is written in that library's
+# own style. To keep them short, the other libraries hand string
+# escapes to JSON.parse; Birman decodes them itself.
 #
 #   ruby bench/json.rb   # not `bundle exec`: Parslet is installed inline
 
@@ -10,6 +13,8 @@ require "bundler/inline"
 gemfile do
   source "https://rubygems.org"
   gem "parslet", "~> 2.0"
+  gem "treetop", "~> 1.6"
+  gem "citrus", "~> 3.0"
 end
 
 require "json"
@@ -56,6 +61,102 @@ module ParsletJSON
   end
 end
 
+# Treetop compiles this grammar to a TreetopJSONParser class.
+# Citrus defines CitrusJSON.
+Treetop.load_from_string(<<~'TT')
+  grammar TreetopJSON
+    rule document
+      space value space { def to_ruby; value.to_ruby; end }
+    end
+    rule value
+      object / array / string / number / json_true / json_false / json_null
+    end
+    rule object
+      '{' space members:members? space '}' { def to_ruby; members.empty? ? {} : members.to_ruby; end }
+    end
+    rule members
+      first:pair rest:(space ',' space pair)* {
+        def to_ruby; ([first] + rest.elements.map(&:pair)).to_h(&:to_ruby); end
+      }
+    end
+    rule pair
+      string space ':' space value { def to_ruby; [string.to_ruby, value.to_ruby]; end }
+    end
+    rule array
+      '[' space items:items? space ']' { def to_ruby; items.empty? ? [] : items.to_ruby; end }
+    end
+    rule items
+      first:value rest:(space ',' space value)* {
+        def to_ruby; [first.to_ruby] + rest.elements.map { |e| e.value.to_ruby }; end
+      }
+    end
+    rule string
+      '"' ('\\' . / !'"' .)* '"' { def to_ruby; JSON.parse(text_value); end }
+    end
+    rule number
+      '-'? ('0' / [1-9] [0-9]*) ('.' [0-9]+)? ([eE] [+-]? [0-9]+)? {
+        def to_ruby; text_value.match?(/[.eE]/) ? Float(text_value) : Integer(text_value); end
+      }
+    end
+    rule json_true
+      'true' { def to_ruby; true; end }
+    end
+    rule json_false
+      'false' { def to_ruby; false; end }
+    end
+    rule json_null
+      'null' { def to_ruby; nil; end }
+    end
+    rule space
+      [ \t\n\r]*
+    end
+  end
+TT
+
+Citrus.eval(<<~'CI')
+  grammar CitrusJSON
+    rule document
+      (space value space) { capture(:value).value }
+    end
+    rule value
+      object | array | string | number | json_true | json_false | json_null
+    end
+    rule object
+      ('{' space members? space '}') { (m = capture(:members)) ? m.value : {} }
+    end
+    rule members
+      (pair (space ',' space pair)*) { captures(:pair).map(&:value).to_h }
+    end
+    rule pair
+      (string space ':' space value) { [capture(:string).value, capture(:value).value] }
+    end
+    rule array
+      ('[' space items? space ']') { (i = capture(:items)) ? i.value : [] }
+    end
+    rule items
+      (value (space ',' space value)*) { captures(:value).map(&:value) }
+    end
+    rule string
+      ('"' ('\\' . | !'"' .)* '"') { JSON.parse(to_s) }
+    end
+    rule number
+      ('-'? ('0' | [1-9] [0-9]*) ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?) { to_s.match?(/[.eE]/) ? Float(to_s) : Integer(to_s) }
+    end
+    rule json_true
+      'true' { true }
+    end
+    rule json_false
+      'false' { false }
+    end
+    rule json_null
+      'null' { nil }
+    end
+    rule space
+      [ \t\n\r]*
+    end
+  end
+CI
+
 def document(records)
   JSON.generate(Array.new(records) do |i|
     { "id" => i, "name" => "user #{i}", "email" => "user#{i}@example.com", "score" => i * 1.5,
@@ -73,7 +174,9 @@ end
 parsers = {
   "JSON.parse" => ->(source) { JSON.parse(source) },
   "Birman" => ->(source) { JSONExample::Grammar.parse!(source) },
-  "Parslet" => ->(source) { ParsletJSON::Transform.new.apply(ParsletJSON::Parser.new.parse(source)) }
+  "Parslet" => ->(source) { ParsletJSON::Transform.new.apply(ParsletJSON::Parser.new.parse(source)) },
+  "Treetop" => ->(source) { TreetopJSONParser.new.parse(source).to_ruby },
+  "Citrus" => ->(source) { CitrusJSON.parse(source, root: :document).value }
 }
 
 [100, 1_000].each do |records|
@@ -81,6 +184,11 @@ parsers = {
   expected = JSON.parse(source)
   puts "\n#{records} records, #{source.bytesize / 1024} KB"
   parsers.each do |name, parse|
+    # Citrus parses in linear time, but building values through its
+    # captures API grew quadratically in every style tried here (159 KB
+    # took two minutes), so it only runs on the small document.
+    next puts "  #{name.ljust(11)} skipped (value building scales quadratically)" if name == "Citrus" && records > 100
+
     parse.call(document(5)) # warm up
     seconds, result = time { parse.call(source) }
     status = result == expected ? "" : "  (result differs from JSON.parse!)"
