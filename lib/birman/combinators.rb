@@ -9,8 +9,8 @@ module Birman
   # them or add more.
   #
   # Strings passed to seq, either, infix, one_of, sep_by, between and
-  # parens are literals (see #lit): they skip trailing whitespace when
-  # the grammar declares `skip`, and word-like ones are keywords. Use
+  # parens are literals (see #lit): they skip trailing spacing when
+  # the grammar declares `ignore`, and word-like ones are keywords. Use
   # str and match for exact, raw matching.
   module Combinators
     # --- Raw matchers ---
@@ -27,13 +27,13 @@ module Birman
     # --- Literals and the readable forms ---
 
     # A string literal as a token. "let" becomes a keyword, "=" an
-    # exact string; either way followed by the grammar's skip rule.
+    # exact string; either way followed by the grammar's ignore rule.
     # Non-strings pass through unchanged.
     def lit(x)
       return Birman.coerce(x) unless x.is_a?(String)
 
       base = x.match?(/\A\w+\z/) ? keyword(x) : str(x)
-      Lexeme.new(base, skip_rule, x)
+      Lexeme.new(base, ignore_rule, x)
     end
 
     # Sequence. Put `commit` where the construct becomes unambiguous:
@@ -70,6 +70,6 @@ module Birman
 
     private
 
-    def skip_rule = self.class.respond_to?(:skip) ? self.class.skip : nil
+    def ignore_rule = self.class.respond_to?(:ignore) ? self.class.ignore : nil
   end
 end

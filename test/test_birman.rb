@@ -369,7 +369,7 @@ class BirmanTest < Minitest::Test
 
   def test_to_builds_nodes_with_spans
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { seq("pair", commit, leaf.as(:left), leaf.as(:right)).to(Pair) }
       lexeme(:leaf) { match(/\d+/).map(&:to_i).to(Leaf) }
     end
@@ -383,7 +383,7 @@ class BirmanTest < Minitest::Test
 
   def test_seq_commit_and_either
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { either(seq("go", commit, match(/\d+/)), "stop") }
     end
 
@@ -392,9 +392,9 @@ class BirmanTest < Minitest::Test
     assert g.parse("go x").committed
   end
 
-  def test_skip_handles_literals_and_leading_whitespace_but_not_raw_str
+  def test_ignore_handles_literals_and_leading_whitespace_but_not_raw_str
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { seq("a", "=", str("b"), "c") }
     end
 
@@ -407,13 +407,13 @@ class BirmanTest < Minitest::Test
     assert g.parse("ifx").failure?
   end
 
-  def test_lexemes_skip_whitespace
+  def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar
       include Birman::Rules::Whitespace
       include Birman::Rules::Numbers
       root :top
-      skip :sp
+      ignore :spacing
       rule(:top) { number.rep }
     end
     assert_equal [1, 2.5, 3], g.parse!(" 1  2.5\n3 ")
@@ -421,7 +421,7 @@ class BirmanTest < Minitest::Test
 
   def test_infix_is_left_associative_with_spans
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { infix(leaf, "-", node: Calc::Grammar::BinOp) }
       lexeme(:leaf) { match(/\d+/).map(&:to_i).to(Leaf) }
     end
@@ -447,7 +447,7 @@ class BirmanTest < Minitest::Test
 
   def test_parens
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { parens(digits) }
       lexeme(:digits) { match(/\d+/) }
     end
@@ -490,20 +490,20 @@ class BirmanTest < Minitest::Test
 
   def test_settings_are_inherited
     base = grammar do
-      skip :sp
+      ignore :spacing
       keywords "a", "b"
       rule(:top) { str("x") }
     end
     child = Class.new(base)
-    assert_equal [:top, :sp, %w[a b]], [child.root, child.skip, child.keywords]
+    assert_equal [:top, :spacing, %w[a b]], [child.root, child.ignore, child.keywords]
   end
 
   def test_ebnf_shows_literals_plainly
     g = grammar do
-      skip :sp
+      ignore :spacing
       rule(:top) { seq("let", commit, match(/\w+/).as(:name), "=", match(/\d+/)) }
     end
-    assert_equal 'top = "let" ~ /\w+/ "=" /\d+/ ;', g.to_ebnf.lines.first.chomp
+    assert_equal 'top     = "let" ~ /\w+/ "=" /\d+/ ;', g.to_ebnf.lines.first.chomp
   end
 
   # --- The example language, end to end ---

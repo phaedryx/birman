@@ -28,7 +28,7 @@ module Lang
     Num = node(:value)
 
     root :let_stmt
-    skip :sp
+    ignore :spacing
     keywords "let"
 
     rule(:let_stmt) { seq("let", commit, identifier.as(:name), "=", number.to(Num).as(:value)).to(Let) }
@@ -66,17 +66,18 @@ The operator forms still work for short rules: `a >> b` (sequence),
 `a | b` (choice), `a & b` (guard), `a > b` (commit). Precedence, tightest
 first: `>>`, `&`, `|`, `>`.
 
-## Literals, skip, and lexemes
+## Literals, spacing, and lexemes
 
-Declare `skip :sp` and whitespace takes care of itself:
+Declare `ignore :spacing` and whitespace (and comments, with
+`Rules::Comments`) takes care of itself:
 
 - Strings passed to `seq`, `either`, `infix`, `parens` and friends are
-  **literals**. They skip trailing whitespace, and word-like ones
+  **literals**. They skip trailing spacing, and word-like ones
   (`"let"`) are keywords, so `"let"` won't match the start of `letter`.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
   no skipping.
 - Rules for tokens (numbers, names, strings) should be declared with
-  **`lexeme`** instead of `rule`, so they skip whitespace too. The
+  **`lexeme`** instead of `rule`, so they skip trailing spacing too. The
   built-in `Birman::Rules` already do this.
 
 ## Commit
@@ -120,7 +121,7 @@ has one.
 
 - `Birman::Rules`: `Whitespace`, `Comments`, `Numbers`, `Strings`,
   `Identifiers`
-- Grammar settings: `root`, `skip`, `keywords` (all inherited)
+- Grammar settings: `root`, `ignore`, `keywords` (all inherited)
 - `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
@@ -128,7 +129,7 @@ has one.
   Write your own rule module with `extend Birman::RuleSet`, or
   `include Birman::Grammar` in a module to share rules, nodes and
   combinators; any class that includes it is a grammar. Settings
-  (`root`, `skip`, `keywords`) still go on the class.
+  (`root`, `ignore`, `keywords`) still go on the class.
 - A rule can't be named after a method the grammar relies on (`send`,
   `class`, `match`, `token`...). Defining one raises `ArgumentError`
   instead of silently breaking the grammar. Redefining a rule is fine.

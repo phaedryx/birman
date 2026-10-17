@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # A tiny language that exercises every Birman feature: nodes with source
-# spans, rule modules, skip and keywords, commit points, named captures, infix
+# spans, rule modules, ignored spacing and keywords, commit points, named captures, infix
 # operators, a pattern-matching interpreter, and EBNF output.
 #
 #   ruby examples/calc.rb
@@ -25,7 +25,7 @@ module Calc
     Print = node(:value)
 
     root :program
-    skip :sp
+    ignore :spacing
     keywords "let", "print", "if", "then", "else"
 
     rule(:program)    { statement.rep }

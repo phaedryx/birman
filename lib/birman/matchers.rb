@@ -308,19 +308,19 @@ module Birman
     def capture_key = inner.capture_key
   end
 
-  # A token: inner, then the grammar's skip rule (usually whitespace),
-  # keeping inner's value. With no skip rule it's just inner. `display`
+  # A token: inner, then the grammar's ignore rule (usually spacing),
+  # keeping inner's value. With no ignore rule it's just inner. `display`
   # is how a literal shows up in EBNF ("let" rather than its internals).
-  Lexeme = Data.define(:inner, :skip, :display) do
+  Lexeme = Data.define(:inner, :ignore, :display) do
     include Matcher
 
-    def initialize(inner:, skip:, display: nil) = super
+    def initialize(inner:, ignore:, display: nil) = super
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
-      return r unless skip
+      return r unless ignore
 
-      s = Ref.new(skip).match(ctx, r.pos)
+      s = Ref.new(ignore).match(ctx, r.pos)
       s ? Match.new(s.pos, r.value) : r
     end
 

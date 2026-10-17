@@ -16,9 +16,9 @@ module Birman
     end
 
     # A rule for a token (a number, a string, an identifier): it skips
-    # trailing whitespace when the grammar declares `skip`.
+    # trailing spacing when the grammar declares `ignore`.
     def lexeme(name, &body)
-      rule(name) { Lexeme.new(Birman.coerce(instance_exec(&body)), skip_rule) }
+      rule(name) { Lexeme.new(Birman.coerce(instance_exec(&body)), ignore_rule) }
     end
 
     private

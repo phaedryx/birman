@@ -28,9 +28,10 @@ module Birman
       # The rule a parse starts from.
       def root(name = nil) = name ? @root = name : inherited_setting(:root, @root)
 
-      # A rule to skip after every literal and lexeme, and at the start
-      # of input. Usually :sp (from Birman::Rules::Whitespace or Comments).
-      def skip(name = nil) = name ? @skip = name : inherited_setting(:skip, @skip)
+      # A rule the parser matches and discards after every literal and
+      # lexeme, and at the start of input. Usually :spacing (from
+      # Birman::Rules::Whitespace or Comments).
+      def ignore(name = nil) = name ? @ignore = name : inherited_setting(:ignore, @ignore)
 
       # Reserved words, which Birman::Rules::Identifiers won't accept.
       def keywords(*words)
@@ -56,7 +57,7 @@ module Birman
     # Returns Success(value) or Failure(...). Never raises on bad input.
     def parse(input)
       ctx = Context.new(input, self)
-      start = (skip_rule && Ref.new(skip_rule).match(ctx, 0)&.pos) || 0
+      start = (ignore_rule && Ref.new(ignore_rule).match(ctx, 0)&.pos) || 0
       result = Ref.new(root_rule).match(ctx, start)
       return Success.new(result.value) if result && result.pos == input.size
 
@@ -79,10 +80,10 @@ module Birman
     end
 
     # { rule_name => ast } for every rule reachable from the root (and
-    # the skip rule), in first-use order.
+    # the ignore rule), in first-use order.
     def to_ast
       rules = {}
-      queue = [root_rule, skip_rule].compact
+      queue = [root_rule, ignore_rule].compact
       while (name = queue.shift)
         next if rules.key?(name)
 

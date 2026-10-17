@@ -10,7 +10,7 @@
 #     include Birman::Rules::Identifiers
 #
 #     root :greeting
-#     skip :sp
+#     ignore :spacing
 #     rule(:greeting) { seq("hello", commit, identifier.as(:name)).to(Greeting) }
 #   end
 #

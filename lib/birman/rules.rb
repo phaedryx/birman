@@ -3,19 +3,19 @@
 module Birman
   # A standard library of rule modules. Include the ones you need;
   # later includes override earlier ones (Comments replaces
-  # Whitespace's `sp`, for example).
+  # Whitespace's `spacing`, for example).
   #
   # Value rules (number, string, identifier) are lexemes: in a grammar
-  # that declares `skip :sp`, they skip trailing whitespace on their own.
+  # that declares `ignore :spacing`, they skip trailing spacing on their own.
   module Rules
     module Whitespace
       extend RuleSet
 
-      rule(:sp) { match(/\s*/).quiet }
+      rule(:spacing) { match(/\s*/).quiet }
 
       # A matcher followed by whitespace. Only needed in grammars that
-      # don't declare `skip`.
-      def token(m) = Pick.new([Birman.coerce(m), sp], 0)
+      # don't declare `ignore`.
+      def token(m) = Pick.new([Birman.coerce(m), spacing], 0)
     end
 
     # Whitespace including comments. Works on its own or after
@@ -23,11 +23,11 @@ module Birman
     module Comments
       extend RuleSet
 
-      rule(:sp)      { (match(/\s+/) | comment).rep.quiet }
+      rule(:spacing) { (match(/\s+/) | comment).rep.quiet }
       rule(:comment) { match(comment_pattern).label("comment") }
 
       def comment_pattern = /#[^\n]*/
-      def token(m) = Pick.new([Birman.coerce(m), sp], 0)
+      def token(m) = Pick.new([Birman.coerce(m), spacing], 0)
     end
 
     module Numbers
