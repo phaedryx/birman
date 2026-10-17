@@ -71,7 +71,8 @@ end
 ```
 
 See `examples/calc.rb` for a complete small language with an
-interpreter, and `Grammar.to_ebnf` to print any grammar.
+interpreter, `examples/json.rb` for a full JSON parser (tested against
+`JSON.parse`), and `Grammar.to_ebnf` to print any grammar.
 
 ## Building blocks
 
@@ -180,9 +181,11 @@ has one.
 ## Development
 
 ```sh
-bin/setup          # install dependencies
-bundle exec rake   # tests + rubocop
+bin/setup           # install dependencies
+bundle exec rake    # tests + rubocop
 ruby examples/calc.rb
+ruby examples/json.rb
+ruby bench/json.rb  # Birman vs JSON.parse vs Parslet (installs Parslet)
 ```
 
 ## License
