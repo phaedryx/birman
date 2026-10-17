@@ -8,13 +8,17 @@ module Birman
   class ErrorFormatter
     def call(failure)
       <<~MSG.chomp
-        line #{failure.line}, column #{failure.column}: expected #{expected_list(failure.expected)}, found #{failure.found}
+        line #{failure.line}, column #{failure.column}: #{problem(failure)}
           #{source_line(failure)}
           #{' ' * (failure.column - 1)}^
       MSG
     end
 
     private
+
+    def problem(failure)
+      failure.reason || "expected #{expected_list(failure.expected)}, found #{failure.found}"
+    end
 
     def expected_list(items)
       case items

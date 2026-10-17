@@ -62,9 +62,11 @@ module Birman
       return Success.new(result.value) if result && result.pos == input.bytesize
 
       ctx.fail_at(result.pos, "end of input") if result
-      Failure.new(input:, pos: Birman.char_offset(input, ctx.furthest), expected: ctx.expected.uniq, committed: false)
+      build_failure(input, ctx.furthest, ctx.expected)
     rescue Committed => e
-      Failure.new(input:, pos: Birman.char_offset(input, e.pos), expected: e.expected.uniq, committed: true)
+      build_failure(input, e.pos, e.expected, committed: true)
+    rescue SystemStackError
+      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
     end
 
     # Returns the value or raises ParseError.
@@ -94,6 +96,10 @@ module Birman
     end
 
     private
+
+    def build_failure(input, byte_pos, expected, committed: false, reason: nil)
+      Failure.new(input:, pos: Birman.char_offset(input, byte_pos), expected: expected.uniq, committed:, reason:)
+    end
 
     def root_rule = self.class.root || raise(ArgumentError, "#{self.class} has no root rule")
   end

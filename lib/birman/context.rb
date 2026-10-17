@@ -9,7 +9,12 @@ module Birman
   # the offset, which made parsing quadratic. Failure and Span convert
   # back to characters for anything public.
   class Context
-    attr_reader :input, :grammar, :memo, :furthest, :expected
+    # Marks a memo entry whose rule is still being matched.
+    IN_PROGRESS = Object.new.freeze
+
+    # position: where the most recently entered rule started. When the
+    # input nests too deeply for Ruby's stack, that's where it happened.
+    attr_reader :input, :grammar, :memo, :furthest, :expected, :position
 
     def initialize(input, grammar)
       @input = input
@@ -64,6 +69,21 @@ module Birman
 
     def commit_failure! = raise(Committed.new(@furthest, @expected.dup))
 
+    # Rule name's memo entry at pos, computed by the block the first
+    # time. Meeting the rule again at the same position while it is
+    # still being matched means it reaches itself without consuming
+    # input: left recursion, which would never terminate. That's a bug
+    # in the grammar, not the input, so it raises.
+    def memoize(name, pos, &)
+      key = [name, pos]
+      entry = @memo[key]
+      return entry if entry && !entry.equal?(IN_PROGRESS)
+      raise ArgumentError, "left recursion in rule :#{name}: it can reach itself without consuming input" if entry
+
+      @position = pos
+      compute(key, &)
+    end
+
     # Run a lookahead's inner match. A lookahead only asks whether
     # something would match here, so a commit failure inside it is an
     # ordinary failure (nil) rather than the end of the parse.
@@ -71,6 +91,17 @@ module Birman
       yield
     rescue Committed
       nil
+    end
+
+    private
+
+    def compute(key)
+      @memo[key] = IN_PROGRESS
+      @memo[key] = yield
+    ensure
+      # A commit failure caught by a lookahead unwinds through here; the
+      # rule may be tried again at this position afterwards.
+      @memo.delete(key) if @memo[key].equal?(IN_PROGRESS)
     end
   end
 end

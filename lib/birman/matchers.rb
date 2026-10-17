@@ -378,8 +378,9 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
-      result, furthest, expected = ctx.memo[[name, pos]] ||=
+      result, furthest, expected = ctx.memoize(name, pos) do
         ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }
+      end
       ctx.merge(furthest, expected)
       result
     end

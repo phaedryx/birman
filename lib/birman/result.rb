@@ -16,7 +16,12 @@ module Birman
   #
   # committed: true when a match after a commit (>) failed, meaning the
   # parser knew exactly which construct it was in and stopped there.
-  Failure = Data.define(:input, :pos, :expected, :committed) do
+  #
+  # reason: set when the failure isn't about what was expected, such as
+  # input nested too deeply for Ruby's stack.
+  Failure = Data.define(:input, :pos, :expected, :committed, :reason) do
+    def initialize(input:, pos:, expected:, committed:, reason: nil) = super
+
     def success? = false
     def failure? = true
     def value!   = raise ParseError.new(self)

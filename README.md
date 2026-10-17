@@ -148,7 +148,9 @@ has one.
 - `Birman::Rules`: `Whitespace`, `Comments`, `Numbers`, `Strings`,
   `Identifiers`
 - Grammar settings: `root`, `ignore`, `keywords` (all inherited)
-- `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`
+- `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`.
+  Input nested too deeply for Ruby's stack (several hundred levels)
+  is a `Failure` too, with `reason` set.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
@@ -162,7 +164,9 @@ has one.
 
 ## Not yet
 
-- Left recursion (use `infix`, or `term (op term)*` with a fold)
+- Left recursion. A rule that can reach itself without consuming input
+  raises `ArgumentError` naming the rule; use `infix`, or
+  `term (op term)*` with a fold, instead.
 - Compiling grammars to Ruby methods for speed
 - Railroad diagrams from `to_ast`
 

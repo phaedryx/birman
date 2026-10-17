@@ -219,6 +219,38 @@ class BirmanTest < Minitest::Test
     assert_equal({ items: %w[1 2] }, g.parse!("[1,2]"))
   end
 
+  # --- Recursion limits ---
+
+  def test_deep_nesting_is_a_failure_not_a_crash
+    g = grammar { rule(:top) { either(parens(top), "x") } }
+    failure = g.parse("#{"(" * 20_000}x#{")" * 20_000}")
+    assert failure.failure?
+    assert_match(/nested too deeply/, failure.message)
+    assert_operator failure.pos, :>, 0
+  end
+
+  def test_left_recursion_is_reported_by_rule_name
+    g = grammar do
+      rule(:top) { either(seq(top, "+", "1"), "1") }
+    end
+    error = assert_raises(ArgumentError) { g.parse("1+1") }
+    assert_match(/left recursion.*:top/, error.message)
+
+    g = grammar do
+      rule(:top) { seq(other, "!") }
+      rule(:other) { either(top, "x") }
+    end
+    assert_raises(ArgumentError) { g.parse("x!") }
+  end
+
+  def test_a_rule_retried_after_a_contained_commit_is_not_left_recursion
+    g = grammar do
+      rule(:top) { committing.absent >> committing.maybe >> str("ac") }
+      rule(:committing) { str("a") > str("b") }
+    end
+    assert g.parse("ac").committed
+  end
+
   # --- Rule modules ---
 
   def test_rule_modules_compose_and_override
