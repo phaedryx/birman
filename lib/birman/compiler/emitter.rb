@@ -385,7 +385,25 @@ module Birman
         end
       end
 
-      def lookahead(inner) = "begin\n  q = #{inner.name}(p)\nrescue Committed\n  q = FAIL\nend\n"
+      # A commit failure inside a lookahead is just a failure. The rules it
+      # unwound through are left in progress, so they're abandoned. Each
+      # active lookahead holds one of Spinel's 64 begin blocks, so they're
+      # counted (see Compiler::LOOKAHEAD_DEPTH).
+      def lookahead(inner)
+        <<~RUBY
+          raise TooDeep, "lookaheads nested too deeply" if @lookaheads >= LOOKAHEAD_DEPTH
+
+          @lookaheads += 1
+          depth = @in_progress_at.size
+          begin
+            q = #{inner.name}(p)
+          rescue Committed
+            abandon(depth)
+            q = FAIL
+          end
+          @lookaheads -= 1
+        RUBY
+      end
 
       def positive(matcher, want, name)
         define(:and, matcher, false, name, value: want ? "nil" : nil) do
@@ -604,7 +622,6 @@ module Birman
             super
             @sc = StringScanner.new(input)
             init_values
-            init_memos
           end
         RUBY
       end
@@ -615,6 +632,8 @@ module Birman
         <<~RUBY
           # Grammar#parse: Success(value) if all of the input parses, else Failure.
           def parse
+            reset
+            init_memos
           #{indent(start)}
             q = ref_#{ident(root)}(start)
             return Success.new(@v_#{ident(root)}) if q == @len
@@ -623,7 +642,7 @@ module Birman
             failure(@furthest, @expected, false)
           rescue Committed => e
             failure(e.pos, e.expected, true)
-          rescue SystemStackError
+          rescue SystemStackError, TooDeep
             failure_because(@position, "input is nested too deeply")
           end
         RUBY
@@ -656,9 +675,12 @@ module Birman
 
       # Ref: the rule's memo entry at p, computed the first time with
       # fresh failure tracking, which is then merged into the caller's.
-      # An entry abandoned by a commit failure (caught by a lookahead) is
-      # overwritten with ABSENT, never deleted: Hash#delete is O(size) in
-      # Spinel.
+      # No begin/ensure: Spinel allows only 64 of them active at once, and
+      # each level of nesting in the input would use one. Instead, entries
+      # being computed are kept on a stack, and a lookahead that catches a
+      # commit failure marks the ones it unwound through ABSENT (never
+      # deleted: Hash#delete is O(size) in Spinel), so the rule can be
+      # tried again there.
       def ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
@@ -678,15 +700,15 @@ module Birman
             oe = @expected
             @furthest = p
             @expected = NONE
-            begin
-              q = #{call.name}(p)
-            ensure
-              f = @furthest
-              ex = @expected
-              @furthest = of
-              @expected = oe
-              @mp_#{id}[p] = ABSENT if @mp_#{id}[p] == IN_PROGRESS
-            end
+            @in_progress << @mp_#{id}
+            @in_progress_at << p
+            q = #{call.name}(p)
+            @in_progress.pop
+            @in_progress_at.pop
+            f = @furthest
+            ex = @expected
+            @furthest = of
+            @expected = oe
             @mp_#{id}[p] = q
           #{indent("if q != FAIL\n  @v_#{id} = #{call.value || "nil"}\n  @mv_#{id}[p] = @v_#{id}\nend").chomp if valued}
             @mf_#{id}[p] = f

@@ -217,6 +217,10 @@ the rule, for what it can't translate faithfully:
 - regexps using `\A`, `^`, lookbehind, or `\b`/`\B` at their start:
   the generated parser scans from the current position, where those
   would see less of the input than the interpreter's do
+- regexps with a wide `{m,n}` (more than 16 apart) alongside a
+  lookaround, atomic group, backreference or lazy interval: Spinel's
+  regexp engine tries every length on those, exponentially. Making the
+  repeat atomic on its own, `(?>[a-z]{1,63})`, is allowed
 - `.to(Node)` on a value that may or may not be a Hash of fields
 - node classes with methods of their own (a `node(...) { }` body), and
   names that would clash in the generated code (a node called `Success`,
@@ -228,8 +232,19 @@ Actions always run, as in the interpreter, even when nothing reads
 their value. The generated parser reads UTF-8 or binary input (other
 encodings raise `ArgumentError`). It also nests deeper before reporting
 "input is nested too deeply": its methods use less stack than the
-interpreter's matchers, and a Spinel binary has a 64 MB stack, so input
-that fails there with the interpreter can parse when compiled.
+interpreter's matchers, and a Spinel binary has a 64 MB stack (JSON
+arrays nest about 55,000 deep), so input that fails with the interpreter
+can parse when compiled. One limit runs the other way: Spinel allows 64
+`begin` blocks active at once (and exits the process past that), and
+each lookahead (`absent`, `present`, `&`) holds one while its inner
+matcher runs. So lookaheads nested more than 56 deep are a Failure,
+"input is nested too deeply". To allow more, build with a bigger stack
+and say so when generating:
+
+```ruby
+File.write("p.rb", G.to_ruby(namespace: "P", lookahead_depth: 4000))
+# spinel p.rb -o p --cc="cc -DSP_EXC_STACK_MAX=4096"
+```
 
 Under Spinel, `Integer(...)` in a copied action is rewritten to a
 runtime helper that returns Bignums where Spinel's `Integer` would
@@ -275,6 +290,7 @@ bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpre
                           # (SPINEL=/path/to/spinel; skipped if not found)
 ruby examples/calc.rb
 ruby examples/json.rb
+ruby examples/email.rb
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them)
 ```
 

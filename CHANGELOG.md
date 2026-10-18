@@ -6,6 +6,9 @@
   check the README grammar, `examples/calc.rb` and `examples/json.rb`
   against the interpreter (`rake test`, and `rake spinel` for the
   compiled binaries).
+- **Added:** `examples/email.rb`, RFC 5322 email addresses (addr-spec,
+  with UTF-8 and nested comments): a grammar with no ignore rule. It's
+  checked against the generated parsers too.
 - **Added:** ways to transform a value without a block, so a grammar
   can be plain data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,

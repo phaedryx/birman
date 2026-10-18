@@ -46,6 +46,11 @@ module BirmanRT
     end
   end
 
+  # Lookaheads nested past the parser's LOOKAHEAD_DEPTH: Parser#parse
+  # turns it into a Failure, as it does SystemStackError.
+  class TooDeep < StandardError
+  end
+
   # Base class of every generated node, so a rule whose value is one of
   # several node classes still has a single static type.
   class Node
@@ -419,6 +424,7 @@ module BirmanRT
   # of Birman::Context.
   class Parser
     # @rbs @expected: Array[String]
+    # @rbs @in_progress_at: Array[Integer]
 
     attr_reader :input
 
@@ -429,13 +435,24 @@ module BirmanRT
 
       @input = input
       @len = input.bytesize
+      reset
+    end
+
+    private
+
+    # Per-parse state, fresh for every parse (as Birman's Context is), so
+    # a parse that ended in a commit failure, with rules still marked in
+    # progress, leaves nothing behind. Generated parsers also clear their
+    # memos (init_memos).
+    def reset
       @furthest = 0
       @expected = NONE
       @token_ends = {}
       @position = 0
+      @in_progress = []
+      @in_progress_at = []
+      @lookaheads = 0
     end
-
-    private
 
     #: (Integer, String) -> Integer
     def fail_at(pos, what)
@@ -556,6 +573,18 @@ module BirmanRT
         i += 1
       end
       true
+    end
+
+    # A lookahead caught a commit failure: every rule entered since it
+    # began (depth entries ago) was unwound mid-match. Their memo entries
+    # still say IN_PROGRESS; mark them ABSENT so they can be tried again.
+    #: (Integer) -> void
+    def abandon(depth)
+      while @in_progress_at.size > depth
+        memo = @in_progress.pop
+        p = @in_progress_at.pop
+        memo[p] = ABSENT if memo[p] == IN_PROGRESS
+      end
     end
 
     def left_recursion(name)

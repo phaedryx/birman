@@ -8,6 +8,7 @@ require "json"
 require_relative "differential"
 require_relative "../../examples/calc"
 require_relative "../../examples/json"
+require_relative "../../examples/email"
 
 module Examples
   # The README's grammar.
@@ -32,11 +33,25 @@ module Examples
     end
   end
 
+  # Parentheses where each level looks ahead at the next (nest.present):
+  # every level of nesting is an active lookahead.
+  module Nest
+    # (((...)))
+    class Grammar
+      include Birman::Grammar
+
+      root :nest
+      rule(:nest) { seq(str("("), (nest.present >> nest).maybe, str(")")) }
+    end
+
+    def self.input(depth) = "#{"(" * depth}#{")" * depth}"
+  end
+
   Example = Data.define(:name, :grammar, :namespace, :inputs)
 
   module_function
 
-  def all(count) = [let(count), calc(count), json(count)]
+  def all(count) = [let(count), calc(count), json(count), email(count)]
 
   def let(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
@@ -57,6 +72,14 @@ module Examples
     mutants = docs.map { Differential.mutate(rng, _1, JSONGen::REPLACEMENTS) }
     inputs = JSON_FIXED + Differential.fuzz(JSON_TOKENS, rng, count, 10) + docs + mutants
     Example.new("json", JSONExample::Grammar, "JSONCompiled", inputs)
+  end
+
+  def email(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    addresses = Array.new(count / 2) { EmailGen.address(rng) }
+    mutants = addresses.map { Differential.mutate(rng, _1, EmailGen::REPLACEMENTS) }
+    inputs = EMAIL_FIXED + Differential.fuzz(EMAIL_TOKENS, rng, count, 10) + addresses + mutants
+    Example.new("email", EmailExample::Grammar, "EmailCompiled", inputs)
   end
 
   LET_FIXED = [
@@ -83,7 +106,10 @@ module Examples
     "print 1.5 * 2.25", "print 1.", "print .5", "print 007", "print 9223372036854775808",
     "print 123456789012345678901234567890123456789 + 1",
     "print ((((((((((1))))))))))", "print \"\\", "print \"a\\\"b\"", ")", "let x = 1 )",
-    "print -1", "print x→", "print let→", "print é", "print 1 ++ 2"
+    "print -1", "print x→", "print let→", "print é", "print 1 ++ 2",
+    # Deep nesting: Spinel allows 64 active begin/rescue/ensure blocks.
+    "print #{"(" * 200}1#{")" * 200}", "print #{"(" * 200}1#{")" * 199}",
+    "print #{"if 1 then " * 100}1#{" else 2" * 100}"
   ].freeze
 
   CALC_TOKENS = ["let", "print", "if", "then", "else", "x", "y1", "_z", "letter", "=", "+", "-", "*", "/",
@@ -102,7 +128,8 @@ module Examples
     "", "[1, 2,]", '{"a": 1,}', '{"a" 1}', "{a: 1}", "['x']", '"unterminated',
     "[1, 2", "01", "1.", ".5", "+1", "tru", "nul", "truex", '"\\x"', "\"a\u0001b\"",
     "[1] [2]", "// comment\n1", "{", "[", '{"a"', '{"a":', "\u00a0[]", "[1\u00a0]", "-", "1e", "1e+",
-    '"\\u12"', '"\\uZZZZ"', "nulll", "[true false]"
+    '"\\u12"', '"\\uZZZZ"', "nulll", "[true false]",
+    "#{"[" * 300}#{"]" * 300}", "#{"[" * 300}#{"]" * 299}", "#{'{"a":' * 200}1#{"}" * 200}"
   ].freeze
 
   JSON_TOKENS = ["{", "}", "[", "]", ",", ":", " ", "\n", "\"", "\"k\"", "\"\\n\"", "\"\\u00e9\"", "\\",
@@ -117,6 +144,68 @@ module Examples
     "0o#{"7" * 25}", "0d#{"9" * 20}", "0_#{"7" * 20}", "0x_#{"f" * 20}", "0x#{"f" * 20}g", "0#{"8" * 20}",
     "0b#{"2" * 20}", "  -#{"5" * 30}  ", "1e#{"0" * 20}", 1.5, 42, nil
   ].freeze
+
+  EMAIL_FIXED = [
+    "jo@example.com", "first.last+tag@sub.example.org", "!#$%&'*+/=?^_`{|}~-@x.io", '"jo smith"@example.com',
+    '"a\\"b\\\\c"@x', "\"fold\r\n here\"@x", "jo (a (nested) comment) @ (here) example.com (end)",
+    "jö@xn--bcher-kva.example", "a@#{"b" * 63}.c", "jo@[192.168.0.1]", "jo@[1.2.3.256]", "jo@[ IPv6:::1 ]",
+    "jo@[1.2.3.4.5]", "jo@[01.2.3.4]", "jo@[]", "jo@[\r\n 1]", "(c)jo@x", "jo@x(c)", "jo@x (c\\)d)",
+    "", "jo", "jo@", "@example.com", "jo..x@example.com", ".jo@example.com", "jo.@example.com",
+    "jo@-example.com", "jo@example-.com", "jo@exa_mple.com", "jo@example..com", "\"unclosed@example.com",
+    "jo(oops@example.com", "jo@[1.2.3.4", "jo@#{"b" * 64}.c", "jo@#{(["a" * 63] * 4).join(".")}",
+    "jo smith@example.com", "jo@bücher.example", "jo@ ", "jo @", "jo@x\r\n", "\"\\é\"@x", "jo@x.", "jo@.x",
+    "\"\"@x", "jo(((deep)))@x", "jo(\\(@x", "jo@[a]b", "\r\n jo@x", "jo\r\n\r\n @x",
+    # Length bounds: Spinel's regexp engine once raised on a failing
+    # label of 64+ characters (see examples/email.rb).
+    "jo@#{"b" * 300}.c", "jo@#{"b" * 5000}", "jo@x.#{"b" * 64}", "jo@#{"b" * 63}-.c", "jo@#{"b" * 62}-b.c",
+    "jo@#{%w[b c d].map { _1 * 63 }.join(".")}.#{"e" * 61}", "jo@#{%w[b c d].map { _1 * 63 }.join(".")}.#{"e" * 62}",
+    "jo@#{Array.new(127, "a").join(".")}", "jo@#{Array.new(128, "a").join(".")}",
+    "jo(#{"(" * 50}#{")" * 50})@x", "jo(#{"(" * 50}#{")" * 49}@x"
+  ].freeze
+
+  EMAIL_TOKENS = ["jo", "x", "a.b", ".", "@", "example", "com", "-", "--", "\"", "\\", "(", ")", "[", "]", " ",
+                  "\t", "\r\n", "1", "192.168.0.1", "é", "_", "+", "IPv6:", ":"].freeze
+
+  # Valid addresses, built from the grammar.
+  module EmailGen
+    module_function
+
+    REPLACEMENTS = ["@", ".", "\"", "(", ")", "[", "]", " ", "\\", "-", "é", "_", "\r\n"].freeze
+    ATOMS = ["jo", "first", "x", "o'neil", "a+b", "é", "{}", "1"].freeze
+    LABELS = ["example", "com", "a", "b-c", "xn--bcher-kva", "x1", "9"].freeze
+
+    def cfws(rng)
+      case rng.rand(8)
+      when 0, 1, 2 then ""
+      when 3 then [" ", "\r\n ", "\t"].sample(random: rng)
+      else [" ", ""].sample(random: rng) + comment(rng, rng.rand(1..4))
+      end
+    end
+
+    # A comment nested depth levels deep, with escapes and folding.
+    def comment(rng, depth)
+      inner = depth > 1 ? comment(rng, depth - 1) : ""
+      text = ["c", "a \\) b", "é", "x\r\n y", ""].sample(random: rng)
+      "(#{text}#{" " if rng.rand(2).zero?}#{inner})"
+    end
+
+    def local(rng)
+      quoted = ["jo smith", "a\\\"b", "", "é→", "tab\there", "\\\\\\(", "fold\r\n x", "\\ \\é"]
+      return %("#{quoted.sample(random: rng)}") if rng.rand(4).zero?
+
+      Array.new(rng.rand(1..3)) { ATOMS.sample(random: rng) }.join(".")
+    end
+
+    def domain(rng)
+      case rng.rand(5)
+      when 0 then "[#{Array.new(4) { rng.rand(256) }.join(".")}]"
+      when 1 then ["[IPv6:::1]", "[ x ]", "[1.2.3.999]"].sample(random: rng)
+      else Array.new(rng.rand(1..3)) { rng.rand(10).zero? ? "#{"b" * 62}c" : LABELS.sample(random: rng) }.join(".")
+      end
+    end
+
+    def address(rng) = "#{cfws(rng)}#{local(rng)}#{cfws(rng)}@#{cfws(rng)}#{domain(rng)}#{cfws(rng)}"
+  end
 
   # Valid calc programs, built from the grammar.
   module CalcGen

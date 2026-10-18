@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Compiles the parsers generated from the README grammar, examples/calc.rb
-# and examples/json.rb with Spinel, then checks each binary against the
+# Compiles the parsers generated from the README grammar, examples/calc.rb,
+# examples/json.rb and examples/email.rb with Spinel, then checks each binary against the
 # interpreter on the same inputs test_compiled_examples.rb uses.
 #
 #   bundle exec rake spinel                 # all three
@@ -96,15 +96,50 @@ module IntegerCheck
   end
 end
 
+# Lookaheads nested past LOOKAHEAD_DEPTH are a Failure, not Spinel's exit
+# when its 64 begin blocks run out; a binary built with a bigger
+# SP_EXC_STACK_MAX takes a bigger lookahead_depth.
+module DepthCheck
+  module_function
+
+  def build(compiler, name, depth, *flags)
+    path = File.join(SpinelDiff::OUT, "#{name}.rb")
+    source = Examples::Nest::Grammar.to_ruby(namespace: "NestCompiled", lookahead_depth: depth)
+    File.write(path, "#{source}\n#{Differential.main_source("NestCompiled")}")
+    out, status = Open3.capture2e(compiler, path, "-o", path.delete_suffix(".rb"), *flags)
+    abort "spinel failed on #{path}:\n#{out}" unless status.success?
+    path.delete_suffix(".rb")
+  end
+
+  def gives?(binary, depth, want)
+    out, status = Open3.capture2e(binary, stdin_data: Examples::Nest.input(depth))
+    return true if status.success? && out.include?(want)
+
+    puts "  #{File.basename(binary)} at depth #{depth}: exit #{status.exitstatus}, #{out.lines.first&.chomp}"
+    false
+  end
+
+  def agrees?(compiler)
+    default = build(compiler, "nest_parser", Birman::Compiler::LOOKAHEAD_DEPTH)
+    deep = build(compiler, "nest_parser_deep", 4000, "--cc=cc -DSP_EXC_STACK_MAX=4096")
+    too_deep = "reason=\"input is nested too deeply\""
+    results = [gives?(default, 50, "ok ["), gives?(default, 100, too_deep), gives?(deep, 3000, "ok ["),
+               gives?(deep, 5000, too_deep)]
+    puts "lookahead depth: #{results.size} cases, #{results.count(false)} mismatches"
+    results.all?
+  end
+end
+
 compiler = SpinelDiff.spinel
 unless compiler
   puts "Spinel not found (set SPINEL=/path/to/spinel): skipping the compiled-parser tests"
   exit 0
 end
 
-wanted = ARGV.empty? ? %w[let calc json] : ARGV
+wanted = ARGV.empty? ? %w[let calc json email] : ARGV
 examples = Examples.all(Integer(ENV.fetch("INPUTS", 3000))).select { wanted.include?(_1.name) }
 FileUtils.mkdir_p(SpinelDiff::OUT)
 ok = examples.map { |example| SpinelDiff.agrees?(example, SpinelDiff.build(example, compiler)) }
 ok << IntegerCheck.agrees?(compiler) if ARGV.empty?
+ok << DepthCheck.agrees?(compiler) if ARGV.empty?
 exit(ok.all? ? 0 : 1)

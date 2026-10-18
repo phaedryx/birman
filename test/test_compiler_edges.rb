@@ -148,6 +148,23 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["letxxaxc", "letxab", "let x", "letxxbbd"]
   end
 
+  # Spinel runs a regexp with a lookaround, atomic group, backreference
+  # or lazy interval on a backtracking engine that tries every length a
+  # wide {m,n} allows: exponential, and RegexpError past ~18.
+  def test_refuses_wide_intervals_spinel_would_backtrack_through
+    [/[a-z]{1,30}(?![a-z])/, /(?=a)[a-z]{1,30}/, /(?>b)[a-z]{1,30}c/, /(a)[a-z]{0,20}\1/, /x[a-z]{1,30}?y/,
+     /(?>[a-z]{1,30}x)(?!y)/, /(?>[a-z]{1,30}|b)(?!y)/, /(?:ab){1,30}(?!x)/].each do |re|
+      assert_refused grammar { rule(:top) { match(re) } }, /rule :top.*\{/
+    end
+  end
+
+  def test_accepts_intervals_spinel_runs_in_linear_time
+    g = grammar do
+      rule(:top) { match(/(?>[a-z]{1,30})(?![a-z])/) >> match(/[0-9]{1,30}x/) >> match(/y(?!z)[a-z]{2,10}/) }
+    end
+    assert_same_results g, ["abc123xyab", "#{"a" * 31}1xyab", "a1xyz", "a1xyabcdefghijkl"]
+  end
+
   def test_regexps_that_only_look_like_anchors
     g = grammar { rule(:top) { match(/\p{^L}+/) >> match(/a(?# ^ )b/) } }
     assert_same_results g, ["12ab", "ab", "1a b"]
@@ -218,6 +235,43 @@ class CompilerEdgesTest < Minitest::Test
 
     parent = grammar(ignore: :spacing) { rule(:top) { seq("a", "b") } }
     assert_same_results Class.new(parent) { ignore nil }, ["ab", "a b", "a"]
+  end
+
+  # Like the interpreter's fresh Context per parse: nothing left over
+  # from a parse that ended in a commit failure (rules left in progress,
+  # failure tracking, token ends) changes the next one.
+  def test_parsing_again_with_the_same_parser
+    g = grammar(ignore: :spacing) do
+      rule(:top) { either(seq("let", commit, match(/\w+/).as(:name), "=", match(/\d+/).as(:value)), pair) }
+      rule(:pair) { seq(match(/\w+/), "=", match(/\d+/)) }
+    end
+    Differential.load(g, "CompilerTestParser")
+    ["let x = 1", "let x =", "y = 2 ", "let", "y ="].each do |input|
+      parser = CompilerTestParser::Parser.new(input)
+      want = Differential.interpreted(g, input)
+      3.times { assert_equal want, Differential.report(parser.parse, CompilerTestParser::BirmanRT.method(:dump)), input }
+    end
+  end
+
+  # Spinel exits the process when more than 64 begin blocks are active,
+  # so lookaheads nested past lookahead_depth make a Failure instead.
+  def test_lookaheads_nested_too_deeply_fail_cleanly
+    g = grammar(:nest) { rule(:nest) { seq(str("("), (nest.present >> nest).maybe, str(")")) } }
+    Object.send(:remove_const, :CompilerTestDepth) if defined?(CompilerTestDepth)
+    Object.class_eval(g.to_ruby(namespace: "CompilerTestDepth", lookahead_depth: 5))
+    shallow = "#{"(" * 4}#{")" * 4}"
+    assert_equal g.parse!(shallow), CompilerTestDepth::Parser.new(shallow).parse.value
+
+    parser = CompilerTestDepth::Parser.new("#{"(" * 10}#{")" * 10}")
+    failure = parser.parse
+    refute failure.success?
+    assert_equal "input is nested too deeply", failure.reason
+    assert parser.parse.reason, "and again on the same parser"
+  end
+
+  def test_lookahead_depth_must_be_positive
+    g = grammar { rule(:top) { str("a") } }
+    assert_raises(ArgumentError) { g.to_ruby(namespace: "X", lookahead_depth: 0) }
   end
 
   # --- Encodings ---

@@ -32,15 +32,28 @@ module Birman
     # or copied constant with one of these names would sit in the same
     # lexical scope and shadow it, so it's refused.
     RESERVED_CONSTANTS = %w[
-      BirmanRT Parser Node Span Success Failure Committed FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
+      BirmanRT Parser Node Span Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
+      LOOKAHEAD_DEPTH
       StringScanner Hash Array String Integer Float Symbol Regexp Kernel Encoding
       StandardError ArgumentError RangeError SystemStackError
     ].freeze
 
-    def initialize(grammar_class, namespace:)
+    # Spinel allows 64 begin blocks active at once and exits the process
+    # past that. Each lookahead (absent, present, &) holds one while its
+    # inner matcher runs, so nesting deeper than this is a Failure ("input
+    # is nested too deeply") instead. A binary built with a bigger
+    # -DSP_EXC_STACK_MAX can take a bigger depth.
+    LOOKAHEAD_DEPTH = 56
+
+    def initialize(grammar_class, namespace:, lookahead_depth: LOOKAHEAD_DEPTH)
       unless namespace.match?(/\A[A-Z]\w*(::[A-Z]\w*)*\z/)
         raise ArgumentError, "namespace must be a constant path, like \"CalcParser\""
       end
+      unless lookahead_depth.is_a?(Integer) && lookahead_depth.positive?
+        raise ArgumentError, "lookahead_depth must be a positive Integer"
+      end
+
+      @lookahead_depth = lookahead_depth
 
       @grammar_class = grammar_class
       @grammar = grammar_class.new
@@ -107,6 +120,9 @@ module Birman
       <<~RUBY
         class Parser < BirmanRT::Parser
           include BirmanRT
+
+          # How deeply lookaheads may nest (Grammar.to_ruby's lookahead_depth).
+          LOOKAHEAD_DEPTH = #{@lookahead_depth}
 
         #{indent(emitter.parser_body, 1)}
         end

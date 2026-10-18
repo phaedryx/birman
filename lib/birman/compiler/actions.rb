@@ -18,8 +18,8 @@ module Birman
       # copied method must not replace.
       RESERVED = /\A(?:rule_|ref_|lit_|init_|skip_|str_)/
       RUNTIME_METHODS = %i[
-        initialize parse skip_ignored fail_at merge commit_failure ignored_after token_end span_end span
-        failure failure_because label_end peek_end bytes_at? left_recursion
+        initialize parse reset skip_ignored fail_at merge commit_failure ignored_after token_end span_end span
+        failure failure_because label_end peek_end bytes_at? abandon left_recursion
       ].freeze
 
       def initialize(grammar)

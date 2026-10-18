@@ -91,10 +91,13 @@ module Birman
       # A standalone parser for this grammar, as Ruby source: the same
       # results as parse, from code Spinel can compile to a native binary.
       # [method."Grammar.to_ruby"]
-      # params = ["namespace: String, the module the parser is defined in (\"CalcParser\")"]
+      # params = [
+      #   "namespace: String, the module the parser is defined in (\"CalcParser\")",
+      #   "lookahead_depth: Integer = 56, how deeply lookaheads may nest (see Compiler)"
+      # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = ["Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)"]
-      def to_ruby(namespace:) = Compiler.new(self, namespace:).to_ruby
+      def to_ruby(namespace:, **) = Compiler.new(self, namespace:, **).to_ruby
 
       private
 

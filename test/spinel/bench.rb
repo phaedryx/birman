@@ -4,7 +4,7 @@
 # parser under CRuby, and the Spinel binary (parse only, via --bench).
 # Run test/spinel/diff.rb first: it builds the binaries.
 #
-#   bundle exec ruby test/spinel/bench.rb [calc|json] [size]
+#   bundle exec ruby test/spinel/bench.rb [calc|json|email] [size]
 $LOAD_PATH.unshift File.expand_path("../../lib", __dir__)
 require "birman"
 require_relative "../support/examples"
@@ -16,7 +16,13 @@ example, source =
   case name
   when "calc" then [Examples.calc(0), Examples::CalcGen.program(rng, size)]
   when "json" then [Examples.json(0), "[#{Array.new(size) { Examples::JSONGen.document(rng) }.join(",\n")}]"]
-  else abort "bench calc or json"
+  # One address with a long local part (size atoms) between long nested
+  # comments: RFC 5322 allows comments around a dot-atom, not inside it.
+  when "email"
+    atoms = Array.new(size) { Examples::EmailGen::ATOMS.sample(random: rng) }
+    comment = "(#{Array.new(size / 10) { "a (b \\) c) " }.join})"
+    [Examples.email(0), "#{comment}#{atoms.join(".")} #{comment}@example.com"]
+  else abort "bench calc, json or email"
   end
 
 out = File.expand_path("../../tmp/spinel", __dir__)
