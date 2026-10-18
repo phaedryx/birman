@@ -181,6 +181,61 @@ has one.
   `class`, `match`, `token`...). Defining one raises `ArgumentError`
   instead of silently breaking the grammar. Redefining a rule is fine.
 
+## Generating a parser
+
+`Grammar.to_ruby` writes a standalone parser: Ruby source with no
+dependency on Birman that gives exactly the results `parse` gives
+(values, spans, error positions, expected lists and messages).
+
+```ruby
+File.write("calc_parser.rb", Calc::Grammar.to_ruby(namespace: "CalcParser"))
+require_relative "calc_parser"
+CalcParser::Parser.new("print 1 + 2").parse   # => Success or Failure
+```
+
+The output is written in the Ruby subset that
+[Spinel](https://github.com/matz/spinel) compiles to a native binary.
+Add an entry point and compile it:
+
+```ruby
+source = Calc::Grammar.to_ruby(namespace: "CalcParser") + <<~RUBY
+  result = CalcParser::Parser.new($stdin.read).parse
+  puts result.success? ? result.value.inspect : result.message
+RUBY
+File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
+```
+
+Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,
+with the same fields, `span`, `==` and `inspect`. Values transformed
+with `.map(:sym)`, `.action(:name)` and `.means(v)` compile: an action's
+method is copied from its source, with the grammar methods it calls
+and the constants it reads, so copying needs the `prism` gem (bundled
+from Ruby 3.3). The generator raises `Birman::Compiler::Error`, naming
+the rule, for what it can't translate faithfully:
+
+- `.map { }` blocks (their source is lost) and custom matcher classes
+- regexps using `\A`, `^`, lookbehind, or `\b`/`\B` at their start:
+  the generated parser scans from the current position, where those
+  would see less of the input than the interpreter's do
+- `.to(Node)` on a value that may or may not be a Hash of fields
+- node classes with methods of their own (a `node(...) { }` body), and
+  names that would clash in the generated code (a node called `Success`,
+  a copied constant called `FAIL`, two copied constants of one name)
+- actions that call `super`, Birman's own API (`keywords`, rules), or
+  classes the generated parser won't have
+
+Actions always run, as in the interpreter, even when nothing reads
+their value. The generated parser reads UTF-8 or binary input (other
+encodings raise `ArgumentError`). It also nests deeper before reporting
+"input is nested too deeply": its methods use less stack than the
+interpreter's matchers, and a Spinel binary has a 64 MB stack, so input
+that fails there with the interpreter can parse when compiled.
+
+Under Spinel, `Integer(...)` in a copied action is rewritten to a
+runtime helper that returns Bignums where Spinel's `Integer` would
+raise, and a string that isn't valid UTF-8 (JSON's lone `\ud83d`)
+has the same bytes but `inspect`s differently.
+
 ## Limits
 
 - **Deep nesting.** Each level of nesting in the input uses Ruby
@@ -209,7 +264,6 @@ has one.
 - Left recursion. A rule that can reach itself without consuming input
   raises `ArgumentError` naming the rule; use `infix`, or
   `term (op term)*` with a fold, instead.
-- Compiling grammars to Ruby methods for speed
 - Railroad diagrams from `to_ast`
 
 ## Development
@@ -217,6 +271,8 @@ has one.
 ```sh
 bin/setup           # install dependencies
 bundle exec rake    # tests + rubocop
+bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpreter
+                          # (SPINEL=/path/to/spinel; skipped if not found)
 ruby examples/calc.rb
 ruby examples/json.rb
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them)

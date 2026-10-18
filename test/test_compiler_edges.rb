@@ -1,0 +1,235 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require_relative "support/examples"
+require_relative "support/compiler_helpers"
+
+# Grammar.to_ruby at the edges the example grammars don't reach: name
+# clashes, action copying, regexps, value shapes, encodings. Each case
+# either agrees with the interpreter or is refused with a Compiler::Error.
+class CompilerEdgesTest < Minitest::Test
+  include CompilerTestHelpers
+
+  Pair = Birman.node(:left, :right)
+  Wrap = Birman.node(:value)
+  Bin = Birman.node(:op, :left, :right)
+  Doubled = Birman.node(:value) { def initialize(value:) = super(value: value * 2) }
+
+  # Shadow the runtime's names, as a grammar's own constants might.
+  module Shadows
+    FAIL = 0
+    Success = Birman.node(:value)
+    Parser = Birman.node(:value)
+
+    # An action reading its own FAIL.
+    class Grammar
+      include Birman::Grammar
+
+      root :top
+      rule(:top) { seq(str("a").action(:zero), str("b")) | str("c") }
+
+      private
+
+      def zero(_text) = FAIL
+    end
+  end
+
+  # A module that already holds node classes, used as the namespace.
+  module Taken
+    Thing = Birman.node(:value)
+  end
+
+  ESCAPES = { "n" => "N" }.freeze
+  Helper = Class.new
+
+  # --- Names ---
+
+  def test_refuses_a_copied_constant_shadowing_the_runtime
+    assert_refused Shadows::Grammar, /FAIL/
+  end
+
+  def test_refuses_node_classes_named_like_the_runtime
+    assert_refused grammar { rule(:top) { str("a").to(Shadows::Success) } }, /Success/
+    assert_refused grammar { rule(:top) { str("a").to(Shadows::Parser) } }, /Parser/
+  end
+
+  def test_refuses_a_namespace_that_already_defines_the_node_classes
+    g = grammar { rule(:top) { str("a").to(Taken::Thing) } }
+    error = assert_raises(Birman::Compiler::Error) { g.to_ruby(namespace: "CompilerEdgesTest::Taken") }
+    assert_match(/Thing/, error.message)
+  end
+
+  def test_refuses_node_classes_with_methods_of_their_own
+    assert_refused grammar { rule(:top) { match(/\d/).to(Doubled) } }, /Doubled/
+  end
+
+  def test_rule_names_that_arent_identifiers
+    g = grammar(:top?) do
+      rule(:top?) { seq(item!, item!) }
+      rule(:item!) { match(/\w/) }
+    end
+    assert_same_results g, %w[ab a]
+  end
+
+  # --- Actions ---
+
+  def test_unread_actions_still_run
+    g = grammar do
+      rule(:top) { seq(str("a").as(:key), match(/\d/).action(:odd)) }
+
+      private
+
+      def odd(text)
+        text.to_i.odd? ? text : raise(ArgumentError, "#{text} is even")
+      end # rubocop:disable Lint/NestedMethodDefinition
+    end
+    parser = Differential.load(g, "CompilerTestParser")
+    assert_equal({ key: "a" }, g.parse!("a1"))
+    assert_equal({ key: "a" }, parser.new("a1").parse.value)
+    want = assert_raises(ArgumentError) { g.parse("a2") }
+    got = assert_raises(ArgumentError) { parser.new("a2").parse }
+    assert_equal want.message, got.message
+  end
+
+  def test_copies_birman_helpers_and_self_calls
+    g = grammar do
+      include Birman::Rules::Strings
+
+      rule(:top) { match(/\\./).action(:unescape) }
+
+      private
+
+      def unescape(text)
+        shout(decode_escape(text))
+      end # rubocop:disable Lint/NestedMethodDefinition
+
+      def shout(text) = "<#{text}>" # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["\\n", "\\q", "x"]
+  end
+
+  def test_refuses_actions_it_cant_copy
+    # rubocop:disable-next Lint/NestedMethodDefinition, Lint/UselessMethodDefinition
+    refused = {
+      /super/ => proc { def act(text) = super },
+      /keywords/ => proc { def act(_text) = keywords.first },
+      /Helper/ => proc { def act(_text) = Helper.new }
+    }
+    refused.each do |pattern, definition|
+      g = grammar { rule(:top) { str("a").action(:act) } }
+      g.class_eval(&definition)
+      assert_refused g, pattern
+    end
+  end
+
+  def test_refuses_two_constants_of_one_name
+    g = grammar do
+      include Birman::Rules::Strings
+
+      rule(:top) { match(/\\./).action(:decode_escape) | match(/\w/).action(:mine) }
+
+      private
+
+      def mine(text) = ESCAPES.fetch(text, text) # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_refused g, /ESCAPES/
+  end
+
+  # --- Regexps ---
+
+  def test_refuses_word_boundaries_that_may_come_first
+    [/(?i)\bb/, /(?i:\bb)/, /(?=\b)b/, /(?!\B)a/, /x?\bb/, /x*\Bb/, / \bb/x, /(?:a|\b)b/, /(a)?\bb/].each do |re|
+      assert_refused grammar { rule(:top) { match(re) } }, /rule :top/
+    end
+  end
+
+  def test_accepts_word_boundaries_after_something_was_matched
+    g = grammar { rule(:top) { match(/(?:let)\b/) >> match(/x+\b/) >> match(/[ab]\B/) >> match(/(?:c|d)\b/) } }
+    assert_same_results g, ["letxxaxc", "letxab", "let x", "letxxbbd"]
+  end
+
+  def test_regexps_that_only_look_like_anchors
+    g = grammar { rule(:top) { match(/\p{^L}+/) >> match(/a(?# ^ )b/) } }
+    assert_same_results g, ["12ab", "ab", "1a b"]
+  end
+
+  def test_extended_regexps_with_a_trailing_comment
+    g = grammar { rule(:top) { match(/a # comment/x) } }
+    assert_same_results g, %w[a b]
+  end
+
+  # --- Values ---
+
+  def test_map_to_i_on_values_that_arent_strings
+    g = grammar { rule(:top) { match(/\d+/).maybe.map(:to_i) } }
+    assert_same_results g, ["", "12", "#{"9" * 25}x"]
+  end
+
+  def test_to_over_infix_that_passes_a_hash_through
+    g = grammar { rule(:top) { infix(seq(match(/\d/).as(:value)), "+", node: Bin).to(Wrap) } }
+    assert_same_results g, ["1", "1+2", "1+"]
+  end
+
+  def test_to_over_refs_choices_and_actions
+    g = grammar do
+      rule(:top) { either(pair.to(Pair), named.to(Pair), match(/\w/).action(:hashed).to(Wrap)) }
+      rule(:pair) { seq(match(/\d/).as(:left), "=", match(/\d/).as(:right)) }
+      rule(:named) do
+        either(seq(str("<").as(:left), str(">").as(:right)), seq(str("[").as(:left), str("]").as(:right)))
+      end
+
+      private
+
+      def hashed(text) = text == "h" ? { value: text * 2 } : text # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["1=2", "<>", "[]", "h", "x", "1="]
+  end
+
+  # --- Diagnostics ---
+
+  def test_label_that_succeeds_without_consuming
+    g = grammar { rule(:top) { match(/a*/).label("as") >> str("b") } }
+    assert_same_results g, %w[b ab c aac]
+  end
+
+  def test_commits_inside_positive_lookaheads
+    g = grammar do
+      rule(:top) do
+        ((str("a") > str("b")).present >> match(/\w+/)) | ((str("c") > str("d")) & match(/\w+/))
+      end
+    end
+    assert_same_results g, %w[ab ac cd ce x]
+  end
+
+  def test_rule_retried_after_a_commit_failure_in_a_lookahead
+    g = grammar do
+      rule(:r) { str("a") > str("b") }
+      rule(:top) { seq(r.absent, str("zz")) | r | match(/\w+/) }
+    end
+    assert_same_results g, %w[ab ac zz a q]
+  end
+
+  def test_lexeme_without_an_ignore_rule_and_a_subclass_clearing_ignore
+    g = grammar do
+      lexeme(:tok) { match(/\w+/) }
+      rule(:top) { seq(tok, "=", tok) }
+    end
+    assert_same_results g, ["a=b", "a = b"]
+
+    parent = grammar(ignore: :spacing) { rule(:top) { seq("a", "b") } }
+    assert_same_results Class.new(parent) { ignore nil }, ["ab", "a b", "a"]
+  end
+
+  # --- Encodings ---
+
+  def test_binary_input_counts_bytes_as_characters
+    g = grammar { rule(:top) { seq(str("a"), str("b")) } }
+    assert_same_results g, ["\xA9c".b, "a\xA9".b, "ab".b, "a\nb\xA9".b]
+  end
+
+  def test_refuses_input_in_other_encodings
+    parser = Differential.load(grammar { rule(:top) { str("a") } }, "CompilerTestParser")
+    error = assert_raises(ArgumentError) { parser.new("a".encode("UTF-16LE")) }
+    assert_match(/UTF-16LE/, error.message)
+  end
+end

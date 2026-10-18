@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+- **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
+  parser, as Ruby source Spinel can compile to a native binary, that
+  agrees with `parse` on values, spans and errors. Differential tests
+  check the README grammar, `examples/calc.rb` and `examples/json.rb`
+  against the interpreter (`rake test`, and `rake spinel` for the
+  compiled binaries).
 - **Added:** ways to transform a value without a block, so a grammar
   can be plain data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,
