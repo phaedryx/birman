@@ -227,6 +227,24 @@ the rule, for what it can't translate faithfully:
   a copied constant called `FAIL`, two copied constants of one name)
 - actions that call `super`, Birman's own API (`keywords`, rules), or
   classes the generated parser won't have
+- actions that call `Integer(...)`, `.hex`, `.oct` or `.to_i` (on
+  anything but an Integer literal, since a receiver's type can't be
+  told), or name them (`map(&:to_i)`): in a Spinel binary they raise
+  past 63 bits. Use `large_integer(text)` or `large_integer(text, base)`
+  (`16` for `hex`, `8` for `oct`), which Birman gives every grammar: it
+  is `Integer(text, base)` in Ruby, and in the generated parser it
+  returns Bignums under Spinel too (from Floats as well: exactly, as
+  Ruby's `Integer` does). `.map(:to_i)` is fine on a String, an optional
+  String (`.maybe`; nil is 0) or an Integer; `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on
+  anything else are refused, as are `send` and `method` with a name
+  that isn't a literal symbol. This is a net for the common forms, not
+  a proof: `Float(text).round` and `text.to_f.to_int` overflow too, and
+  aren't caught. In a binary, `large_integer` doesn't take negative
+  bases (Ruby's "prefix or this base")
+
+```ruby
+def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)
+```
 
 Actions always run, as in the interpreter, even when nothing reads
 their value. The generated parser reads UTF-8 or binary input (other
@@ -246,10 +264,9 @@ File.write("p.rb", G.to_ruby(namespace: "P", lookahead_depth: 4000))
 # spinel p.rb -o p --cc="cc -DSP_EXC_STACK_MAX=4096"
 ```
 
-Under Spinel, `Integer(...)` in a copied action is rewritten to a
-runtime helper that returns Bignums where Spinel's `Integer` would
-raise, and a string that isn't valid UTF-8 (JSON's lone `\ud83d`)
-has the same bytes but `inspect`s differently.
+Copied actions are exactly what you wrote. Under Spinel, a string that
+isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
+`inspect`s differently.
 
 ## Limits
 

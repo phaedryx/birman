@@ -112,6 +112,7 @@ class CompilerTest < Minitest::Test
   # --- Values ---
 
   SUFFIX = "?"
+  KIND = :oct
 
   # Actions are copied from their source, along with the constants they
   # read (resolved lexically, as Ruby does) and the methods they call.
@@ -127,35 +128,154 @@ class CompilerTest < Minitest::Test
     assert_same_results g, %w[12ab! 99999999999999999999999x! 1a 1!]
   end
 
-  # Copied actions' Integer(x) calls become BirmanRT.to_integer(x).
+  # BirmanRT.to_integer is Grammar#large_integer in a generated parser.
   def test_to_integer_agrees_with_kernel_integer
     Differential.load(grammar { rule(:top) { str("x") } }, "CompilerTestParser")
     runtime = CompilerTestParser::BirmanRT
-    Examples::INTEGER_CASES.each do |value|
-      want = begin
-        Integer(value)
-      rescue ArgumentError, TypeError => e
-        e.class
-      end
-      got = begin
-        runtime.to_integer(value)
-      rescue ArgumentError, TypeError => e
-        e.class
-      end
-      assert_equal want, got, "Integer(#{value.inspect})"
+    cases = Examples::INTEGER_CASES.map { [_1, 0] } + Examples::INTEGER_BASE_CASES + Examples::NEGATIVE_BASE_CASES +
+            Examples::FLOAT_CASES.map { [_1, 0] }
+    cases.each do |value, base|
+      assert_equal outcome { Integer(value, base) }, outcome { runtime.to_integer(value, base) },
+                   "Integer(#{value.inspect}, #{base.inspect})"
     end
   end
 
-  def test_integer_calls_with_a_base_are_copied_as_they_are
-    g = grammar do
-      rule(:top) { match(/\h+/).action(:hex) }
+  # Strings of 12 bytes or fewer go to Integer itself; padded with
+  # leading whitespace, the same ones are read by integer_syntax.
+  def test_to_integer_reads_short_strings_as_integer_does
+    Differential.load(grammar { rule(:top) { str("x") } }, "CompilerTestParser")
+    runtime = CompilerTestParser::BirmanRT
+    cases = Examples::INTEGER_CASES.grep(String).map { [_1, 0] } +
+            Examples::INTEGER_BASE_CASES.select { |v, b| v.is_a?(String) && b.is_a?(Integer) }
+    cases.each do |value, base|
+      padded = "#{" " * 13}#{value}"
+      assert_equal outcome { Integer(padded, base) }, outcome { runtime.to_integer(padded, base) },
+                   "Integer(#{padded.inspect}, #{base})"
+    end
+  end
+
+  def outcome
+    yield
+  rescue ArgumentError, TypeError, FloatDomainError => e
+    [e.class, e.message]
+  end
+
+  def test_large_integer_in_actions
+    g = grammar(ignore: :spacing) do
+      rule(:top) { sep_by(either(hex, word, match(/[-+]?\d+/).action(:large_integer)), ",") }
+      rule(:hex) { match(/0x\h+/).action(:auto) }
+      rule(:word) { match(/[a-z]\w*/).action(:base36) }
 
       private
 
-      def hex(text) = Integer(text, 16) # rubocop:disable Lint/NestedMethodDefinition
+      def auto(text) = large_integer(text) # rubocop:disable Lint/NestedMethodDefinition
+      def base36(text) = self.large_integer(text, 36) # rubocop:disable Lint/NestedMethodDefinition,Style/RedundantSelf
     end
-    assert_includes g.to_ruby(namespace: "X"), "Integer(text, 16)"
-    assert_same_results g, %w[ff 0 g]
+    assert_includes g.to_ruby(namespace: "X"), "def auto(text) = large_integer(text)\n", "copied as written"
+    assert_same_results g, ["#{"9" * 25}, -#{"1" * 30}", "0x#{"f" * 30}, z#{"z" * 25}", "1, 0xff, abc", "1,"]
+  end
+
+  # Integer, String#to_i, #hex and #oct raise past 63 bits in a Spinel binary.
+  # One definition per line: an action's source is found by its line.
+  def test_refuses_integer_and_to_i_in_actions
+    # rubocop:disable-next Lint/NestedMethodDefinition
+    [proc { def act(text) = Integer(text) },
+     proc { def act(text) = Integer(text, 16) },
+     proc { def act(text) = text.to_i },
+     proc { def act(text) = text.to_i(16) },
+     proc { def act(text) = Kernel.Integer(text) },
+     proc { def act(text) = [text].map(&:to_i) },
+     proc { def act(text) = helper(text) + 1 }].each do |definition|
+      g = grammar { rule(:top) { match(/\d+/).action(:act) } }
+      g.class_eval { def helper(text) = text.to_i }
+      g.class_eval(&definition)
+      assert_refused g, %r{rule :top: Integer\(\)/to_i overflow .*large_integer}
+    end
+  end
+
+  def test_refuses_hex_and_oct_in_actions
+    hex = /hex overflows .*large_integer\(text, 16\)/
+    oct = /oct overflows .*large_integer\(text, 8\)/
+    # rubocop:disable-next Lint/NestedMethodDefinition
+    cases = [[hex, proc { def act(text) = text.hex }],
+             [hex, proc { def act(text) = [text].map(&:hex) }],
+             [oct, proc { def act(text) = text.oct }],
+             [oct, proc { def act(text) = text.send(:oct) }]]
+    cases.each do |pattern, definition|
+      g = grammar { rule(:top) { match(/\h+/).action(:act) } }
+      g.class_eval(&definition)
+      assert_refused g, pattern
+    end
+  end
+
+  # send and method with a name that isn't a literal symbol can't be
+  # checked, so they're refused.
+  def test_refuses_computed_names_and_overflowing_dispatch
+    integer = %r{Integer\(\)/to_i overflow}
+    computed = /can't (?:public_)?send a computed name/
+    # rubocop:disable-next Lint/NestedMethodDefinition, Style/SendWithLiteralMethodName, Lint/SymbolConversion
+    cases = [[computed, proc { def act(text) = text.send("to_i") }],
+             [computed, proc { def act(text) = text.public_send("to_i") }],
+             [computed, proc { def act(text) = text.send("to_i".to_sym) }],
+             [computed, proc { def act(text) = text.send(:"to_#{text}") }],
+             [computed, proc { def act(text) = send("Integer", text) }],
+             [integer, proc { def act(text) = text.send(:to_i) }],
+             [integer, proc { def act(text) = send(:Integer, text) }],
+             [/hex overflows/, proc { def act(text) = text.method(:hex).call }]]
+    cases.each do |pattern, definition|
+      g = grammar { rule(:top) { match(/\d+/).action(:act) } }
+      g.class_eval(&definition)
+      assert_refused g, pattern
+    end
+  end
+
+  # Only a symbol that names a method being called is checked, and a
+  # grammar's own method isn't Ruby's.
+  def test_overflow_names_that_arent_calls_of_rubys_methods
+    g = grammar do
+      rule(:top) { match(/#\h+/).action(:color) | match(/\w+/).action(:tagged) }
+
+      private
+
+      # rubocop:disable Lint/NestedMethodDefinition
+      def color(text) = hex(text[1..])
+      def hex(text) = large_integer(text, 16)
+      def tagged(text) = [[:hex, text], { to_i: text }, [:Integer, text], text.respond_to?(:to_i), KIND]
+      # rubocop:enable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["##{"f" * 30}", "#ff", "abc"]
+  end
+
+  def test_refuses_map_hex_oct_and_to_i_on_values_that_may_not_be_strings
+    { /\.map\(:hex\): hex overflows/ => proc { match(/\h+/).map(:hex) },
+      /\.map\(:oct\): oct overflows/ => proc { match(/\d+/).map(:oct) },
+      /\.map\(:to_i\) \(its value isn't always/ => proc { either(match(/\d+/), str("x").means(1.5)).map(:to_i) },
+      /\.map\(:to_i\) \(its value/ => proc { match(/\d+/).action(:large_integer).map(:to_i) } }.each do |pattern, body|
+      assert_refused grammar { rule(:top, &body) }, pattern
+    end
+    assert_same_results grammar { rule(:top) { match(/\d+/).map(:to_i).map(:to_i) } }, ["9" * 25, "1", "x"]
+  end
+
+  def test_to_i_on_an_integer_literal_and_map_to_i_are_allowed
+    g = grammar do
+      rule(:top) { match(/\d+/).map(:to_i) >> match(/x/).action(:one) }
+
+      private
+
+      def one(_text) = 1.to_i # rubocop:disable Lint/NestedMethodDefinition, Lint/RedundantTypeConversion
+    end
+    assert_same_results g, ["#{"9" * 25}x", "1x", "x"]
+  end
+
+  def test_refuses_a_large_integer_of_the_grammars_own
+    g = grammar do
+      rule(:top) { match(/\d+/).action(:large_integer) }
+
+      private
+
+      def large_integer(text) = text # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_refused g, /large_integer/
   end
 
   def test_to_builds_nodes_with_spans

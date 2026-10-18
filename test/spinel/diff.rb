@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 # Compiles the parsers generated from the README grammar, examples/calc.rb,
-# examples/json.rb and examples/email.rb with Spinel, then checks each binary against the
-# interpreter on the same inputs test_compiled_examples.rb uses.
+# json.rb and email.rb, and Examples::Numbers with Spinel, then checks each
+# binary against the interpreter on the same inputs test_compiled_examples.rb
+# uses.
 #
-#   bundle exec rake spinel                 # all three
+#   bundle exec rake spinel                 # all of them
 #   bundle exec ruby test/spinel/diff.rb json
 #
 # SPINEL is the spinel executable (default: spinel on PATH), INPUTS the number
@@ -59,24 +60,32 @@ module SpinelDiff
   end
 end
 
-# BirmanRT.to_integer, compiled, against Kernel#Integer under CRuby, on
-# Examples::INTEGER_CASES (test_compiler.rb checks it under CRuby).
+# BirmanRT.to_integer (Grammar#large_integer), compiled, against
+# Kernel#Integer under CRuby, on Examples::INTEGER_CASES and
+# INTEGER_BASE_CASES (test_compiler.rb checks it under CRuby).
 module IntegerCheck
   module_function
 
-  CASES = Examples::INTEGER_CASES.grep(String)
+  # Each string also padded past 12 bytes, so it's read by integer_syntax
+  # rather than by Spinel's Integer.
+  CASES = (Examples::INTEGER_CASES.grep(String).map { [_1, 0] } +
+           Examples::INTEGER_BASE_CASES.select { _1[0].is_a?(String) })
+          .flat_map { |value, base| [[value, base], ["#{" " * 13}#{value}", base]] } +
+          Examples::FLOAT_CASES.map { [_1, 0] }
 
-  def expected(value)
-    Integer(value).inspect
-  rescue ArgumentError => e
+  def literal(value) = value.is_a?(Float) ? Examples.float_source(value) : value.inspect
+
+  def expected(value, base)
+    Integer(value, base).inspect
+  rescue ArgumentError, TypeError, FloatDomainError => e
     e.class.name
   end
 
   def source
     runtime = File.read(Birman::Compiler::RUNTIME).split(/^require "strscan"\n\n/, 2).last
-    probes = CASES.map do |value|
-      "begin\n  puts IntegerProbe::BirmanRT.to_integer(#{value.inspect}).inspect\n" \
-        "rescue ArgumentError, RangeError => e\n  puts e.class.name\nend\n"
+    probes = CASES.map do |value, base|
+      "begin\n  puts IntegerProbe::BirmanRT.to_integer(#{literal(value)}, #{base.inspect}).inspect\n" \
+        "rescue ArgumentError, FloatDomainError, RangeError, TypeError => e\n  puts e.class.name\nend\n"
     end
     "require \"strscan\"\nmodule IntegerProbe\n#{runtime}end\n#{probes.join}"
   end
@@ -87,10 +96,10 @@ module IntegerCheck
     out, status = Open3.capture2e(compiler, path, "-o", path.delete_suffix(".rb"))
     abort "spinel failed on #{path}:\n#{out}" unless status.success?
     got = Open3.capture2(path.delete_suffix(".rb"))[0].lines(chomp: true)
-    bad = CASES.zip(got).reject do |value, line|
-      line == expected(value) || (line == "RangeError" && value.match?(/\A\s*[-+]?0/))
+    bad = CASES.zip(got).reject { |(value, base), line| line == expected(value, base) }
+    bad.each do |(value, base), line|
+      puts "  Integer(#{value.inspect}, #{base.inspect}): CRuby #{expected(value, base)}, Spinel #{line}"
     end
-    bad.each { |value, line| puts "  Integer(#{value.inspect}): CRuby #{expected(value)}, Spinel #{line}" }
     puts "to_integer: #{CASES.size} cases, #{bad.size} mismatches"
     bad.empty?
   end
@@ -136,7 +145,7 @@ unless compiler
   exit 0
 end
 
-wanted = ARGV.empty? ? %w[let calc json email] : ARGV
+wanted = ARGV.empty? ? %w[let calc json email numbers] : ARGV
 examples = Examples.all(Integer(ENV.fetch("INPUTS", 3000))).select { wanted.include?(_1.name) }
 FileUtils.mkdir_p(SpinelDiff::OUT)
 ok = examples.map { |example| SpinelDiff.agrees?(example, SpinelDiff.build(example, compiler)) }

@@ -80,7 +80,7 @@ class CompilerEdgesTest < Minitest::Test
       private
 
       def odd(text)
-        text.to_i.odd? ? text : raise(ArgumentError, "#{text} is even")
+        large_integer(text).odd? ? text : raise(ArgumentError, "#{text} is even")
       end # rubocop:disable Lint/NestedMethodDefinition
     end
     parser = Differential.load(g, "CompilerTestParser")
@@ -177,9 +177,12 @@ class CompilerEdgesTest < Minitest::Test
 
   # --- Values ---
 
-  def test_map_to_i_on_values_that_arent_strings
-    g = grammar { rule(:top) { match(/\d+/).maybe.map(:to_i) } }
-    assert_same_results g, ["", "12", "#{"9" * 25}x"]
+  # str.maybe: nil (0, as nil.to_i) or a String, Bignums included.
+  def test_map_to_i_on_an_optional_string
+    g = grammar { rule(:top) { match(/\d+/).maybe.map(:to_i) >> match(/x?/) } }
+    assert_same_results g, ["", "12", "#{"9" * 25}x", "x", "9" * 25]
+    twice = grammar { rule(:top) { match(/\d+/).maybe.map(:to_i).maybe.map(:to_i) } }
+    assert_refused twice, /\.map\(:to_i\) \(its value/
   end
 
   def test_to_over_infix_that_passes_a_hash_through

@@ -77,7 +77,7 @@ module EmailExample
       seq(octet.as(:first), seq(".", only(octet)).rep(3, 3).as(:rest), str("]").present).action(:octets).to(IPv4)
     end
 
-    rule(:octet) { seq(only(match(/25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d/)), match(/\d/).absent) }
+    rule(:octet) { seq(only(match(/25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d/)), match(/\d/).absent).map(:to_i) }
 
     rule(:dtext) do
       seq((fws.maybe >> match(/[\x21-\x5a\x5e-\x7e[^\x00-\x7f]]+/)).rep, fws.maybe).action(:literal_text).to(Literal)
@@ -109,7 +109,7 @@ module EmailExample
     # A line break in folding whitespace isn't part of the value.
     def unfold(text) = text.sub("\r\n", "")
 
-    def octets(parts) = ([parts[:first]] + parts[:rest]).map(&:to_i)
+    def octets(parts) = [parts[:first]] + parts[:rest]
 
     # The literal's text, without the whitespace in it.
     def literal_text(parts) = parts[0].map(&:last).join

@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
-# The three grammars generated parsers are checked against (the README's,
-# examples/calc.rb and examples/json.rb), each with the inputs to check:
-# fixed edge cases, random token soup, and for calc and json, valid
-# documents built from the grammar plus one-character mutations of them.
+# The grammars generated parsers are checked against (the README's,
+# examples/calc.rb, json.rb and email.rb, and Examples::Numbers), each
+# with the inputs to check: fixed edge cases, random token soup, and
+# valid documents built from the grammar (plus, for calc, json and
+# email, one-character mutations of them).
 require "json"
 require_relative "differential"
 require_relative "../../examples/calc"
@@ -47,11 +48,46 @@ module Examples
     def self.input(depth) = "#{"(" * depth}#{")" * depth}"
   end
 
+  # Numbers in any base, read by Grammar#large_integer: "ff", "16:ff",
+  # "-0x_ff", '16:" ff\n"' (Integer's own syntax decides what's valid),
+  # long enough to be Bignums.
+  module Numbers
+    # 16:ff, 0b101, -123
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      root :numbers
+      ignore :spacing
+
+      rule(:numbers) { sep_by(number, ",") }
+      rule(:number) { either(based, text.action(:auto)) }
+      rule(:based) { seq(match(/\d\d?(?=:)/).as(:base), ":", commit, text.as(:digits)).action(:in_base) }
+
+      # Quoted, a number can have whitespace (or anything) around and in it.
+      rule(:text) { either(seq(str('"'), only(match(/[^"]*/)), str('"')), match(/[-+]?\w+/)) }
+
+      private
+
+      def auto(text)
+        large_integer(text)
+      rescue ArgumentError
+        "invalid"
+      end
+
+      def in_base(parts)
+        large_integer(parts[:digits], large_integer(parts[:base], 10))
+      rescue ArgumentError
+        "invalid"
+      end
+    end
+  end
+
   Example = Data.define(:name, :grammar, :namespace, :inputs)
 
   module_function
 
-  def all(count) = [let(count), calc(count), json(count), email(count)]
+  def all(count) = [let(count), calc(count), json(count), email(count), numbers(count)]
 
   def let(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
@@ -80,6 +116,13 @@ module Examples
     mutants = addresses.map { Differential.mutate(rng, _1, EmailGen::REPLACEMENTS) }
     inputs = EMAIL_FIXED + Differential.fuzz(EMAIL_TOKENS, rng, count, 10) + addresses + mutants
     Example.new("email", EmailExample::Grammar, "EmailCompiled", inputs)
+  end
+
+  def numbers(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    lists = Array.new(count) { NumbersGen.list(rng) }
+    inputs = NUMBERS_FIXED + Differential.fuzz(NUMBERS_TOKENS, rng, count, 8) + lists
+    Example.new("numbers", Numbers::Grammar, "NumbersCompiled", inputs)
   end
 
   LET_FIXED = [
@@ -135,8 +178,9 @@ module Examples
   JSON_TOKENS = ["{", "}", "[", "]", ",", ":", " ", "\n", "\"", "\"k\"", "\"\\n\"", "\"\\u00e9\"", "\\",
                  "1", "-", "0", ".5", "e3", "true", "false", "null", "nul", "é", "\t", "12345678901234567890"].freeze
 
-  # Arguments for BirmanRT.to_integer, which copied actions' Integer(x)
-  # calls become, to compare with Kernel#Integer.
+  # Arguments for BirmanRT.to_integer (Grammar#large_integer in a
+  # generated parser), to compare with Kernel#Integer: values with no
+  # base, then [value, base] pairs.
   INTEGER_CASES = [
     "010", "0#{"1" * 25}", "09#{"1" * 20}", "-#{"7" * 25}", "+#{"7" * 25}", "1_000_000_000_000_000_000_000",
     " 12", "12 ", " #{"3" * 22}\n", "0x1f", "", "-", "1__0", "1#{"0" * 18}", "#{"1" * 20}_", "_#{"1" * 20}",
@@ -144,6 +188,80 @@ module Examples
     "0o#{"7" * 25}", "0d#{"9" * 20}", "0_#{"7" * 20}", "0x_#{"f" * 20}", "0x#{"f" * 20}g", "0#{"8" * 20}",
     "0b#{"2" * 20}", "  -#{"5" * 30}  ", "1e#{"0" * 20}", 1.5, 42, nil
   ].freeze
+
+  INTEGER_BASE_CASES = [
+    ["ff", 16], ["0x1f", 16], ["0b1", 16], ["0x1f", 10], ["017", 8], ["0o17", 8], ["0d9", 10], ["0b1", 8],
+    ["z", 36], ["Z", 36], ["0x1f", 0], ["010", 0], ["12", 3], ["10", 1], ["10", 37], [" 1f ", 16],
+    ["f" * 30, 16], ["0x#{"f" * 30}", 16], ["0X#{"aB" * 12}", 16], ["0x#{"f" * 30}", 10], ["-#{"z" * 25}", 36],
+    ["#{"Zz" * 15}_9", 36], ["1#{"0" * 40}", 2], ["0b#{"1" * 70}", 2], ["0b#{"1" * 70}", 8], ["0o#{"7" * 30}", 8],
+    ["0#{"7" * 30}", 8], ["0d#{"9" * 30}", 10], ["  +#{"9" * 30}\n", 10], ["2" * 45, 3], ["6" * 30, 7],
+    ["a" * 30, 11], ["b" * 30, 11], ["0x#{"1" * 30}", 36], ["#{"1" * 30}__1", 10], ["_#{"1" * 30}", 16],
+    ["0x_#{"f" * 30}", 16], ["0x#{"f" * 30}", 0], ["0#{"7" * 30}", 0], ["1" * 30, 37], [12.5, 0], [12, 16],
+    ["ahb6e38ca03a02683", 20], ["0x#{"f" * 16}", 0], ["f" * 16, 16], ["z" * 13, 36], ["1\0", 16], [nil, 10],
+    ["f" * 30, 16.0], ["fff", 16.9], ["1" * 20, nil], ["1" * 20, "16"], ["1" * 20, true], ["1" * 20, :a]
+  ].freeze
+
+  # Floats for BirmanRT.to_integer (base 0): exact past 63 bits, where
+  # Spinel's own Float#to_i saturates.
+  FLOAT_CASES = [
+    2.0**62, 2.0**63, (2.0**63) + 2048, -(2.0**63), 1e30, -1e30, Float::MAX, -Float::MAX, 2.0**1023, 4.5e15,
+    -0.0, 0.5, -1.5, 4_611_686_018_427_387_903.0, 9.3e18, 2.0**61, 2.0**64, 2.0**65,
+    2.0**123, 2.0**124, 2.0**125, 2.0**126, Float::NAN, Float::INFINITY, -Float::INFINITY,
+    *Array.new(40) { |i| (i.even? ? 1 : -1) * Random.new(i).rand * (10**Random.new(i).rand(-3..300)).to_f }
+  ].freeze
+
+  # A Float as a Ruby expression (NaN and Infinity have no literal).
+  def self.float_source(value)
+    return "(0.0 / 0.0)" if value.nan?
+    return value.positive? ? "(1.0 / 0.0)" : "(-1.0 / 0.0)" if value.infinite?
+
+    value.inspect
+  end
+
+  # Bases a Spinel binary doesn't take as CRuby does: its Integer refuses
+  # negative ones ("invalid radix"). Checked under CRuby only.
+  NEGATIVE_BASE_CASES = [["11", -2], ["0x10", -10], ["1" * 20, -2]].freeze
+
+  NUMBERS_FIXED = [
+    *INTEGER_CASES.grep(String).grep_v(/[,:\s]|\A\z/),
+    *INTEGER_BASE_CASES.filter_map { |v, b| "#{b}:#{v}" if v.is_a?(String) && !v.match?(/[,:\s]|\A\z/) },
+    "16:ff, 0x10, 2:#{"1" * 80}", "36:#{"z" * 40}", "0:0x#{"f" * 30}", "16:", "1:1", "37:1", "",
+    *INTEGER_BASE_CASES.filter_map { |v, b| %(#{b}:"#{v}") if v.is_a?(String) && !v.include?('"') },
+    *INTEGER_CASES.grep(String).map { %("#{_1}") }, %(16:"   #{"f" * 5}"), %("  0x#{"f" * 20} \t\n"), %("1 2"), %("1\0")
+  ].freeze
+
+  NUMBERS_TOKENS = ["0x", "0b", "0o", "0d", "0", "1", "7", "9", "f", "z", "Z", "_", "-", "+", ",", " ", ":", "16:",
+                    "36:", "2:", "8:", "1" * 20, "f" * 20].freeze
+
+  # Valid and invalid numbers, in random bases, mostly past 63 bits.
+  module NumbersGen
+    module_function
+
+    DIGITS = [*"0".."9", *"a".."z"].freeze
+    PREFIXES = { 2 => "0b", 8 => "0o", 10 => "0d", 16 => "0x" }.freeze
+
+    def list(rng) = Array.new(rng.rand(1..3)) { number(rng) }.join(", ")
+
+    def number(rng)
+      base = rng.rand(2..36)
+      digits = Array.new(rng.rand(1..60)) { DIGITS[rng.rand(rng.rand(4).zero? ? 36 : base)] }.join
+      digits = digits.chars.each_slice(rng.rand(1..9)).map(&:join).join("_") if rng.rand(4).zero?
+      sign = ["", "-", "+"].sample(random: rng)
+      text = quoted(rng, "#{sign}#{PREFIXES[base] if rng.rand(2).zero?}#{digits}")
+      return "#{base}:#{text}" unless rng.rand(3).zero?
+
+      quoted(rng, "#{sign}#{%w[0x 0b 0o 0d].sample(random: rng)}#{digits}")
+    end
+
+    # Sometimes in quotes, with whitespace around (or in) it.
+    def quoted(rng, text)
+      return text if rng.rand(2).zero?
+
+      space = -> { [" ", "  ", "\t", "\n", " \r\n", ""].sample(random: rng) }
+      text = text.dup.insert(rng.rand(text.size + 1), space.call) if rng.rand(8).zero?
+      %("#{space.call}#{text}#{space.call}")
+    end
+  end
 
   EMAIL_FIXED = [
     "jo@example.com", "first.last+tag@sub.example.org", "!#$%&'*+/=?^_`{|}~-@x.io", '"jo smith"@example.com',

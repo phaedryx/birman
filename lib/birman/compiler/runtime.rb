@@ -319,33 +319,83 @@ module BirmanRT
     n
   end
 
-  # Kernel#Integer(value), for actions copied from the grammar: the
-  # generator rewrites their one-argument Integer(...) calls to this.
-  # Spinel's Integer raises RangeError for anything past 63 bits, so a
-  # long string is read here, in Integer's syntax: whitespace around,
-  # a sign, a 0x 0b 0o 0d or 0 prefix, digits with single underscores.
-  def self.to_integer(value)
-    return Integer(value) unless value.is_a?(String) && value.bytesize > 18
+  # Kernel#Integer(value, base), for Grammar#large_integer in copied
+  # actions. Spinel's Integer raises RangeError for anything past 63
+  # bits, so a long string is read here, in Integer's syntax: whitespace
+  # around, a sign, a prefix (with base 0: 0x 0b 0o 0d or 0; with base
+  # 2, 8, 10 or 16, its own), digits with single underscores.
+  def self.to_integer(value, base)
+    base = integer_base(base)
+    # to_f: a no-op here, but Spinel won't pass a value it types as a
+    # String (as most callers' are) into float_to_i's Float otherwise.
+    return float_to_i(value.to_f) if value.is_a?(Float) && base == 0
+    # 12 characters in any base are under 36**12, within 63 bits.
+    unless value.is_a?(String) && value.bytesize > 12 && (base == 0 || (base >= 2 && base <= 36))
+      return base == 0 ? Integer(value) : Integer(value, base)
+    end
 
-    base, digits, negative = integer_syntax(value)
+    base, digits, negative = integer_syntax(value, base)
     raise ArgumentError, "invalid value for Integer(): #{value.inspect}" if digits.nil?
 
     n = base == 10 ? digits_to_i(digits) : based_to_i(digits, base)
     negative ? -n : n
   end
 
+  # Floats this big are whole numbers, and Spinel's Float#to_i gives
+  # 2**63 - 1 for anything past 63 bits.
+  FLOAT_CHUNK = 4_611_686_018_427_387_904.0
+
+  # Integer(f), exactly. A Float past 2**62 is halved below 2**61 (exact:
+  # only its exponent changes), converted natively, then doubled back
+  # through Bignum literals, up to 62 bits at a time. Each step is at
+  # least 2 bits (so at least twice halved), since 2**(64 - 1) overflows.
+  #: (Float) -> untyped
+  def self.float_to_i(f)
+    raise FloatDomainError, "NaN" if f.nan?
+    raise FloatDomainError, f > 0 ? "Infinity" : "-Infinity" if f.infinite?
+    return f.to_i if f.abs < FLOAT_CHUNK
+
+    e = 0
+    while f.abs >= FLOAT_CHUNK / 2
+      f /= 2
+      e += 1
+    end
+    n = f.to_i
+    while e > 0
+      k = e > 62 ? 62 : e
+      k -= 1 if e - k == 1
+      n = n * (TWO64 / (2**(64 - k)))
+      e -= k
+    end
+    n
+  end
+
+  # Kernel#Integer's base argument: an Integer, or a Float truncated.
+  def self.integer_base(base)
+    return base if base.is_a?(Integer)
+    return base.to_i if base.is_a?(Float)
+    raise TypeError, "no implicit conversion from nil to integer" if base.nil?
+
+    raise TypeError, "no implicit conversion of #{base == true || base == false ? base : base.class} into Integer"
+  end
+
   # [base, digits without underscores, negative], or nil if text isn't
-  # an integer in Integer's syntax.
-  def self.integer_syntax(text)
+  # an integer in Integer's syntax for base (0: from its prefix).
+  def self.integer_syntax(text, base)
     i = 0
     i += 1 while i < text.bytesize && space?(text.getbyte(i))
     negative = i < text.bytesize && text.getbyte(i) == 45
     i += 1 if i < text.bytesize && (text.getbyte(i) == 45 || text.getbyte(i) == 43)
-    base = 10
     if text.getbyte(i) == 48 && i + 1 < text.bytesize
-      base = prefix_base(text.getbyte(i + 1))
-      i += 2 unless base == 8 && !letter_prefix?(text.getbyte(i + 1)) # a bare 0 is an octal digit
+      b = text.getbyte(i + 1)
+      if base == 0
+        base = prefix_base(b)
+        i += 2 unless base == 8 && !letter_prefix?(b) # a bare 0 is an octal digit
+      elsif base == prefix_base(b) && (base != 8 || letter_prefix?(b))
+        i += 2
+      end
     end
+    base = 10 if base == 0
     digits = based_digits(text, i, base)
     return nil if digits.nil?
 
@@ -382,22 +432,30 @@ module BirmanRT
     out.empty? || i < text.bytesize ? nil : out
   end
 
+  # Digits are 0-9 then a-z (either case) for 10 to 35.
   def self.digit_in?(b, base)
     return b >= 48 && b < 48 + base if base <= 10
 
-    digit?(b) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70)
+    digit?(b) || (b >= 97 && b < 87 + base) || (b >= 65 && b < 55 + base)
   end
 
-  # digits in base 2, 8 or 16, 15 at a time, scaled through a Bignum
-  # literal as digits_to_i does.
+  # Under 2**62, so a chunk of digits is an Integer in Spinel.
+  CHUNK_LIMIT = 4_611_686_018_427_387_904
+
+  # digits in base, as many at a time as fit under CHUNK_LIMIT, scaled
+  # through a Bignum literal as digits_to_i does. Typed, since its
+  # arguments come out of integer_syntax's Array: boxed, Spinel's
+  # arithmetic would raise on overflow rather than promote.
+  #: (String, Integer) -> untyped
   def self.based_to_i(digits, base)
-    bits = base == 16 ? 4 : (base == 8 ? 3 : 1)
+    size = 1
+    size += 1 while base**size <= CHUNK_LIMIT / base
     n = 0
     i = 0
     while i < digits.bytesize
       k = digits.bytesize - i
-      k = 15 if k > 15
-      n = (n * (TWO64 / (2**(64 - (bits * k))))) + digits.byteslice(i, k).to_i(base)
+      k = size if k > size
+      n = (n * ((TWO64 * (base**k)) / TWO64)) + digits.byteslice(i, k).to_i(base)
       i += k
     end
     n
@@ -558,6 +616,12 @@ module BirmanRT
         fail_at(p, described)
       end
       false
+    end
+
+    # Grammar#large_integer, for copied actions: Kernel#Integer, Bignums
+    # included.
+    def large_integer(value, base = 0)
+      BirmanRT.to_integer(value, base)
     end
 
     # Exactly text's bytes at p?

@@ -7,9 +7,10 @@ module Birman
     # the grammar methods they call and the constants they read (as
     # literals, looked up lexically from where the method was written).
     #
-    # One rewrite: Kernel#Integer(x) becomes BirmanRT.to_integer(x), which
-    # gives Bignums where Spinel's Integer would raise on overflow. Calls
-    # with a base or keywords are copied as they are.
+    # Copied as written, so Integer(), String#to_i, #hex and #oct, which
+    # raise past 63 bits in a Spinel binary, are refused (see Overflows):
+    # large_integer (Grammar's, and the generated parser's) is the way to
+    # read a number.
     # [class.Compiler.Actions]
     # purpose = "Copies .action methods, their helpers and constants, into the generated parser"
     # dependencies = ["prism (bundled from Ruby 3.3; a gem on 3.2), loaded on first use"]
@@ -19,8 +20,12 @@ module Birman
       RESERVED = /\A(?:rule_|ref_|lit_|init_|skip_|str_)/
       RUNTIME_METHODS = %i[
         initialize parse reset skip_ignored fail_at merge commit_failure ignored_after token_end span_end span
-        failure failure_because label_end peek_end bytes_at? abandon left_recursion
+        failure failure_because label_end peek_end bytes_at? abandon left_recursion large_integer
       ].freeze
+
+      # Methods the generated parser's runtime provides as Birman::Grammar
+      # does, which copied methods may call and actions may name.
+      PROVIDED = %i[large_integer].freeze
 
       def initialize(grammar)
         @grammar = grammar
@@ -31,7 +36,7 @@ module Birman
 
       # Copies grammar method name (and what it needs), once.
       def copy(name, rule)
-        return if @methods.key?(name)
+        return if @methods.key?(name) || provided?(name)
 
         @methods[name] = nil # reserved first: methods can call each other
         @methods[name] = method_source(find(name, rule), rule)
@@ -74,41 +79,51 @@ module Birman
 
       def method_source(found, rule)
         node, scopes = found
-        edits = []
-        walk(node) { visit(_1, edits, scopes, rule) }
-        MethodFinder.rewrite(node, edits)
+        walk(node) { visit(_1, scopes, rule) }
+        MethodFinder.source(node)
       end
 
-      def visit(node, edits, scopes, rule)
+      def visit(node, scopes, rule)
         case node
         when Prism::ConstantReadNode then @constants.read(node.name, scopes, rule)
         when Prism::ConstantPathNode
           raise Error, "rule :#{rule}: copied methods can't read #{node.slice}; use a constant of the grammar"
         when Prism::SuperNode, Prism::ForwardingSuperNode
           raise Error, "rule :#{rule}: copied methods can't call super"
-        when Prism::CallNode then call(node, edits, rule)
+        when Prism::BlockArgumentNode then Overflows.check_block(node, rule)
+        when Prism::CallNode then call(node, rule)
         end
       end
 
-      # A call on self (written or not) to a grammar method copies that
-      # method too; Birman's own API (rules, keywords...) isn't there to call.
-      def call(node, edits, rule)
-        return unless node.receiver.nil? || node.receiver.is_a?(Prism::SelfNode)
-
-        if node.receiver.nil? && integer_call?(node)
-          edits << [node.message_loc, "BirmanRT.to_integer"]
-        elsif birman_api?(node.name)
-          raise Error, "rule :#{rule}: copied methods can't call the grammar's #{node.name}"
-        elsif grammar_method?(node.name)
-          copy(node.name, rule)
+      def call(node, rule)
+        if Overflows::DISPATCH.include?(node.name) then dispatch(node, rule)
+        elsif self_call?(node) then own_call(node.name, rule)
+        else Overflows.check_call(node, rule)
         end
       end
 
-      # Integer(x): one positional argument, no base, keywords or block.
-      def integer_call?(node)
-        args = node.arguments&.arguments
-        node.name == :Integer && node.block.nil? && args&.size == 1 &&
-          !args.first.is_a?(Prism::KeywordHashNode) && !args.first.is_a?(Prism::SplatNode)
+      def self_call?(node) = node.receiver.nil? || node.receiver.is_a?(Prism::SelfNode)
+
+      # A call on self (written or not): a grammar method is copied too;
+      # Birman's own API (rules, keywords...) isn't there to call, and
+      # Kernel's Integer overflows.
+      def own_call(name, rule)
+        return if provided?(name)
+        raise Error, "rule :#{rule}: copied methods can't call the grammar's #{name}" if birman_api?(name)
+        return copy(name, rule) if grammar_method?(name)
+
+        Overflows.check(name, rule)
+      end
+
+      # send(:name), method(:name)...: checked as a call of name would be.
+      def dispatch(node, rule)
+        name = Overflows.dispatched(node, rule)
+        self_call?(node) ? own_call(name, rule) : Overflows.check(name, rule)
+      end
+
+      # Birman::Grammar's own, not one the grammar defines over it.
+      def provided?(name)
+        PROVIDED.include?(name) && @grammar.method(name).owner == Birman::Grammar
       end
 
       # A method of the grammar's, or of a rule module's (Rules::Strings'
@@ -138,6 +153,47 @@ module Birman
         require "prism"
       rescue LoadError
         raise Error, "copying .action methods needs the prism gem (bundled from Ruby 3.3): add it to your Gemfile"
+      end
+    end
+
+    # Methods that raise past 63 bits in a Spinel binary, refused in copied
+    # methods, by call or by name (map(&:to_i), send(:hex), method(:Integer)).
+    # Whether a receiver is a String can't be told, so it's taken to be one;
+    # only to_i on an Integer literal is let through. A net for the common
+    # forms, not a proof: Float(t).round overflows too.
+    module Overflows
+      INTEGER = "Integer()/to_i overflow past 63 bits in a Spinel binary; use large_integer(...)"
+      MESSAGES = {
+        Integer: INTEGER, to_i: INTEGER,
+        hex: "hex overflows past 63 bits in a Spinel binary; use large_integer(text, 16)",
+        oct: "oct overflows past 63 bits in a Spinel binary; use large_integer(text, 8)"
+      }.freeze
+
+      def self.check(name, rule)
+        message = MESSAGES[name]
+        raise Error, "rule :#{rule}: #{message}" if message
+      end
+
+      def self.check_call(node, rule)
+        check(node.name, rule) unless node.name == :to_i && node.receiver.is_a?(Prism::IntegerNode)
+      end
+
+      # map(&:to_i) calls to_i on each element.
+      def self.check_block(node, rule)
+        check(node.expression.unescaped.to_sym, rule) if node.expression.is_a?(Prism::SymbolNode)
+      end
+
+      # Methods that call a method named by their first argument.
+      DISPATCH = %i[send public_send __send__ method public_method].freeze
+
+      # The method a DISPATCH call names, which must be written as a
+      # symbol to be checked.
+      def self.dispatched(node, rule)
+        target = node.arguments&.arguments&.first
+        return target.unescaped.to_sym if target.is_a?(Prism::SymbolNode)
+
+        raise Error, "rule :#{rule}: copied methods can't #{node.name} a computed name (#{node.slice}); " \
+                     "call the method by name"
       end
     end
 
@@ -198,19 +254,10 @@ module Birman
         @line = line
       end
 
-      # The def's source with edits ([location, text] pairs) applied, its
-      # lines indented as if written at the left margin.
-      def self.rewrite(node, edits)
-        "#{reindent(apply(node, edits), node.location.start_column)}\n"
-      end
-
-      def self.apply(node, edits)
-        source = node.slice.dup
-        base = node.location.start_offset
-        edits.sort_by { -_1[0].start_offset }.each do |loc, text|
-          source[(loc.start_offset - base), loc.length] = text
-        end
-        source
+      # The def's source, its lines indented as if written at the left
+      # margin.
+      def self.source(node)
+        "#{reindent(node.slice, node.location.start_column)}\n"
       end
 
       # The method's later lines are indented for where it was written.

@@ -439,6 +439,7 @@ module Birman
       # plain method call on the value); an action always runs, since it
       # may check the value and raise, as the interpreter's would.
       def transform(matcher, want, name)
+        check_send(matcher) if matcher.is_a?(Send)
         return compile_matcher(matcher.inner, false) if !want && matcher.is_a?(Send)
 
         kind = matcher.is_a?(Send) ? :send : :action
@@ -456,12 +457,28 @@ module Birman
                        "which isn't a plain method name"
         end
         # String#to_i, Bignums included (Spinel's overflows past 63 bits).
-        return "BirmanRT.to_i(#{value})" if name == :to_i && matcher.is_a?(Send) && @types.of(matcher.inner) == :str
+        if name == :to_i && matcher.is_a?(Send)
+          return "BirmanRT.to_i(#{value})" if @types.of(matcher.inner) == :str
+          return "(#{value}.nil? ? 0 : BirmanRT.to_i(#{value}))" if @types.str_or_nil?(matcher.inner)
+        end
         return "#{value}.#{name}" if matcher.is_a?(Send)
 
         @actions.copy(name, @rule)
         "#{name}(#{value})"
       end
+
+      # .map(:hex) and .map(:oct) raise past 63 bits in a Spinel binary, as
+      # does .map(:to_i) unless the value is a String (BirmanRT.to_i reads
+      # those, and nil, as from str.maybe, is 0) or an Integer.
+      def check_send(matcher)
+        name = matcher.method_name
+        return unless %i[hex oct].include?(name) || (name == :to_i && !to_i_safe?(matcher.inner))
+
+        unknown = " (its value isn't always a String or an Integer)" if name == :to_i
+        raise Error, "rule :#{@rule} uses .map(:#{name})#{unknown}: #{Overflows::MESSAGES.fetch(name)}"
+      end
+
+      def to_i_safe?(inner) = %i[str int].include?(@types.of(inner)) || @types.str_or_nil?(inner)
 
       # --- Nodes ---
 

@@ -42,6 +42,16 @@ module Birman
         end
       end
 
+      # A String, or nil where it's optional: str.maybe.
+      def str_or_nil?(matcher)
+        case matcher
+        when Maybe then of(matcher.inner) == :str
+        when Label, Quiet, Named, Lexeme then str_or_nil?(matcher.inner)
+        when Ref then str_or_nil?(@grammar.matcher_for(matcher.name))
+        else false
+        end
+      end
+
       private
 
       def seq(matcher)

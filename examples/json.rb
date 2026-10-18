@@ -69,19 +69,20 @@ module JSONExample
 
     def pair(member) = [member[:key], member[:value]]
 
-    def json_number(text) = text.match?(/[.eE]/) ? Float(text) : Integer(text)
+    # large_integer is Integer, but Bignums survive a Spinel binary too.
+    def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)
 
     # \" \\ \/ \b \f \n \r \t
     def short_escape(text) = ESCAPES.fetch(text[1])
 
     # \u00e9
-    def unicode_escape(text) = [text[2, 4].hex].pack("U")
+    def unicode_escape(text) = [large_integer(text[2, 4], 16)].pack("U")
 
     # Characters outside the Basic Multilingual Plane (emoji, say) are
     # written as two \u escapes, a high and a low surrogate.
     def surrogate_pair(text)
-      high = text[2, 4].hex
-      low = text[8, 4].hex
+      high = large_integer(text[2, 4], 16)
+      low = large_integer(text[8, 4], 16)
       [0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)].pack("U")
     end
   end
