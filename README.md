@@ -229,25 +229,29 @@ the rule, for what it can't translate faithfully:
   classes the generated parser won't have
 - actions that call `Integer(...)`, `.hex`, `.oct` or `.to_i` (on
   anything but an Integer literal, since a receiver's type can't be
-  told), or name them (`map(&:to_i)`): in a Spinel binary they raise
-  past 63 bits. Use `large_integer(text)` or `large_integer(text, base)`
-  (`16` for `hex`, `8` for `oct`), which Birman gives every grammar: it
-  is `Integer(text, base)` in Ruby, and in the generated parser it
-  returns Bignums under Spinel too (from Floats as well: exactly, as
-  Ruby's `Integer` does). `.map(:to_i)` is fine on a String, an optional
-  String (`.maybe`; nil is 0) or an Integer; `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on
-  anything else are refused, as are `send` and `method` with a name
-  that isn't a literal symbol. This is a net for the common forms, not
-  a proof: `Float(text).round` and `text.to_f.to_int` overflow too, and
-  aren't caught. In a binary, `large_integer` doesn't take negative
-  bases (Ruby's "prefix or this base")
+  told), or name them (`map(&:to_i)`): past 63 bits, in a Spinel
+  binary they raise or, where Spinel can't tell the receiver is a
+  String, silently give 2**63 - 1. Use `large_integer(text)` or
+  `large_integer(text, base)` (`16` for `hex`, `8` for `oct`), which
+  Birman gives every grammar: it is `Integer(text, base)` in Ruby, and
+  in the generated parser it returns Bignums under Spinel too (from
+  Floats as well: exactly, as Ruby's `Integer` does). `.map(:to_i)` is
+  fine on a String, an optional String (`.maybe`; nil is 0) or an
+  Integer; `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on anything
+  else are refused, as are `send` and `method` with a name that isn't
+  a literal symbol. This is a net for the common forms, not a proof:
+  `Float(text).round`, `text.to_f.to_int` and whatever else slips past
+  it may raise, or give a wrong number without a word. `large_integer`
+  takes Integer bases and Floats (truncated) as Ruby does; Rational and
+  NaN bases differ (`TypeError`, `FloatDomainError`), and in a binary
+  negative bases (Ruby's "prefix or this base") raise
 
 ```ruby
 def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)
 ```
 
-Actions always run, as in the interpreter, even when nothing reads
-their value. The generated parser reads UTF-8 or binary input (other
+Actions and `.map(:name)` always run, as in the interpreter, even when
+nothing reads their value. The generated parser reads UTF-8 or binary input (other
 encodings raise `ArgumentError`). It also nests deeper before reporting
 "input is nested too deeply": its methods use less stack than the
 interpreter's matchers, and a Spinel binary has a 64 MB stack (JSON

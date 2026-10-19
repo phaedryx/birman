@@ -8,7 +8,8 @@ module Birman
     # literals, looked up lexically from where the method was written).
     #
     # Copied as written, so Integer(), String#to_i, #hex and #oct, which
-    # raise past 63 bits in a Spinel binary, are refused (see Overflows):
+    # in a Spinel binary raise past 63 bits (or give 2**63 - 1, when the
+    # receiver's type isn't known), are refused (see Overflows):
     # large_integer (Grammar's, and the generated parser's) is the way to
     # read a number.
     # [class.Compiler.Actions]
@@ -156,11 +157,12 @@ module Birman
       end
     end
 
-    # Methods that raise past 63 bits in a Spinel binary, refused in copied
+    # Methods that raise past 63 bits in a Spinel binary (or, on a receiver
+    # Spinel can't type, silently give 2**63 - 1), refused in copied
     # methods, by call or by name (map(&:to_i), send(:hex), method(:Integer)).
     # Whether a receiver is a String can't be told, so it's taken to be one;
     # only to_i on an Integer literal is let through. A net for the common
-    # forms, not a proof: Float(t).round overflows too.
+    # forms, not a proof: Float(t).round overflows too, maybe silently.
     module Overflows
       INTEGER = "Integer()/to_i overflow past 63 bits in a Spinel binary; use large_integer(...)"
       MESSAGES = {
@@ -212,7 +214,7 @@ module Birman
       # Classes Ruby (or the runtime) provides, which copied code may name.
       CORE_CLASSES = %i[
         Integer Float String Symbol Array Hash Regexp Comparable Math Kernel Encoding NilClass
-        StandardError ArgumentError KeyError RangeError TypeError
+        StandardError ArgumentError KeyError RangeError TypeError FloatDomainError
       ].freeze
 
       def read(name, scopes, rule)

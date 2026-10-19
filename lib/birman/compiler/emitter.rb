@@ -434,13 +434,11 @@ module Birman
         Call.new(inner.name, matcher.constant.inspect)
       end
 
-      # Send and Action. A value nothing reads is never computed.
-      # Send and Action. A Send value nothing reads is skipped (it's a
-      # plain method call on the value); an action always runs, since it
-      # may check the value and raise, as the interpreter's would.
+      # Send and Action. Both run even when nothing reads their value, as
+      # the interpreter's do: either may raise (an action checking its
+      # value, nil.upcase).
       def transform(matcher, want, name)
         check_send(matcher) if matcher.is_a?(Send)
-        return compile_matcher(matcher.inner, false) if !want && matcher.is_a?(Send)
 
         kind = matcher.is_a?(Send) ? :send : :action
         define(kind, matcher, want, name) do |v|

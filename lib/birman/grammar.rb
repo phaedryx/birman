@@ -174,8 +174,10 @@ module Birman
 
     # Kernel#Integer(value, base), for actions: use it instead of Integer
     # or String#to_i in a grammar you'll generate a parser from (see
-    # to_ruby). A Spinel binary's Integer and to_i raise past 63 bits;
-    # the generated parser's large_integer gives Bignums, as Ruby's does.
+    # to_ruby). Past 63 bits, a Spinel binary's Integer and to_i raise or
+    # give 2**63 - 1; the generated parser's large_integer gives Bignums,
+    # as Ruby's does. Bases: Integers, or Floats truncated (Rational and
+    # NaN bases differ from Kernel#Integer in a generated parser).
     # [method.large_integer]
     # params = ["value: String or Numeric", "base: Integer = 0 (from the prefix, as Integer's)"]
     # notes = "In a Spinel binary too, Floats past 63 bits convert exactly; negative bases raise there"

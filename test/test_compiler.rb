@@ -323,6 +323,14 @@ class CompilerTest < Minitest::Test
 
   # Hash#delete costs O(size) in Spinel, and an unanchored scan misses
   # by searching the rest of the input.
+  # A copied constant or node class named like one of these would shadow it.
+  def test_every_runtime_constant_is_reserved
+    runtime = File.read(Birman::Compiler::RUNTIME)
+    names = runtime.scan(/^\s*([A-Z][A-Z0-9_]*) = /).flatten + runtime.scan(/^\s*class ([A-Z]\w*)/).flatten +
+            runtime.scan(/\b(?:raise|rescue) ([A-Z]\w*)/).flatten
+    assert_empty names.uniq - Birman::Compiler::RESERVED_CONSTANTS
+  end
+
   def test_generated_code_never_deletes_and_anchors_every_scan
     [Examples::Lang::Grammar, Calc::Grammar, JSONExample::Grammar].each do |g|
       source = g.to_ruby(namespace: "X")

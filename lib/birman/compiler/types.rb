@@ -16,7 +16,6 @@ module Birman
 
       def initialize(grammar)
         @grammar = grammar
-        @rules = {}
       end
 
       # The initializer literal for a value of matcher's type.
@@ -29,30 +28,34 @@ module Birman
         when Seq then seq(matcher)
         when Pick then of(matcher.parts[matcher.index])
         when SepBy, Rep then :array
-        when Choice then matcher.alts.filter_map { of(_1) }.reduce { |a, b| a == b ? a : :poly }
+        when Choice then matcher.alts.map { of(_1) }.reduce { |a, b| join(a, b) }
         when Not, And then :nil
         when Both then of(matcher.right)
         when Const then constant(matcher.constant)
         when Send then SENDS.fetch(matcher.method_name, :poly)
         when To then :node
-        when Infix then of(matcher.operand) == :node ? :node : :poly
-        when Ref then rule(matcher.name)
+        when Infix then infix(of(matcher.operand))
+        when Ref then rules.fetch(matcher.name, :poly)
         when Label, Quiet, Named, Lexeme then of(matcher.inner)
         else :poly
         end
       end
 
       # A String, or nil where it's optional: str.maybe.
-      def str_or_nil?(matcher)
+      def str_or_nil?(matcher, seen = {})
         case matcher
         when Maybe then of(matcher.inner) == :str
-        when Label, Quiet, Named, Lexeme then str_or_nil?(matcher.inner)
-        when Ref then str_or_nil?(@grammar.matcher_for(matcher.name))
+        when Label, Quiet, Named, Lexeme then str_or_nil?(matcher.inner, seen)
+        when Ref
+          !seen.key?(matcher.name) && (seen[matcher.name] = true) &&
+            str_or_nil?(@grammar.matcher_for(matcher.name), seen)
         else false
         end
       end
 
       private
+
+      def rules = @rules ||= solve
 
       def seq(matcher)
         return of(matcher.parts[matcher.only_at]) if matcher.only_at
@@ -65,16 +68,60 @@ module Birman
           .fetch(value.class, :poly)
       end
 
-      # A rule refers to itself through others (expr -> atom -> expr), so
-      # a rule met again while its type is being worked out counts as
-      # adding nothing: the other alternatives decide.
-      def rule(name)
-        return @rules[name] if @rules.key?(name)
-
-        @rules[name] = nil
-        type = of(@grammar.matcher_for(name))
-        @rules[name] = type
+      # Every rule's type at once, so none depends on which was asked about
+      # first: starting from nothing known (nil) for each, a rule's type is
+      # widened by what its body gives until nothing changes. Rules refer
+      # to each other in cycles (expr -> atom -> expr); one that still
+      # gives nothing (it only recurses) is :poly.
+      def solve
+        names = rule_names
+        @rules = names.to_h { [_1, nil] }
+        changed = true
+        while changed
+          changed = false
+          names.each do |name|
+            type = join(@rules[name], of(@grammar.matcher_for(name)))
+            changed ||= type != @rules[name]
+            @rules[name] = type
+          end
+        end
+        @rules.transform_values { _1 || :poly }
       end
+
+      # The rules reachable from the root and the ignore rule.
+      def rule_names
+        names = []
+        queue = [@grammar.class.root, @grammar.class.ignore].compact
+        while (name = queue.shift)
+          next if names.include?(name)
+
+          names << name
+          queue.concat(refs(@grammar.matcher_for(name)))
+        end
+        names
+      end
+
+      # Rule names a matcher refers to (custom matchers, which the emitter
+      # refuses, refer to none).
+      def refs(value)
+        case value
+        when Ref then [value.name]
+        when Lit then refs(@grammar.literal_matcher(value.text))
+        when Data then value.to_h.values.flat_map { refs(_1) }
+        when Array then value.flat_map { refs(_1) }
+        else []
+        end
+      end
+
+      # The type of a value that is either: nil is nothing known yet.
+      def join(one, other)
+        return other if one.nil?
+        return one if other.nil? || one == other
+
+        :poly
+      end
+
+      def infix(operand) = operand.nil? || operand == :node ? operand : :poly
     end
   end
 end

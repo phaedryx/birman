@@ -280,7 +280,10 @@ module BirmanRT
   # box every position in the parser. Arithmetic with a Bignum literal
   # operand does promote, so longer numerals are built 18 digits at a
   # time, scaled through one.
+  # A String only: the generator routes nothing else here, and anything
+  # else would be read wrongly rather than fail.
   def self.to_i(text)
+    raise TypeError, "BirmanRT.to_i reads a String, not #{text.class}" unless text.is_a?(String)
     return text.to_i if text.bytesize <= 18
 
     i = 0
@@ -320,29 +323,45 @@ module BirmanRT
   end
 
   # Kernel#Integer(value, base), for Grammar#large_integer in copied
-  # actions. Spinel's Integer raises RangeError for anything past 63
-  # bits, so a long string is read here, in Integer's syntax: whitespace
-  # around, a sign, a prefix (with base 0: 0x 0b 0o 0d or 0; with base
-  # 2, 8, 10 or 16, its own), digits with single underscores.
+  # actions: Spinel's Integer raises RangeError past 63 bits, so long
+  # strings and big Floats are read here. Bases are Integers, or Floats
+  # truncated; Rational and NaN bases differ from Kernel's (TypeError,
+  # FloatDomainError).
+  #
+  # Each branch compiles whatever the callers pass: Spinel's is_a? doesn't
+  # narrow value's type, so a branch for another type would call a method
+  # value doesn't have. to_s and to_f are no-ops where they run, and keep
+  # the typed helpers' arguments typed.
   def self.to_integer(value, base)
     base = integer_base(base)
-    # to_f: a no-op here, but Spinel won't pass a value it types as a
-    # String (as most callers' are) into float_to_i's Float otherwise.
-    return float_to_i(value.to_f) if value.is_a?(Float) && base == 0
-    # 12 characters in any base are under 36**12, within 63 bits.
-    unless value.is_a?(String) && value.bytesize > 12 && (base == 0 || (base >= 2 && base <= 36))
-      return base == 0 ? Integer(value) : Integer(value, base)
+    if value.is_a?(String)
+      string_to_integer(value.to_s, base)
+    elsif value.is_a?(Float) && base == 0
+      float_to_i(value.to_f)
+    else
+      base == 0 ? Integer(value) : Integer(value, base)
+    end
+  end
+
+  # Integer's syntax: whitespace around, a sign, a prefix (with base 0:
+  # 0x 0b 0o 0d or 0; with base 2, 8, 10 or 16, its own), digits with
+  # single underscores. 12 characters in any base are under 36**12,
+  # within 63 bits, so those go to Integer itself.
+  #: (String, Integer) -> untyped
+  def self.string_to_integer(text, base)
+    unless text.bytesize > 12 && (base == 0 || (base >= 2 && base <= 36))
+      return base == 0 ? Integer(text) : Integer(text, base)
     end
 
-    base, digits, negative = integer_syntax(value, base)
-    raise ArgumentError, "invalid value for Integer(): #{value.inspect}" if digits.nil?
+    base, digits, negative = integer_syntax(text, base)
+    raise ArgumentError, "invalid value for Integer(): #{text.inspect}" if digits.nil?
 
     n = base == 10 ? digits_to_i(digits) : based_to_i(digits, base)
     negative ? -n : n
   end
 
-  # Floats this big are whole numbers, and Spinel's Float#to_i gives
-  # 2**63 - 1 for anything past 63 bits.
+  # Past 2**62, Floats are whole numbers; Spinel's Float#to_i raises
+  # RangeError past 63 bits ("Bignum promotion pending").
   FLOAT_CHUNK = 4_611_686_018_427_387_904.0
 
   # Integer(f), exactly. A Float past 2**62 is halved below 2**61 (exact:
@@ -370,7 +389,8 @@ module BirmanRT
     n
   end
 
-  # Kernel#Integer's base argument: an Integer, or a Float truncated.
+  # Kernel#Integer's base argument: an Integer, or a Float truncated (a
+  # Rational, which Kernel takes, raises TypeError here).
   def self.integer_base(base)
     return base if base.is_a?(Integer)
     return base.to_i if base.is_a?(Float)

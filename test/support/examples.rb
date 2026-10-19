@@ -83,11 +83,93 @@ module Examples
     end
   end
 
+  # Rules in a cycle (a -> b -> a) whose values are all Strings, read by
+  # .map(:to_i): their types are worked out together.
+  module Cycles
+    # !(5)7, !x((99))1
+    class Grammar
+      include Birman::Grammar
+
+      root :start
+      rule(:start) { either(str("!") >> top, a) }
+      rule(:a) { either(match(/\d+/), b) }
+      rule(:b) { either(str("x"), between("(", ")", a)) }
+      rule(:top) { b.maybe.map(:to_i) >> a.map(:to_i) }
+    end
+
+    TOKENS = ["!", "(", ")", "x", "1", "7", "9" * 25, "0"].freeze
+  end
+
+  # Grammars whose large_integer calls only ever see one type: in a
+  # Spinel binary, each must compile and agree on its own.
+  module OneType
+    FLOAT = /[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?/
+
+    # Floats only: 1e30, -1.5
+    class Floats
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      root :numbers
+      ignore :spacing
+      rule(:numbers) { sep_by(match(FLOAT).action(:big), ",") }
+
+      private
+
+      def big(text)
+        large_integer(Float(text))
+      rescue FloatDomainError
+        "not finite"
+      end
+    end
+
+    # Floats with a base, which Integer refuses.
+    class FloatsWithBase
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      root :numbers
+      ignore :spacing
+      rule(:numbers) { sep_by(match(FLOAT).action(:big), ",") }
+
+      private
+
+      def big(text)
+        large_integer(Float(text), 10)
+      rescue ArgumentError
+        "refused"
+      end
+    end
+
+    # Integers only: each word's length, scaled.
+    class Integers
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      root :words
+      ignore :spacing
+      rule(:words) { sep_by(match(/\w+/).action(:big), ",") }
+
+      private
+
+      def big(text) = large_integer(text.size * 1_000_000_007)
+    end
+
+    def self.floats(rng, count)
+      Array.new(count) do
+        Array.new(rng.rand(1..3)) do
+          mantissa = format("%.#{rng.rand(0..17)}f", rng.rand * 10).sub(/\.?0+\z/, "")
+          "#{["", "-", "+"].sample(random: rng)}#{mantissa.empty? ? "0" : mantissa}e#{rng.rand(-20..330)}"
+        end.join(", ")
+      end
+    end
+  end
+
   Example = Data.define(:name, :grammar, :namespace, :inputs)
 
   module_function
 
-  def all(count) = [let(count), calc(count), json(count), email(count), numbers(count)]
+  def all(count) = [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), *one_type(count)]
 
   def let(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
@@ -123,6 +205,23 @@ module Examples
     lists = Array.new(count) { NumbersGen.list(rng) }
     inputs = NUMBERS_FIXED + Differential.fuzz(NUMBERS_TOKENS, rng, count, 8) + lists
     Example.new("numbers", Numbers::Grammar, "NumbersCompiled", inputs)
+  end
+
+  def cycles(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    soup = Differential.fuzz(Cycles::TOKENS, rng, count, 8)
+    inputs = ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!", ""] + soup + soup.map { "!#{_1}" }
+    Example.new("cycles", Cycles::Grammar, "CyclesCompiled", inputs)
+  end
+
+  def one_type(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    fixed = ["1.5", "-0.0", "1e30", "-1.7976931348623157e308", "9.3e18", "4611686018427387904", "1e400", "-1e400",
+             "1e18, 2e19, 1.5e300", "", "1e", "12"]
+    floats = fixed + OneType.floats(rng, count / 4)
+    [Example.new("floats", OneType::Floats, "FloatsCompiled", floats),
+     Example.new("floatbase", OneType::FloatsWithBase, "FloatBaseCompiled", fixed),
+     Example.new("integers", OneType::Integers, "IntegersCompiled", ["abc", "a, bb, #{"c" * 5000}", "", "a,"])]
   end
 
   LET_FIXED = [

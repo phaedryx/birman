@@ -205,6 +205,83 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["1=2", "<>", "[]", "h", "x", "1="]
   end
 
+  # --- Types of rules in cycles ---
+
+  # a and b reach each other: a gives an Integer or b's value, b a String
+  # or a's. Both are either, whichever is asked about first.
+  def cycle(body)
+    grammar(:start) do
+      rule(:start) { either(str("!") >> top, a) }
+      rule(:a) { either(match(/\d+/).map(:to_i), b) }
+      rule(:b) { either(str("x"), between("(", ")", a)) }
+      rule(:top, &body)
+    end
+  end
+
+  def test_rule_types_in_a_cycle_dont_depend_on_which_is_asked_first
+    g = cycle(proc { b })
+    a = Birman::Ref.new(:a)
+    b = Birman::Ref.new(:b)
+    first_a = Birman::Compiler::Types.new(g.new)
+    first_b = Birman::Compiler::Types.new(g.new)
+    assert_equal %i[poly poly], [first_a.of(a), first_a.of(b)]
+    assert_equal %i[poly poly], [first_b.of(b), first_b.of(a)]
+  end
+
+  # A rule typed while its cycle was still being worked out once passed
+  # for a String (to_i read an Integer's bytesize) or an Integer (a plain
+  # to_i, which Spinel clamps to 2**63 - 1).
+  def test_map_to_i_on_rules_in_a_cycle_that_may_give_integers
+    assert_refused cycle(proc { b.maybe.map(:to_i) }), /\.map\(:to_i\) \(its value/
+    assert_refused cycle(proc { b.map(:to_i) }), /\.map\(:to_i\) \(its value/
+    g = grammar(:start) do
+      rule(:start) { either(str("!") >> top, b) }
+      rule(:a) { either(between("#", "#", match(/\d+/)).map(:to_i), b) }
+      rule(:b) { either(match(/\d+/), between("(", ")", a)) }
+      rule(:top) { a.map(:to_i) }
+    end
+    assert_refused g, /\.map\(:to_i\) \(its value/
+  end
+
+  def test_map_to_i_on_rules_in_a_cycle_of_strings
+    g = grammar(:start) do
+      rule(:start) { either(str("!") >> top, a) }
+      rule(:a) { either(match(/\d+/), b) }
+      rule(:b) { either(str("x"), between("(", ")", a)) }
+      rule(:top) { b.maybe.map(:to_i) >> a.map(:to_i) }
+    end
+    assert_same_results g, ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!"]
+  end
+
+  # A rule that only recurses gives nothing; what reads it is refused
+  # rather than overflowing the stack.
+  def test_map_to_i_on_a_rule_that_only_recurses
+    g = grammar do
+      rule(:top) { a.map(:to_i) }
+      rule(:a) { b.label("x") }
+      rule(:b) { a }
+    end
+    assert_raises(ArgumentError) { g.parse("1") }
+    assert_refused g, /\.map\(:to_i\)/
+  end
+
+  # --- Unread values ---
+
+  # .map runs even when nothing reads its value, as an action does.
+  def test_unread_maps_still_run
+    g = grammar { rule(:top) { match(/x/).maybe.map(:upcase).present >> str(";") } }
+    parser = Differential.load(g, "CompilerTestParser")
+    ["", ";"].each do |input|
+      assert_raises(NoMethodError) { g.parse(input) }
+      assert_raises(NoMethodError) { parser.new(input).parse }
+    end
+    assert_same_results g, ["x;", "x"]
+  end
+
+  def test_refuses_overflowing_maps_that_nothing_reads
+    assert_refused grammar { rule(:top) { match(/\h+/).map(:hex).absent >> match(/\w+/) } }, /\.map\(:hex\)/
+  end
+
   # --- Diagnostics ---
 
   def test_label_that_succeeds_without_consuming

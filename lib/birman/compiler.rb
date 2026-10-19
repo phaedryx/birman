@@ -33,9 +33,9 @@ module Birman
     # lexical scope and shadow it, so it's refused.
     RESERVED_CONSTANTS = %w[
       BirmanRT Parser Node Span Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
-      LOOKAHEAD_DEPTH
+      CHUNK_LIMIT FLOAT_CHUNK LOOKAHEAD_DEPTH
       StringScanner Hash Array String Integer Float Symbol Regexp Kernel Encoding
-      StandardError ArgumentError RangeError SystemStackError
+      StandardError ArgumentError RangeError TypeError FloatDomainError SystemStackError
     ].freeze
 
     # Spinel allows 64 begin blocks active at once and exits the process

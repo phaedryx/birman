@@ -145,7 +145,7 @@ unless compiler
   exit 0
 end
 
-wanted = ARGV.empty? ? %w[let calc json email numbers] : ARGV
+wanted = ARGV.empty? ? Examples.all(0).map(&:name) : ARGV
 examples = Examples.all(Integer(ENV.fetch("INPUTS", 3000))).select { wanted.include?(_1.name) }
 FileUtils.mkdir_p(SpinelDiff::OUT)
 ok = examples.map { |example| SpinelDiff.agrees?(example, SpinelDiff.build(example, compiler)) }
