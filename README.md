@@ -176,6 +176,32 @@ generated parser; see below.)
 - Like actions, the method must depend only on the value: it also runs
   inside lookaheads, and its result is memoized with the rule.
 
+Some checks need more than one value: a name defined twice, a `break`
+outside a loop. Make those in a second pass over the AST, and report
+one at the node it's about with `Birman::Failure.at(node.span, reason)`.
+It's a `Failure` like `parse` returns, committed, with `reason` as
+its message:
+
+```ruby
+def self.check(program)
+  seen = {}
+  program.each do |let|
+    return Birman::Failure.at(let.span, "#{let.name} is already defined") if seen[let.name]
+
+    seen[let.name] = true
+  end
+  Birman::Success.new(program)
+end
+
+case Grammar.parse(source)
+in Birman::Success(program) then check(program)
+in failure then failure
+end
+# line 2, column 1: x is already defined
+#   let x = 2
+#   ^
+```
+
 ## Nodes
 
 `node(:a, :b)` (in any grammar class, from `extend Birman::Nodes`, or

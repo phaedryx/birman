@@ -36,6 +36,10 @@ module Birman
   #
   # reason: set when the failure isn't about what was expected, such as
   # input nested too deeply for Ruby's stack.
+  #
+  # Failure.at(span, reason) is one for a check made after parsing, on
+  # the AST: it points at a node's span, committed, with no expected
+  # list, so the message reads "line L, column C: reason".
   # [class.Failure]
   # purpose = "The input didn't parse"
   # fields = [
@@ -45,8 +49,13 @@ module Birman
   # "committed: Boolean (failed after a commit)",
   # "reason: String | nil (set when it isn't about expectations, e.g. nesting too deep)"
   # ]
-  # methods = ["line", "column", "found", "message(formatter)", "value!(formatter) -> raises ParseError"]
+  # methods = [
+  # "Failure.at(span, reason) -> Failure at span's start (for checks after parsing)",
+  # "line", "column", "found", "message(formatter)", "value!(formatter) -> raises ParseError"
+  # ]
   Failure = Data.define(:input, :pos, :expected, :committed, :reason) do
+    def self.at(span, reason) = new(input: span.input, pos: span.from, expected: [], committed: true, reason:)
+
     def initialize(input:, pos:, expected:, committed:, reason: nil) = super
 
     def success? = false

@@ -89,6 +89,20 @@ class BirmanTest < Minitest::Test
     assert_equal "  \t\t^", caret_line
   end
 
+  # A second pass over the AST reports at a node's span.
+  def test_failure_at_a_span
+    g = grammar do
+      const_set(:Word, node(:text))
+      rule(:top) { sep_by(match(/\p{L}+/).to(self.class::Word), str("\n")) }
+    end
+    _, word = g.parse!("héllo\nwörld")
+    failure = Birman::Failure.at(word.span, "wörld is not allowed")
+
+    assert_pattern { failure => Birman::Failure(pos: 6, expected: [], committed: true, reason: "wörld is not allowed") }
+    assert_equal "line 2, column 1: wörld is not allowed\n  wörld\n  ^", failure.message
+    assert_raises(Birman::ParseError) { failure.value! }
+  end
+
   def test_trailing_input_is_an_error
     g = grammar { rule(:top) { str("a") } }
     assert_pattern { g.parse("ab") => Birman::Failure(pos: 1, expected: ["end of input"]) }

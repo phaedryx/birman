@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+- **Added:** `Birman::Failure.at(span, reason)`, for checks made in a
+  second pass over the AST: a committed `Failure` at the start of a
+  node's span, whose message is the reason. The README's Checks
+  section shows one.
 - **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
   parser, as Ruby source Spinel can compile to a native binary, that
   agrees with `parse` on values, spans and errors. Differential tests
