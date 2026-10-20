@@ -17,3 +17,5 @@ copying its file (and, for a valid one, its `.json`) to the same place.
 
 `test/test_toml_example.rb` runs them against `examples/toml.rb`. The
 full 1.0 list (208 valid, 501 invalid) passed when this slice was cut.
+`test/support/examples.rb` also feeds them, and mutations of them, to
+the generated TOML parser, to compare it with the interpreter.

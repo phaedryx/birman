@@ -1,15 +1,17 @@
 # frozen_string_literal: true
 
 # The grammars generated parsers are checked against (the README's,
-# examples/calc.rb, json.rb and email.rb, and the small ones below), each
-# with the inputs to check: fixed edge cases, random token soup, and
-# valid documents built from the grammar (plus, for calc, json and
-# email, one-character mutations of them).
+# examples/calc.rb, json.rb, email.rb and toml.rb, and the small ones
+# below), each with the inputs to check: fixed edge cases, random token
+# soup, and valid documents built from the grammar or, for toml, taken
+# from test/toml-test (plus, for calc, json, email and toml,
+# one-character mutations of them).
 require "json"
 require_relative "differential"
 require_relative "../../examples/calc"
 require_relative "../../examples/json"
 require_relative "../../examples/email"
+require_relative "../../examples/toml"
 
 module Examples
   # The README's grammar.
@@ -259,8 +261,8 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), dates(count), moments(count),
-     *one_type(count)]
+    [let(count), calc(count), json(count), email(count), toml(count), numbers(count), cycles(count), dates(count),
+     moments(count), *one_type(count)]
   end
 
   def let(count)
@@ -290,6 +292,15 @@ module Examples
     mutants = addresses.map { Differential.mutate(rng, _1, EmailGen::REPLACEMENTS) }
     inputs = EMAIL_FIXED + Differential.fuzz(EMAIL_TOKENS, rng, count, 10) + addresses + mutants
     Example.new("email", EmailExample::Grammar, "EmailCompiled", inputs)
+  end
+
+  def toml(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    corpus = Dir.glob(File.expand_path("../toml-test/**/*.toml", __dir__))
+                .map { File.binread(_1).force_encoding(Encoding::UTF_8) }
+    mutants = Array.new(count / 2) { Differential.mutate(rng, corpus.sample(random: rng), TOML_TOKENS) }
+    inputs = corpus + Differential.fuzz(TOML_TOKENS, rng, count, 10) + mutants
+    Example.new("toml", TOMLExample::Grammar, "TOMLCompiled", inputs)
   end
 
   def numbers(count)
@@ -391,6 +402,10 @@ module Examples
 
   JSON_TOKENS = ["{", "}", "[", "]", ",", ":", " ", "\n", "\"", "\"k\"", "\"\\n\"", "\"\\u00e9\"", "\\",
                  "1", "-", "0", ".5", "e3", "true", "false", "null", "nul", "é", "\t", "12345678901234567890"].freeze
+
+  TOML_TOKENS = ["a", "=", " ", "\n", "\r\n", "\t", "[", "]", "[[", "]]", "{", "}", ",", ".", '"s"', "'l'",
+                 '"""', "'''", "\\", "\\u00e9", "\\U0001F408", "1", "+0", "0x1f", "1_0", "1.5e3", "-inf", "nan",
+                 "true", "1979-05-27", "T07:32:00", "Z", "-07:00", "07:32:00.5", "# c", "é", "\x7f"].freeze
 
   # Arguments for BirmanRT.to_integer (Grammar#large_integer in a
   # generated parser), to compare with Kernel#Integer: values with no

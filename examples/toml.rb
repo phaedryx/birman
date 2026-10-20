@@ -40,13 +40,10 @@ module TOMLExample
     Table       = node(:key)
     ArrayTable  = node(:key)
     InlineTable = node(:pairs)
-    # Date, time and offset as written; Document checks and converts them.
+    # Date, time (nil for a date alone) and offset (nil for local time)
+    # as written, or a time of day alone; Document checks and converts them.
     Moment      = node(:date, :time, :offset)
-
-    # Any of the four: 1979-05-27T07:32:00Z, 1979-05-27 07:32:00,
-    # 1979-05-27, 07:32:00.
-    TIME = /\d{2}:\d{2}:\d{2}(?:\.\d+)?/
-    MOMENT = /(?<date>\d{4}-\d{2}-\d{2})(?:[Tt ](?<time>#{TIME})(?<offset>[Zz]|[+-]\d{2}:\d{2})?)?|(?<time>#{TIME})/
+    Clock       = node(:time)
 
     root :document
 
@@ -85,8 +82,9 @@ module TOMLExample
     end
 
     # A trailing comma is fine, a leading or doubled one isn't.
-    rule(:array) { seq("[", commit, gap, only(array_item.rep), "]").label("array") }
-    rule(:array_item) { seq(only(value), gap, either(seq(",", gap), str("]").present)) }
+    rule(:array) do
+      seq("[", commit, gap, only(sep_by(seq(only(value), gap), seq(",", gap), trailing: true)), "]").label("array")
+    end
 
     # On one line, and no trailing comma.
     rule(:inline_table) { seq("{", commit, only(sep_by(pair, ",")), "}").to(InlineTable).label("inline table") }
@@ -151,7 +149,14 @@ module TOMLExample
         .action(:float_value)
     end
 
-    lexeme(:moment) { match(MOMENT).action(:moment_parts).to(Moment) }
+    # 1979-05-27T07:32:00Z, 1979-05-27 07:32:00, 1979-05-27, or 07:32:00.
+    lexeme(:moment) do
+      either(
+        match(/(?<date>\d{4}-\d\d-\d\d)(?:[Tt ](?<time>\d\d:\d\d:\d\d(?:\.\d+)?)(?<offset>[Zz]|[+-]\d\d:\d\d)?)?/)
+          .captures.to(Moment),
+        match(/\d\d:\d\d:\d\d(?:\.\d+)?/).to(Clock)
+      )
+    end
 
     private
 
@@ -164,14 +169,12 @@ module TOMLExample
 
     def float_value(text)
       case text.delete_prefix("+")
-      when "inf" then Float::INFINITY
-      when "-inf" then -Float::INFINITY
-      when "nan", "-nan" then Float::NAN
+      when "inf" then 1.0 / 0
+      when "-inf" then -1.0 / 0
+      when "nan", "-nan" then 0.0 / 0
       else Float(text.delete("_"))
       end
     end
-
-    def moment_parts(text) = text.match(MOMENT).named_captures.transform_keys(&:to_sym)
   end
 
   # The second pass: builds the Hash from the grammar's statements.
@@ -280,7 +283,7 @@ module TOMLExample
     def value(value)
       case value
       in Grammar::InlineTable(pairs) then made({}, :inline).tap { |table| pairs.each { assign(table, _1) } }
-      in Grammar::Moment then Moments.convert(value)
+      in Grammar::Moment | Grammar::Clock then Moments.convert(value)
       in Array then made(value.map { value(_1) }, :static)
       else value
       end
@@ -296,17 +299,18 @@ module TOMLExample
     def dotted(key) = key.map { _1.match?(/\A[A-Za-z0-9_-]+\z/) ? _1 : _1.inspect }.join(".")
   end
 
-  # Checks a Grammar::Moment and makes it a Time, Date or LocalTime.
+  # Checks a Grammar::Moment or Clock and makes it a Time, Date or
+  # LocalTime.
   module Moments
     module_function
 
     def convert(moment)
-      date = date(moment) if moment.date
-      time = time(moment) if moment.time
-      return LocalTime.new(**time) unless date
-      return date unless time
+      return LocalTime.new(**time(moment)) if moment.is_a?(Grammar::Clock)
 
-      Time.new(date.year, date.month, date.day, *time.values, offset(moment))
+      date = date(moment)
+      return date unless moment.time
+
+      Time.new(date.year, date.month, date.day, *time(moment).values, offset(moment))
     end
 
     def date(moment)
@@ -338,22 +342,15 @@ module TOMLExample
   # Success(Hash) or Failure, from either pass: a Document error is a
   # Failure whose reason is the broken rule, at its statement's start.
   def self.parse(source)
-    return invalid_utf8(source) unless source.valid_encoding?
-
     case Grammar.parse(source)
     in Birman::Success(statements) then Birman::Success.new(Document.new.build(statements))
     in failure then failure
     end
   rescue Document::Error => e
-    Birman::Failure.new(input: source, pos: e.span.from, expected: [], committed: true, reason: e.message)
+    Birman::Failure.at(e.span, e.message)
   end
 
   def self.parse!(source) = parse(source).value!
-
-  def self.invalid_utf8(source)
-    pos = source.each_char.find_index { !_1.valid_encoding? }
-    Birman::Failure.new(input: source.scrub, pos:, expected: [], committed: true, reason: "invalid UTF-8")
-  end
 end
 
 if __FILE__ == $PROGRAM_NAME

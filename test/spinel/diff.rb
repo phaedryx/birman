@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Compiles the parsers generated from the README grammar, examples/calc.rb,
-# json.rb and email.rb, and Examples::Numbers with Spinel, then checks each
+# json.rb, email.rb and toml.rb, and Examples::Numbers with Spinel, then checks each
 # binary against the interpreter on the same inputs test_compiled_examples.rb
 # uses.
 #

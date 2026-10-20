@@ -46,7 +46,8 @@
   statements, and a second pass builds the Hash and rejects tables or
   keys defined twice, additions to inline tables and arrays, and dates
   that don't exist, reporting each at its node's span. It's tested
-  against a slice of the official toml-test suite (`test/toml-test`).
+  against a slice of the official toml-test suite (`test/toml-test`),
+  and its generated parser against the interpreter, Spinel binary too.
 - **Added:** ways to transform a value without a block, so a grammar
   can be plain data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,

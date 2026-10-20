@@ -90,7 +90,9 @@ class TestTOMLExample < Minitest::Test
       "point = { x = 1 }\n[point.z]" => [2, 1, "point is an inline table"],
       "ports = [80]\n[ports.http]" => [2, 1, "ports is an array"],
       "a = 1\n[a.b]" => [2, 1, "a is already defined"],
-      "d = 1979-02-30" => [1, 5, "1979-02-30 is not a real date"]
+      "d = 1979-02-30" => [1, 5, "1979-02-30 is not a real date"],
+      "t = 07:32:00Z" => [1, 13, "expected newline or end of input"],
+      "s = \"caf\xE9\"".dup.force_encoding(Encoding::UTF_8) => [1, 9, "invalid UTF-8"]
     }.each do |source, (line, column, text)|
       failure = TOMLExample.parse(source)
       assert failure.failure?, source
