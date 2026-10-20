@@ -82,6 +82,21 @@ class StandaloneTest < Minitest::Test
     assert_match(/undefined rule :spacing/, error.message)
   end
 
+  def test_an_action_or_check_needing_a_grammar_method_raises_before_parsing
+    m = B.str("x").action(:shout) | B.str("y")
+    error = assert_raises(ArgumentError) { B.parse(m, "y") }
+    assert_equal "undefined method :shout for .action: a matcher run by Birman.parse can only use " \
+                 "Birman's own methods there; define yours in a grammar class", error.message
+
+    error = assert_raises(ArgumentError) { B.parse(B.match(/\d+/).check(:even?, "even"), "2") }
+    assert_match(/undefined method :even\? for \.check/, error.message)
+  end
+
+  def test_built_in_grammar_methods_still_work_in_actions
+    assert_equal 2**70, B.parse!(B.match(/\d+/).action(:large_integer), (2**70).to_s)
+    assert_equal 12, B.parse!(B.match(/\d+/).map(:to_i), "12")
+  end
+
   def test_the_same_settings_reuse_one_grammar
     m = B.seq(B.str("a"), B.str("b"))
     assert_same Birman::Standalone.grammar(m, nil), Birman::Standalone.grammar(B.seq(B.str("a"), B.str("b")), nil)

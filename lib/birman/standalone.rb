@@ -17,7 +17,7 @@ module Birman
   # [method."Birman.parse"]
   # params = ["matcher: String | Regexp | Matcher", "input: String", "ignore: String | Regexp | Matcher | nil"]
   # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
-  # raises = ["ArgumentError if matcher or ignore refers to a rule (Ref): rules need a grammar class"]
+  # raises = ["ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks"]
   def self.parse(matcher, input, ignore: nil) = Standalone.grammar(matcher, ignore).parse(input)
 
   # [method."Birman.parse!"]
@@ -45,7 +45,7 @@ module Birman
     # [method."Standalone.grammar"]
     # params = ["matcher: String | Regexp | Matcher", "ignore: String | Regexp | Matcher | nil"]
     # returns = "A grammar class whose root rule is matcher (to_ebnf, to_ruby and parse work on it)"
-    # raises = ["ArgumentError if matcher or ignore refers to a rule"]
+    # raises = ["ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks"]
     def self.grammar(matcher, ignore)
       key = [matcher, ignore].freeze
       @lock.synchronize do
@@ -57,9 +57,7 @@ module Birman
     end
 
     def self.build(matcher, ignore)
-      check_no_refs!(matcher, ignore)
-
-      Class.new do
+      grammar = Class.new do
         include Grammar
 
         root ROOT
@@ -69,18 +67,45 @@ module Birman
         rule(IGNORE) { ignore }
         self.ignore IGNORE
       end
+      check!(grammar, [matcher, ignore].compact.map { Birman.coerce(_1) })
+      grammar
     end
 
-    # A Ref here would raise "undefined rule" only when the parse reached
-    # it, so a mistake could hide in an untried alternative. Checked up
-    # front instead.
-    def self.check_no_refs!(*matchers)
-      names = matchers.compact.flat_map { AST.refs(Birman.coerce(_1).to_ast) }.uniq
-      return if names.empty?
-
-      raise ArgumentError, "undefined rule #{names.map(&:inspect).join(", ")}: " \
-                           "a matcher run by Birman.parse can't refer to rules; define them in a grammar class"
+    # A rule reference, or an action or check calling a method only a
+    # grammar of your own would have, raises only when the parse reaches
+    # it (and the method as a NoMethodError on an anonymous class), so a
+    # mistake could hide in an untried alternative. Checked up front.
+    def self.check!(grammar, matchers)
+      matchers.each { each_matcher(_1) { |m| check_matcher!(grammar, m) } }
     end
-    private_class_method :build, :check_no_refs!
+
+    def self.check_matcher!(grammar, matcher)
+      case matcher
+      when Ref
+        raise ArgumentError, "undefined rule #{matcher.name.inspect}: " \
+                             "a matcher run by Birman.parse can't refer to rules; define them in a grammar class"
+      when Action, Check
+        name = matcher.method_name
+        return if grammar.method_defined?(name) || grammar.private_method_defined?(name)
+
+        raise ArgumentError, "undefined method #{name.inspect} for .#{matcher.is_a?(Action) ? "action" : "check"}: " \
+                             "a matcher run by Birman.parse can only use Birman's own methods there; " \
+                             "define yours in a grammar class"
+      end
+    end
+
+    # Every matcher inside root, root included, once each.
+    def self.each_matcher(root)
+      queue = [root]
+      seen = {}.compare_by_identity
+      while (m = queue.shift)
+        next if seen[m]
+
+        seen[m] = true
+        yield m
+        queue.concat(m.to_h.values.flat_map { Array(_1) }.grep(Matcher)) if m.is_a?(Data)
+      end
+    end
+    private_class_method :build, :check!, :check_matcher!, :each_matcher
   end
 end

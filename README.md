@@ -238,8 +238,9 @@ for one is cached and reused for an equal one.
 
 What needs a grammar class still does: rules (so recursion, and
 `Birman::Rules`), `keywords`, and `.action`/`.check` with methods of
-your own. A rule reference raises `ArgumentError` before parsing
-starts.
+your own (`large_integer` works). A rule reference, or an action or
+check naming a method of your own, raises `ArgumentError` before
+parsing starts.
 
 ## Nodes
 
