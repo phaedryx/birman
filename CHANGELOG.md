@@ -35,6 +35,18 @@
 - **Added:** `examples/email.rb`, RFC 5322 email addresses (addr-spec,
   with UTF-8 and nested comments): a grammar with no ignore rule. It's
   checked against the generated parsers too.
+- **Added:** `.check(:name, "label")`, a semantic predicate: the
+  grammar's method `name` gets the value and returns truthy to accept
+  it. A falsy result is an ordinary failure, "expected label", where
+  the match began, so it backtracks (the furthest failure still wins)
+  and commits only inside a committed `seq`. Generated parsers support
+  it too.
+- **Added:** `examples/toml.rb`, TOML 1.0, parsing to Hashes, Times,
+  Dates and the rest in two passes: the grammar reads a flat list of
+  statements, and a second pass builds the Hash and rejects tables or
+  keys defined twice, additions to inline tables and arrays, and dates
+  that don't exist, reporting each at its node's span. It's tested
+  against a slice of the official toml-test suite (`test/toml-test`).
 - **Added:** ways to transform a value without a block, so a grammar
   can be plain data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,
