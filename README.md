@@ -243,8 +243,10 @@ the rule, for what it can't translate faithfully:
   `Float(text).round`, `text.to_f.to_int` and whatever else slips past
   it may raise, or give a wrong number without a word. `large_integer`
   takes Integer bases and Floats (truncated) as Ruby does; Rational and
-  NaN bases differ (`TypeError`, `FloatDomainError`), and in a binary
-  negative bases (Ruby's "prefix or this base") raise
+  NaN bases differ (`TypeError`, `FloatDomainError`), a base that isn't
+  a number raises `TypeError` as in Ruby 3.3+ (3.2's `Integer` ignores
+  it), and in a binary negative bases (Ruby's "prefix or this base")
+  raise
 
 ```ruby
 def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)

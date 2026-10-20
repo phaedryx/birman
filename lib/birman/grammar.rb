@@ -177,13 +177,22 @@ module Birman
     # to_ruby). Past 63 bits, a Spinel binary's Integer and to_i raise or
     # give 2**63 - 1; the generated parser's large_integer gives Bignums,
     # as Ruby's does. Bases: Integers, or Floats truncated (Rational and
-    # NaN bases differ from Kernel#Integer in a generated parser).
+    # NaN bases differ from Kernel#Integer in a generated parser). A base
+    # that isn't a number raises TypeError, as in Ruby 3.3+; Ruby 3.2's
+    # Integer ignores it.
     # [method.large_integer]
     # params = ["value: String or Numeric", "base: Integer = 0 (from the prefix, as Integer's)"]
     # notes = "In a Spinel binary too, Floats past 63 bits convert exactly; negative bases raise there"
     # returns = "Integer(value, base)"
-    # raises = ["ArgumentError or TypeError, as Kernel#Integer"]
-    def large_integer(value, base = 0) = Integer(value, base)
+    # raises = ["ArgumentError or TypeError, as Kernel#Integer in Ruby 3.3+"]
+    def large_integer(value, base = 0)
+      raise TypeError, "no implicit conversion from nil to integer" if base.nil?
+      unless base.respond_to?(:to_int)
+        raise TypeError, "no implicit conversion of #{[true, false].include?(base) ? base : base.class} into Integer"
+      end
+
+      Integer(value, base)
+    end
 
     def build_failure(input, byte_pos, expected, committed: false, reason: nil)
       Failure.new(input:, pos: Birman.char_offset(input, byte_pos), expected: expected.uniq, committed:, reason:)

@@ -129,14 +129,25 @@ class CompilerTest < Minitest::Test
   end
 
   # BirmanRT.to_integer is Grammar#large_integer in a generated parser.
-  def test_to_integer_agrees_with_kernel_integer
-    Differential.load(grammar { rule(:top) { str("x") } }, "CompilerTestParser")
+  def test_to_integer_agrees_with_large_integer
+    g = grammar { rule(:top) { str("x") } }
+    Differential.load(g, "CompilerTestParser")
     runtime = CompilerTestParser::BirmanRT
     cases = Examples::INTEGER_CASES.map { [_1, 0] } + Examples::INTEGER_BASE_CASES + Examples::NEGATIVE_BASE_CASES +
             Examples::FLOAT_CASES.map { [_1, 0] }
     cases.each do |value, base|
-      assert_equal outcome { Integer(value, base) }, outcome { runtime.to_integer(value, base) },
-                   "Integer(#{value.inspect}, #{base.inspect})"
+      assert_equal outcome { g.new.send(:large_integer, value, base) }, outcome { runtime.to_integer(value, base) },
+                   "large_integer(#{value.inspect}, #{base.inspect})"
+    end
+  end
+
+  # Ruby 3.2's Integer ignores a base that isn't a number; 3.3 and later raise.
+  def test_large_integer_refuses_a_base_that_isnt_a_number_on_every_ruby
+    g = grammar { rule(:top) { str("x") } }
+    { nil => "from nil to integer", true => "of true into Integer", false => "of false into Integer",
+      "16" => "of String into Integer", :a => "of Symbol into Integer" }.each do |base, message|
+      error = assert_raises(TypeError) { g.new.send(:large_integer, "12", base) }
+      assert_equal "no implicit conversion #{message}", error.message
     end
   end
 
