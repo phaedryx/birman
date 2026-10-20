@@ -89,6 +89,20 @@ class BirmanTest < Minitest::Test
     assert_equal "  \t\t^", caret_line
   end
 
+  # A second pass over the AST reports at a node's span.
+  def test_failure_at_a_span
+    g = grammar do
+      const_set(:Word, node(:text))
+      rule(:top) { sep_by(match(/\p{L}+/).to(self.class::Word), str("\n")) }
+    end
+    _, word = g.parse!("héllo\nwörld")
+    failure = Birman::Failure.at(word.span, "wörld is not allowed")
+
+    assert_pattern { failure => Birman::Failure(pos: 6, expected: [], committed: true, reason: "wörld is not allowed") }
+    assert_equal "line 2, column 1: wörld is not allowed\n  wörld\n  ^", failure.message
+    assert_raises(Birman::ParseError) { failure.value! }
+  end
+
   def test_trailing_input_is_an_error
     g = grammar { rule(:top) { str("a") } }
     assert_pattern { g.parse("ab") => Birman::Failure(pos: 1, expected: ["end of input"]) }
@@ -242,6 +256,65 @@ class BirmanTest < Minitest::Test
     g = grammar { rule(:top) { sep_by(match(/\d+/), token(",")) } }
     assert_equal %w[1 2 3], g.parse!("1, 2,3")
     assert_equal [], g.parse!("")
+  end
+
+  def test_sep_by_with_a_trailing_separator
+    g = grammar { rule(:top) { sep_by(match(/\d+/), str(","), trailing: true) } }
+    assert_equal %w[1 2], g.parse!("1,2,")
+    assert_equal %w[1 2], g.parse!("1,2")
+    assert_equal [], g.parse!("")
+    assert g.parse(",").failure?, "a separator needs an item before it"
+    assert g.parse("1,,").failure?, "only one"
+    assert_equal 'top = (/\d+/ ("," /\d+/)* ","?)? ;', g.to_ebnf
+
+    g = grammar { rule(:top) { sep_by1(match(/\d+/), str(","), trailing: true) } }
+    assert_equal %w[1], g.parse!("1,")
+    assert g.parse("").failure?
+  end
+
+  # After a separator, the item is expected (and, when trailing is
+  # allowed, so is whatever follows the list).
+  def test_errors_after_a_separator
+    trailing, plain = [true, false].map do |trailing|
+      grammar { rule(:top) { seq(str("["), sep_by(match(/\d+/).label("value"), str(","), trailing:), str("]")) } }
+    end
+    assert_pattern { trailing.parse("[1,2,x") => Birman::Failure(pos: 5, expected: ["value", '"]"']) }
+    assert_equal %w[1 2], trailing.parse!("[1,2,]")[1]
+    assert_pattern { plain.parse("[1,2,]") => Birman::Failure(pos: 5, expected: ["value"]) }
+  end
+
+  def test_a_trailing_separator_doesnt_stop_a_commit
+    g = grammar { rule(:top) { sep_by(seq(str("a"), commit, str("b")), str(","), trailing: true) } }
+    assert_equal [%w[a b]], g.parse!("ab,")
+    assert_pattern { g.parse("ab,a") => Birman::Failure(pos: 4, expected: ['"b"'], committed: true) }
+  end
+
+  MOMENT = /(?<date>\d{4}-\d\d-\d\d)(?:T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/
+
+  def test_captures_are_a_hash_of_the_named_groups
+    g = grammar { rule(:top) { match(MOMENT).captures } }
+    assert_equal({ date: "1979-05-27", time: "07:32", offset: "Z" }, g.parse!("1979-05-27T07:32Z"))
+    assert_equal({ date: "1979-05-27", time: nil, offset: nil }, g.parse!("1979-05-27"), "unmatched groups are nil")
+    assert_equal({ date: "1979-05-27", time: nil, offset: "-07:00" }, g.parse!("1979-05-27-07:00"))
+    assert_pattern { g.parse("1979") => Birman::Failure(pos: 0, expected: [^(MOMENT.inspect)]) }
+    assert_equal "top = #{MOMENT.inspect} ;", g.to_ebnf
+  end
+
+  def test_captures_build_nodes
+    g = grammar do
+      const_set(:Moment, node(:date, :time, :offset))
+      rule(:top) { seq(str("at "), only(match(MOMENT).captures.to(self.class::Moment))) }
+    end
+    moment = g.parse!("at 1979-05-27T07:32")
+    assert_equal ["1979-05-27", "07:32", nil], moment.to_h.values
+    assert_equal "1979-05-27T07:32", moment.span.text
+  end
+
+  def test_captures_need_named_groups_each_named_once
+    error = assert_raises(ArgumentError) { grammar { rule(:top) { match(/(\d+)-(\d+)/).captures } }.parse("1-2") }
+    assert_match(/has no named groups/, error.message)
+    error = assert_raises(ArgumentError) { grammar { rule(:top) { match(/(?<n>\d)|(?<n>x)/).captures } }.parse("1") }
+    assert_match(/n more than once/, error.message)
   end
 
   def test_one_of_a_hash_maps_literals_to_values

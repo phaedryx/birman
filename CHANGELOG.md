@@ -7,6 +7,23 @@
   against the interpreter (`rake test`, and `rake spinel` for the
   compiled binaries). Actions and `.map(:name)` run even when nothing
   reads their value, as in the interpreter.
+- **Added:** `match(re).captures`: the value is a Hash of `re`'s named
+  groups, `{date: "1979-05-27", time: nil}`, with Symbol keys, in
+  order, and `nil` for a group that didn't match, so
+  `match(MOMENT).captures.to(Moment)` needs no action re-matching the
+  text. A regexp with no named groups, or a name used twice, raises
+  `ArgumentError`. Generated parsers support it (reading the groups by
+  number, as Spinel's scanner needs), building nodes from it directly.
+- **Added:** `sep_by(x, sep, trailing: true)` (and `sep_by1`) allows one
+  separator after the last item, as in TOML's `[1, 2,]`. A list of none
+  still can't be just a separator. After a trailing separator the item
+  is still expected, so `[1, x` reports `expected value or "]"`; without
+  `trailing`, `[1,]` still reports `expected value`. Generated parsers
+  support it.
+- **Added:** `Birman::Failure.at(span, reason)`, for checks made in a
+  second pass over the AST: a committed `Failure` at the start of a
+  node's span, whose message is the reason. The README's Checks
+  section shows one.
 - **Added:** `large_integer(value, base = 0)`, for actions: `Integer`,
   but a generated parser's gives Bignums in a Spinel binary too, where
   `Integer`, `String#to_i`, `#hex` and `#oct` raise past 63 bits, or

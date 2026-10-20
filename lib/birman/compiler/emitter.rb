@@ -117,6 +117,7 @@ module Birman
         case matcher
         when Str then str(matcher, want)
         when Pat then pat(matcher, want, name)
+        when Captures then captures(matcher, want, name)
         when Lit then lit(matcher, want)
         when Seq then seq(matcher, want, name)
         when Pick then pick(matcher, want, name)
@@ -206,6 +207,22 @@ module Birman
                     "return p + len unless len.nil?\n\n"
                   end
           "@sc.pos = p\nlen = @sc.skip(#{regexp})\n#{found}fail_at(p, #{matcher.source.inspect})"
+        end
+      end
+
+      # Groups by number: Spinel's scanner can't look them up by name.
+      # Named groups are numbered in order, and once a group is named the
+      # unnamed ones don't capture (see Captures).
+      def captures(matcher, want, name)
+        regexp = anchored(matcher.pat.re)
+        define(:captures, matcher, want, name) do |v|
+          pairs = matcher.pat.re.names.each_with_index.map { |group, i| "#{hash_key(group.to_sym)} @sc[#{i + 1}]" }
+          found = if v
+                    "unless len.nil?\n  #{v} = { #{pairs.join(", ")} }\n  return p + len\nend\n"
+                  else
+                    "return p + len unless len.nil?\n\n"
+                  end
+          "@sc.pos = p\nlen = @sc.skip(#{regexp})\n#{found}fail_at(p, #{matcher.pat.source.inspect})"
         end
       end
 
@@ -306,7 +323,7 @@ module Birman
               break if s == FAIL
 
               r = #{item.name}(s)
-              break if r == FAIL || r == q
+              #{"q = s if r == FAIL # a trailing separator\n  " if matcher.trailing}break if r == FAIL || r == q
 
               #{"values << #{item.value}" if v}
               q = r
@@ -530,6 +547,7 @@ module Birman
         when Pick then hash_keys(matcher.parts[matcher.index], seen)
         when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
         when Both then hash_keys(matcher.right, seen)
+        when Captures then matcher.pat.re.names.map(&:to_sym)
         when Lit, Str, Pat, Rep, SepBy, Not, And, To then nil
         when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown

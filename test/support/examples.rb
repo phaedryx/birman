@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # The grammars generated parsers are checked against (the README's,
-# examples/calc.rb, json.rb and email.rb, and Examples::Numbers), each
+# examples/calc.rb, json.rb and email.rb, and the small ones below), each
 # with the inputs to check: fixed edge cases, random token soup, and
 # valid documents built from the grammar (plus, for calc, json and
 # email, one-character mutations of them).
@@ -163,6 +163,32 @@ module Examples
               "9" * 25, "a", "e", "x", "-", "1"].freeze
   end
 
+  # Lists that may end in a comma (sep_by's trailing:), of moments read
+  # with named captures (built into nodes, and left as Hashes) and of
+  # such lists: [1979-05-27T07:32Z, [ab!, 2024-02-29,], ]. MOMENT's
+  # unnamed group checks that Spinel doesn't number it either.
+  module Moments
+    MOMENT = /(?<date>\d{4}-\d\d-\d\d)(T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/ # rubocop:disable Lint/MixedRegexpCaptureTypes
+
+    # [1979-05-27T07:32Z, [ab!, 2024-02-29,], ]
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      Moment = node(:date, :time, :offset)
+
+      root :list
+      ignore :spacing
+
+      rule(:list) { seq("[", commit, only(sep_by(item, ",", trailing: true)), "]") }
+      rule(:item) { either(moment, word, seq("[", only(sep_by1(either(moment, word), ",", trailing: true)), "]")) }
+      lexeme(:moment) { match(MOMENT).captures.to(Moment).label("moment") }
+      lexeme(:word) { match(/(?<word>[a-zé]+)(?<bang>!)?/).captures.label("word") }
+    end
+
+    TOKENS = ["[", "]", ",", " ", "1979-05-27", "T07:32", "Z", "-07:00", "+05:30", "ab", "é", "!", "1979", "x"].freeze
+  end
+
   # Grammars whose large_integer calls only ever see one type: in a
   # Spinel binary, each must compile and agree on its own.
   module OneType
@@ -233,7 +259,8 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), dates(count), *one_type(count)]
+    [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), dates(count), moments(count),
+     *one_type(count)]
   end
 
   def let(count)
@@ -287,6 +314,18 @@ module Examples
     entries = Array.new(count / 2) { Array.new(rng.rand(1..4)) { Dates::TOKENS.sample(random: rng) }.join(", ") }
     inputs = fixed + Differential.fuzz(Dates::TOKENS, rng, count, 8) + entries
     Example.new("dates", Dates::Grammar, "DatesCompiled", inputs)
+  end
+
+  def moments(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    fixed = ["[]", "[,]", "[1979-05-27T07:32Z, [ab!, 2024-02-29,], ]", "[ab,cd]", "[ab,,]", "[[], ab]", "[[ab,]]",
+             "[1979-05-27-07:00 ,1979-05-27T07:32+05:30,]", "[1979-05-27T]", "[ab", "[ab,", "[é!,", "", "ab"]
+    lists = Array.new(count / 2) do
+      items = Array.new(rng.rand(0..4)) { Moments::TOKENS.drop(4).sample(rng.rand(1..2), random: rng).join }
+      "[#{items.join(", ")}#{"," if rng.rand < 0.5}]"
+    end
+    inputs = fixed + Differential.fuzz(Moments::TOKENS, rng, count, 8) + lists
+    Example.new("moments", Moments::Grammar, "MomentsCompiled", inputs)
   end
 
   def one_type(count)

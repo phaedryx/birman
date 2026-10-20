@@ -11,6 +11,7 @@ class CompilerTest < Minitest::Test
   Pair = Birman.node(:left, :right)
   Wrap = Birman.node(:value)
   Bin = Birman.node(:op, :left, :right)
+  Moment = Birman.node(:date, :time, :offset)
 
   include CompilerTestHelpers
 
@@ -24,6 +25,17 @@ class CompilerTest < Minitest::Test
   def test_pat_keeps_its_options_and_reports_the_original_source
     g = grammar { rule(:top) { match(/a.b/m) >> match(/[xyz]+/i) } }
     assert_same_results g, ["a\nbXy", "a\nb", "ab", "", "é"]
+  end
+
+  # Unnamed groups don't count (Ruby stops capturing them once a group
+  # is named), so the generated parser can read groups by number.
+  def test_captures
+    moment = /(?<date>\d{4}-\d\d-\d\d)(T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/ # rubocop:disable Lint/MixedRegexpCaptureTypes
+    g = grammar do
+      rule(:top) { sep_by(either(match(moment).captures.to(Moment), word), str(",")) }
+      rule(:word) { seq(match(/(?<word> [a-zé]+ ) (?<bang>!)? # x/x).captures.as(:parts), str(";").maybe) }
+    end
+    assert_same_results g, ["1979-05-27T07:32Z,ab!;,cd", "1979-05-27-07:00", "1979-05-27T", "é!", "!", "1979", ""]
   end
 
   def test_pat_with_slashes_and_unicode
@@ -74,6 +86,17 @@ class CompilerTest < Minitest::Test
       rule(:top) { seq("[", sep_by(match(/\d+/), ","), "]", sep_by1(match(/[a-z]/), str(""))) }
     end
     assert_same_results g, ["[1,2,3]abc", "[]x", "[1,]a", "[,]a", "[1]", "[1,2]"]
+  end
+
+  def test_sep_by_with_a_trailing_separator
+    g = grammar do
+      rule(:top) do
+        seq("[", sep_by(match(/\d+/).label("value"), ",", trailing: true), "]",
+            sep_by1(seq(str("a"), commit, str("b")), str(";"), trailing: true))
+      end
+    end
+    assert_same_results g, ["[1,2,]ab;", "[1,2]ab;ab", "[1,]ab", "[,]ab", "[]ab;;", "[1,2,x", "[1,,]", "[]ab;a",
+                            "[]", "[1]"]
   end
 
   # --- Choice and repetition ---

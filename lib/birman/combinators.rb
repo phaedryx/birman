@@ -144,18 +144,21 @@ module Birman
     def infix(operand, *ops, node:) = Infix.new(Birman.coerce(operand), either(*ops).label("operator"), node)
 
     # One or more items separated by sep; value is an array of items.
+    # With trailing: true, one separator may follow the last item:
+    #   seq("[", only(sep_by(value, ",", trailing: true)), "]")   # [1, 2,]
     # [method.sep_by1]
-    # params = ["item: String | Regexp | Matcher", "sep: String | Regexp | Matcher"]
-    # returns = "Matcher for one or more items separated by sep"
+    # params = ["item: String | Regexp | Matcher", "sep: String | Regexp | Matcher", "trailing: Boolean = false"]
+    # returns = "Matcher for one or more items separated by sep (and, if trailing, maybe one more sep)"
     # value = "Array of item values (item's .as name passes outward)"
-    def sep_by1(item, sep) = SepBy.new(lit(item), lit(sep))
+    def sep_by1(item, sep, trailing: false) = SepBy.new(lit(item), lit(sep), 1, trailing)
 
-    # Zero or more items separated by sep.
+    # Zero or more items separated by sep. A trailing separator needs an
+    # item before it: "," alone isn't an empty list.
     # [method.sep_by]
-    # params = ["item: String | Regexp | Matcher", "sep: String | Regexp | Matcher"]
-    # returns = "Matcher for zero or more items separated by sep"
+    # params = ["item: String | Regexp | Matcher", "sep: String | Regexp | Matcher", "trailing: Boolean = false"]
+    # returns = "Matcher for zero or more items separated by sep (and, if trailing, maybe one more sep)"
     # value = "Array of item values, [] when there are none"
-    def sep_by(item, sep) = SepBy.new(lit(item), lit(sep), 0)
+    def sep_by(item, sep, trailing: false) = SepBy.new(lit(item), lit(sep), 0, trailing)
 
     # inner wrapped in open/close; value is inner's.
     # [method.between]

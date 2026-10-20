@@ -28,6 +28,7 @@ module Birman
         when Seq then seq(matcher)
         when Pick then of(matcher.parts[matcher.index])
         when SepBy, Rep then :array
+        when Captures then :hash
         when Choice then matcher.alts.map { of(_1) }.reduce { |a, b| join(a, b) }
         when Not, And then :nil
         when Both then of(matcher.right)

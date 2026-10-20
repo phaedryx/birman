@@ -94,6 +94,8 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
+| `sep_by(x, ",", trailing: true)` | and one more `","` may end the list (not an empty one) |
+| `match(re).captures`          | a hash of `re`'s named groups (`{date: "1979-05-27", time: nil}`; `nil` for a group that didn't match) |
 | `.rep(min, max)`, `.maybe`    | repetition, optional                                 |
 | `.absent`, `.present`         | negative / positive lookahead                        |
 | `.map(:to_i)`                 | call that method on the value                        |
@@ -119,7 +121,11 @@ Declare `ignore :spacing` and whitespace (and comments, with
   word-like ones (`"let"`) are keywords, so `"let"` won't match the
   start of `letter`.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
-  no skipping.
+  no skipping. `match(/.../).captures` is raw too, its value a hash of
+  the named groups with Symbol keys, every name always present. Each
+  name must be used once (`(?<n>a)|(?<n>b)` raises `ArgumentError`), and
+  unnamed groups aren't included: Ruby stops capturing them once a group
+  is named. `.to(Node)` builds a node from it like any hash.
 - Rules for tokens (numbers, names, strings) should be declared with
   **`lexeme`** instead of `rule`, so they skip trailing spacing too. The
   built-in `Birman::Rules` already do this.
@@ -136,6 +142,9 @@ of at whatever a looser alternative accepted.
 - `rep` and `maybe` don't stop a commit. `seq("else", commit, expr).maybe`
   rejects `else` followed by garbage rather than quietly treating it as
   "no else clause".
+- Neither does a trailing separator. `sep_by(x, ",", trailing: true)`
+  ends the list at a last `","` only when the `x` after it fails
+  without committing.
 - Lookaheads do. `x.absent`, `x.present` and the guard in `a & b` only
   ask whether `x` would match, so a commit failure inside them is just
   "no".
@@ -175,6 +184,32 @@ generated parser; see below.)
 - An outer `.label` at the same position replaces its label.
 - Like actions, the method must depend only on the value: it also runs
   inside lookaheads, and its result is memoized with the rule.
+
+Some checks need more than one value: a name defined twice, a `break`
+outside a loop. Make those in a second pass over the AST, and report
+one at the node it's about with `Birman::Failure.at(node.span, reason)`.
+It's a `Failure` like `parse` returns, committed, with `reason` as
+its message:
+
+```ruby
+def self.check(program)
+  seen = {}
+  program.each do |let|
+    return Birman::Failure.at(let.span, "#{let.name} is already defined") if seen[let.name]
+
+    seen[let.name] = true
+  end
+  Birman::Success.new(program)
+end
+
+case Grammar.parse(source)
+in Birman::Success(program) then check(program)
+in failure then failure
+end
+# line 2, column 1: x is already defined
+#   let x = 2
+#   ^
+```
 
 ## Nodes
 
