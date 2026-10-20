@@ -392,7 +392,8 @@ the rule, for what it can't translate faithfully:
 - `.to(Node)` on a value that may or may not be a Hash of fields
 - node classes with methods of their own (a `node(...) { }` body), and
   names that would clash in the generated code (a node called `Success`,
-  a copied constant called `FAIL`, two copied constants of one name)
+  a copied constant called `FAIL`, two copied constants of one name,
+  rules `:a?` and `:a_3f`, which are both `a_3f` there)
 - actions that call `super`, Birman's own API (`keywords`, rules), or
   classes the generated parser won't have
 - actions that call `Integer(...)`, `.hex`, `.oct` or `.to_i` (on

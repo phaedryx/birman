@@ -71,6 +71,50 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, %w[ab a]
   end
 
+  # Rules :ref and :skip once gave their parts the names of :pat's own
+  # methods (ref_pat, skip_pat), and the parser called the wrong one.
+  def test_rule_names_that_begin_the_generated_parsers_method_names
+    g = grammar(ignore: :pat) do
+      rule(:top) { seq(ref, skip, word) }
+      rule(:ref) { either(match(/a/), match(/b/)) }
+      rule(:skip) { either(match(/c/), match(/d/)) }
+      lexeme(:word) { match(/w/) }
+      rule(:pat) { match(/ */) }
+    end
+    assert_same_results g, ["acw", "bdw  ", " bdw", "ad", "acx"]
+  end
+
+  # :a's part a_pat and the rule :a_pat each keep their value in an
+  # instance variable of its own, so each keeps a single type in Spinel.
+  def test_rule_values_and_their_parts_values_dont_share_a_variable
+    g = grammar do
+      rule(:top) { seq(a, a_pat) }
+      rule(:a) { either(match(/x/), match(/z/)).rep(1) }
+      rule(:a_pat) { match(/\d/) }
+    end
+    methods = g.to_ruby(namespace: "X").split(/^\s*def /).drop(1).grep_v(/\Ainit_values\b/)
+    writers = methods.flat_map { |m| m.scan(/(@v_\w+) = /).flatten.uniq.map { [_1, m[/\A\w+/]] } }
+    assert_empty(writers.group_by(&:first).select { _2.size > 1 })
+    assert_same_results g, %w[x1 zx2 1]
+  end
+
+  # In the generated parser, :a? is named a_3f.
+  def test_refuses_rule_names_that_meet_in_the_generated_parser
+    g = grammar do
+      rule(:top) { seq(send(:a?), a_3f) }
+      rule(:a?) { match(/q/) }
+      rule(:a_3f) { match(/r/) }
+    end
+    assert_refused g, /rules :a\? and :a_3f/
+  end
+
+  # A copied method named like one of the runtime's would replace it.
+  def test_runtime_methods_are_all_reserved
+    parser = Differential.load(grammar { rule(:top) { str("a") } }, "CompilerTestParser")
+    runtime = parser.superclass.instance_methods(false) + parser.superclass.private_instance_methods(false)
+    assert_empty runtime - Birman::Compiler::Actions::RUNTIME_METHODS
+  end
+
   # --- Actions ---
 
   def test_unread_actions_still_run
