@@ -95,6 +95,7 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
 | `sep_by(x, ",", trailing: true)` | and one more `","` may end the list (not an empty one) |
+| `match(re).captures`          | a hash of `re`'s named groups (`{date: "1979-05-27", time: nil}`; `nil` for a group that didn't match) |
 | `.rep(min, max)`, `.maybe`    | repetition, optional                                 |
 | `.absent`, `.present`         | negative / positive lookahead                        |
 | `.map(:to_i)`                 | call that method on the value                        |
@@ -120,7 +121,11 @@ Declare `ignore :spacing` and whitespace (and comments, with
   word-like ones (`"let"`) are keywords, so `"let"` won't match the
   start of `letter`.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
-  no skipping.
+  no skipping. `match(/.../).captures` is raw too, its value a hash of
+  the named groups with Symbol keys, every name always present. Each
+  name must be used once (`(?<n>a)|(?<n>b)` raises `ArgumentError`), and
+  unnamed groups aren't included: Ruby stops capturing them once a group
+  is named. `.to(Node)` builds a node from it like any hash.
 - Rules for tokens (numbers, names, strings) should be declared with
   **`lexeme`** instead of `rule`, so they skip trailing spacing too. The
   built-in `Birman::Rules` already do this.

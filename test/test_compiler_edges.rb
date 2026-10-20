@@ -220,6 +220,10 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["abc123xyab", "#{"a" * 31}1xyab", "a1xyz", "a1xyabcdefghijkl"]
   end
 
+  def test_refuses_captures_that_see_before_the_scan_position
+    assert_refused grammar { rule(:top) { str("a") >> match(/(?<=a)(?<b>b)/).captures } }, /rule :top.*lookbehind/
+  end
+
   def test_regexps_that_only_look_like_anchors
     g = grammar { rule(:top) { match(/\p{^L}+/) >> match(/a(?# ^ )b/) } }
     assert_same_results g, ["12ab", "ab", "1a b"]
@@ -238,6 +242,15 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["", "12", "#{"9" * 25}x", "x", "9" * 25]
     twice = grammar { rule(:top) { match(/\d+/).maybe.map(:to_i).maybe.map(:to_i) } }
     assert_refused twice, /\.map\(:to_i\) \(its value/
+  end
+
+  # The groups' names are the Hash's keys, known when generating.
+  def test_captures_are_a_hash_of_known_keys
+    g = grammar { rule(:top) { match(/(?<left>\d)=(?<right>\d)?/).captures } }
+    assert_equal :hash, Birman::Compiler::Types.new(g.new).of(Birman::Ref.new(:top))
+    pairs = grammar { rule(:top) { match(/(?<left>\d)=(?<right>\d)?/).captures.to(Pair) } }
+    assert_same_results pairs, ["1=2", "1=", "="]
+    assert_refused grammar { rule(:top) { match(/(?<left>\d)/).captures.to(Pair) } }, /rule :top.*right/
   end
 
   def test_to_over_infix_that_passes_a_hash_through

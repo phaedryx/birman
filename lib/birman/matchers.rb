@@ -205,7 +205,37 @@ module Birman
       Match.new(pos + len, scanner.matched)
     end
 
+    # [method.captures]
+    # returns = "Matcher for the regexp whose value is a Hash of its named groups"
+    # value = "{name: text} for each named group, in order (Symbol keys); nil for a group that didn't match"
+    # raises = ["ArgumentError (no named groups, or a name used twice)"]
+    def captures = Captures.new(self)
+
     def to_ast = [:pat, source]
+  end
+
+  # A regexp's named groups as a Hash (see Pat#captures). It does its
+  # own scan, so nothing can move the scanner before the groups are read.
+  Captures = Data.define(:pat) do
+    include Matcher
+
+    def initialize(pat:)
+      twice, = pat.re.named_captures.find { |_, groups| groups.size > 1 }
+      problem = pat.re.names.empty? ? "has no named groups" : twice && "names #{twice} more than once"
+      raise ArgumentError, "captures needs groups named once each, (?<name>...): #{pat.source} #{problem}" if problem
+
+      @names = pat.re.names.map(&:to_sym).freeze
+      super
+    end
+
+    def match(ctx, pos)
+      scanner = ctx.scanner
+      scanner.pos = pos
+      len = scanner.match?(pat.re) or return ctx.fail_at(pos, pat.source)
+      Match.new(pos + len, @names.each_with_index.to_h { |name, i| [name, scanner[i + 1]] })
+    end
+
+    def to_ast = pat.to_ast
   end
 
   # Sequence: parts match in order. The value is an array, or a hash

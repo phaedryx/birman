@@ -289,6 +289,34 @@ class BirmanTest < Minitest::Test
     assert_pattern { g.parse("ab,a") => Birman::Failure(pos: 4, expected: ['"b"'], committed: true) }
   end
 
+  MOMENT = /(?<date>\d{4}-\d\d-\d\d)(?:T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/
+
+  def test_captures_are_a_hash_of_the_named_groups
+    g = grammar { rule(:top) { match(MOMENT).captures } }
+    assert_equal({ date: "1979-05-27", time: "07:32", offset: "Z" }, g.parse!("1979-05-27T07:32Z"))
+    assert_equal({ date: "1979-05-27", time: nil, offset: nil }, g.parse!("1979-05-27"), "unmatched groups are nil")
+    assert_equal({ date: "1979-05-27", time: nil, offset: "-07:00" }, g.parse!("1979-05-27-07:00"))
+    assert_pattern { g.parse("1979") => Birman::Failure(pos: 0, expected: [^(MOMENT.inspect)]) }
+    assert_equal "top = #{MOMENT.inspect} ;", g.to_ebnf
+  end
+
+  def test_captures_build_nodes
+    g = grammar do
+      const_set(:Moment, node(:date, :time, :offset))
+      rule(:top) { seq(str("at "), only(match(MOMENT).captures.to(self.class::Moment))) }
+    end
+    moment = g.parse!("at 1979-05-27T07:32")
+    assert_equal ["1979-05-27", "07:32", nil], moment.to_h.values
+    assert_equal "1979-05-27T07:32", moment.span.text
+  end
+
+  def test_captures_need_named_groups_each_named_once
+    error = assert_raises(ArgumentError) { grammar { rule(:top) { match(/(\d+)-(\d+)/).captures } }.parse("1-2") }
+    assert_match(/has no named groups/, error.message)
+    error = assert_raises(ArgumentError) { grammar { rule(:top) { match(/(?<n>\d)|(?<n>x)/).captures } }.parse("1") }
+    assert_match(/n more than once/, error.message)
+  end
+
   def test_one_of_a_hash_maps_literals_to_values
     g = grammar do
       ignore :spacing

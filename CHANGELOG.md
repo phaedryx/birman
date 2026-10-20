@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+- **Added:** `match(re).captures`: the value is a Hash of `re`'s named
+  groups, `{date: "1979-05-27", time: nil}`, with Symbol keys, in
+  order, and `nil` for a group that didn't match, so
+  `match(MOMENT).captures.to(Moment)` needs no action re-matching the
+  text. A regexp with no named groups, or a name used twice, raises
+  `ArgumentError`. Generated parsers support it (reading the groups by
+  number, as Spinel's scanner needs), building nodes from it directly.
 - **Added:** `sep_by(x, sep, trailing: true)` (and `sep_by1`) allows one
   separator after the last item, as in TOML's `[1, 2,]`. A list of none
   still can't be just a separator. After a trailing separator the item
