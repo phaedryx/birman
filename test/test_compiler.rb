@@ -13,6 +13,15 @@ class CompilerTest < Minitest::Test
   Bin = Birman.node(:op, :left, :right)
   Moment = Birman.node(:date, :time, :offset)
   Empty = Birman.node
+  Call = Birman.node(:name, :args) { def initialize(name:, args: []) = super }
+  Defaults = Birman.node(:text, :none, :int, :float, :str, :sym, :truthy, :falsy, :list, :table) do
+    def initialize( # rubocop:disable Metrics/ParameterLists
+      text:, none: nil, int: -1, float: 2.5e-3, str: "s\n", sym: :"a b", truthy: true, falsy: false,
+      list: [1, "a", [:b, nil]], table: { k: [1], "s" => {} }
+    )
+      super
+    end
+  end
 
   include CompilerTestHelpers
 
@@ -150,6 +159,27 @@ class CompilerTest < Minitest::Test
       def exclaim(text) = text + SUFFIX # rubocop:disable Lint/NestedMethodDefinition
     end
     assert_same_results g, %w[12ab! 99999999999999999999999x! 1a 1!]
+  end
+
+  # Ruby's own spelling of a Float that has no literal; other constant
+  # paths are refused (see test_compiler_edges.rb).
+  def test_float_infinity_and_nan_in_actions
+    g = grammar do
+      rule(:top) { sep_by(match(/-?inf|nan|\d/).action(:special), str(",")) }
+
+      private
+
+      # rubocop:disable-next Lint/NestedMethodDefinition
+      def special(text)
+        case text
+        when "inf" then Float::INFINITY
+        when "-inf" then -Float::INFINITY
+        when "nan" then Float::NAN
+        else Float(text)
+        end
+      end
+    end
+    assert_same_results g, ["inf,-inf,nan,1", "nan", "x"]
   end
 
   # BirmanRT.to_integer is Grammar#large_integer in a generated parser.
@@ -334,6 +364,51 @@ class CompilerTest < Minitest::Test
       rule(:top) { infix(match(/\d+/).to(Wrap), "+", "-", node: Bin) }
     end
     assert_same_results g, ["1", "1 + 2 - 3", "1 +", "1 + + 2", ""]
+  end
+
+  # A node whose initialize gives fields defaults, and only calls super,
+  # gets the default for each field its value leaves out: a seq of fewer
+  # named parts, captures of fewer groups, a value that isn't a Hash, or
+  # a Hash whose keys are only known at parse time.
+  def test_to_fills_in_fields_initialize_gives_defaults
+    g = grammar(ignore: :spacing) do
+      rule(:top) { sep_by(either(with_args, captured, bare, upper, shaped), ",") }
+      rule(:with_args) { seq(name.as(:name), "(", sep_by(name, ",").as(:args), ")").to(Call) }
+      rule(:captured) { match(/(?<name>[a-z]+)!/).captures.to(Call) }
+      rule(:bare) { seq(name.as(:name)).to(Call) }
+      rule(:upper) { match(/[A-Z]+/).to(Call) }
+      rule(:shaped) { seq("~", only(one_of_shapes)).to(Call) }
+      rule(:one_of_shapes) do
+        either(seq(name.as(:name), "&", sep_by1(name, "&").as(:args)), seq(name.as(:name), "?"), match(/\d+/))
+      end
+      rule(:name) { match(/[a-z]+/) }
+    end
+    assert_same_results g, ["f(a, b), g!, h, AB, ~x&y&z, ~x?, ~42", "f()", "f(a,", "~", "~x", "g !", ""]
+  end
+
+  # Nodes with no fields and nodes with defaults are built alike.
+  def test_nodes_with_no_fields_beside_nodes_with_defaults
+    g = grammar(ignore: :spacing) do
+      rule(:top) { sep_by(either(str("()").to(Empty), str("{}").means({}).to(Empty), match(/[a-z]+/).to(Call)), ",") }
+    end
+    assert_same_results g, ["(), ab, {}", "ab", "()", "{}, x,", ""]
+  end
+
+  def test_defaults_of_every_literal_kind
+    g = grammar { rule(:top) { match(/\w/).to(Defaults) } }
+    assert_same_results g, %w[a 1 -]
+  end
+
+  # As in the interpreter, where a default is evaluated on each call,
+  # a [] default is a new Array for every node.
+  def test_mutable_defaults_arent_shared_between_nodes
+    g = grammar { rule(:top) { sep_by(match(/[a-z]/).to(Call), str(",")) } }
+    parser = Differential.load(g, "CompilerTestParser")
+    [g.parse!("a,b"), parser.new("a,b").parse.value, [g.parse!("c").first, parser.new("c").parse.value.first]]
+      .each do |first, second|
+        first.args << "x"
+        assert_empty second.args
+      end
   end
 
   # --- Diagnostics ---

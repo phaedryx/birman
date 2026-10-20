@@ -518,29 +518,29 @@ module Birman
         return compile_matcher(matcher.inner, false) unless want
 
         node = @nodes.name_for(matcher.node, @rule)
-        members = matcher.node.members
         keys = hash_keys(matcher.inner)
-        return seq_node(matcher, node, members, name) if keys.is_a?(Array) && direct_seq?(matcher.inner)
+        return seq_node(matcher, node, name) if keys.is_a?(Array) && direct_seq?(matcher.inner)
 
         define(:to, matcher, true, name) do |v|
           inner = compile_matcher(matcher.inner, true)
-          args = node_args(members, keys, inner.value)
-          value = "x = #{inner.value}\n" if keys == :unknown && !members.empty?
+          args = node_args(matcher.node, keys, inner.value)
+          value = "x = #{inner.value}\n" if keys == :unknown && !matcher.node.members.empty?
           "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{value}#{v} = #{node_call(node, args, "span(p, q)")}\nq"
         end
       end
 
       # A seq of named parts builds the node from its locals, no Hash.
-      def seq_node(matcher, node, members, name)
-        check_keys(members, hash_keys(matcher.inner))
-        build = ->(locals) { node_new(matcher.inner, node, members, locals) }
+      def seq_node(matcher, node, name)
+        fields = hash_keys(matcher.inner).to_h { [_1, nil] }
+        node_fields(matcher.node, fields) # checked before compiling the seq
+        build = ->(locals) { node_new(matcher.inner, node, matcher.node, locals) }
         seq(matcher.inner, true, name, build:).tap { @compiled[[matcher, true]] = _1 }
       end
 
-      def node_new(seq, node, members, locals)
+      def node_new(seq, node, node_class, locals)
         by_key = {}
         seq.parts.each_with_index { |part, i| by_key[part.capture_key] = locals[i] if part.capture_key }
-        node_call(node, members.map { by_key.fetch(_1) }, "span(p, q)")
+        node_call(node, node_fields(node_class, by_key), "span(p, q)")
       end
 
       # node.new(fields..., span), with no stray comma when there are no fields.
@@ -574,23 +574,40 @@ module Birman
         end
       end
 
-      def node_args(members, keys, value)
-        if keys.is_a?(Array)
-          check_keys(members, keys)
-          return members.map { |member| "#{value}[#{member.inspect}]" }
-        end
-        return [] if members.empty? # As in To#match: a node with no fields drops the value.
-        raise Error, "rule :#{@rule} builds a node with #{members.size} fields from one value" if members.size != 1
-        # Like Birman.build: a Hash value fills the fields by name.
-        return ["x.is_a?(Hash) ? x.fetch(#{members.first.inspect}) : x"] if keys == :unknown
+      # Like Birman.build: a Hash value fills the fields by name, and any
+      # other value is the first field. Fields left out get their defaults.
+      def node_args(node, keys, value)
+        return node_fields(node, keys.to_h { [_1, "#{value}[#{_1.inspect}]"] }) if keys.is_a?(Array)
+        return [] if node.members.empty? # As in To#match: a node with no fields drops the value.
 
-        [value]
+        first, *rest = node.members
+        defaults = @nodes.defaults(node)
+        unless (rest - defaults.keys).empty?
+          raise Error, "rule :#{@rule} builds a node with #{node.members.size} fields from one value"
+        end
+        return node_fields(node, first => value) if keys.nil?
+
+        node.members.map { unknown_field(_1, _1 == first, defaults[_1]) }
       end
 
-      def check_keys(members, keys)
-        return if members.sort == keys.sort
+      # A field from x, which may or may not be a Hash, and may be one
+      # that leaves the field out.
+      def unknown_field(member, first, default)
+        key = member.inspect
+        from_hash = default ? "(x.key?(#{key}) ? x[#{key}] : #{default})" : "x.fetch(#{key})"
+        "x.is_a?(Hash) ? #{from_hash} : #{first ? "x" : default}"
+      end
 
-        raise Error, "rule :#{@rule} builds a node with fields #{members.inspect} from named parts #{keys.inspect}"
+      # node.new's field arguments: each field from given (sources by field),
+      # or its default, written out so that each node gets its own.
+      def node_fields(node, given)
+        defaults = @nodes.defaults(node)
+        unless (given.keys - node.members).empty? && (node.members - given.keys - defaults.keys).empty?
+          raise Error, "rule :#{@rule} builds a node with fields #{node.members.inspect} " \
+                       "from named parts #{given.keys.inspect}"
+        end
+
+        node.members.map { |member| given.fetch(member) { defaults.fetch(member) } }
       end
 
       def infix(matcher, want, name)

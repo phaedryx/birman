@@ -14,6 +14,27 @@ class CompilerEdgesTest < Minitest::Test
   Wrap = Birman.node(:value)
   Bin = Birman.node(:op, :left, :right)
   Doubled = Birman.node(:value) { def initialize(value:) = super(value: value * 2) }
+  Call = Birman.node(:name, :args) { def initialize(name:, args: []) = super }
+  Stamped = Birman.node(:value) { def initialize(value: Time.now) = super }
+  Shared = Birman.node(:value) { def initialize(value: ESCAPES) = super }
+  Spread = Birman.node(:value) { def initialize(value: [*ESCAPES]) = super }
+  # rubocop:disable Lint/UselessMethodDefinition, Style/RedundantInitialize
+  Partial = Birman.node(:left, :right) { def initialize(left:) = super }
+  Gathering = Birman.node(:left, :right) { def initialize(left:, **rest) = super }
+  Positional = Birman.node(:value) { def initialize(*values) = super }
+  Bare = Birman.node(:value) { def initialize = super }
+  # rubocop:enable Lint/UselessMethodDefinition, Style/RedundantInitialize
+  Chatty = Birman.node(:value) do
+    def initialize(value: nil)
+      warn "made"
+      super
+    end
+  end
+  Shown = Birman.node(:value) do
+    def initialize(value: nil) = super
+    def to_s = value.to_s
+  end
+  Defined = Birman.node(:value) { define_method(:initialize) { |value: nil| super(value:) } }
 
   # Shadow the runtime's names, as a grammar's own constants might.
   module Shadows
@@ -60,7 +81,33 @@ class CompilerEdgesTest < Minitest::Test
   end
 
   def test_refuses_node_classes_with_methods_of_their_own
-    assert_refused grammar { rule(:top) { match(/\d/).to(Doubled) } }, /Doubled/
+    assert_refused grammar { rule(:top) { match(/\d/).to(Shown) } }, /Shown, whose methods \(to_s, initialize\)/
+  end
+
+  # Only def initialize(field: literal, ...) = super can be compiled.
+  def test_refuses_initializers_that_do_more_than_give_defaults
+    {
+      Doubled => /Doubled, whose initialize does more than call super/,
+      Chatty => /Chatty, whose initialize does more than call super/,
+      Stamped => /Stamped, whose initialize gives value a default \(Time\.now\) that isn't a literal/,
+      Shared => /Shared, whose initialize gives value a default \(ESCAPES\) that isn't a literal/,
+      Spread => /Spread, whose initialize gives value a default \(\[\*ESCAPES\]\) that isn't a literal/,
+      Partial => /Partial, whose initialize must take exactly its fields \(left, right\) as keywords/,
+      Gathering => /Gathering, whose initialize must take exactly its fields \(left, right\) as keywords/,
+      Positional => /Positional, whose initialize must take exactly its fields \(value\) as keywords/,
+      Bare => /Bare, whose initialize must take exactly its fields \(value\) as keywords/,
+      Defined => /Defined, whose initialize isn't written with def/
+    }.each do |node, pattern|
+      assert_refused grammar { rule(:top) { match(/\d/).as(:value).to(node) } }, pattern
+    end
+  end
+
+  # A field with no default must still be given.
+  def test_refuses_leaving_out_a_field_with_no_default
+    assert_refused grammar { rule(:top) { match(/(?<args>\d)/).captures.to(Call) } }, /rule :top.*:name/
+    assert_refused grammar { rule(:top) { seq(match(/\d/).as(:args)).to(Call) } }, /rule :top.*:name/
+    assert_refused grammar { rule(:top) { seq(match(/\d/).as(:name), match(/\d/).as(:other)).to(Call) } },
+                   /rule :top.*:other/
   end
 
   def test_rule_names_that_arent_identifiers
@@ -212,7 +259,9 @@ class CompilerEdgesTest < Minitest::Test
     refused = {
       /super/ => proc { def act(text) = super },
       /keywords/ => proc { def act(_text) = keywords.first },
-      /Helper/ => proc { def act(_text) = Helper.new }
+      /Helper/ => proc { def act(_text) = Helper.new },
+      /Float::MAX; use a constant/ => proc { def act(_text) = Float::MAX },
+      /Math::PI; use a constant/ => proc { def act(_text) = Math::PI }
     }
     refused.each do |pattern, definition|
       g = grammar { rule(:top) { str("a").action(:act) } }

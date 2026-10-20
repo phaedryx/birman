@@ -29,6 +29,16 @@
 - **Added:** `either` passes on a name all its alternatives share:
   `seq(either(a.as(:x), b.as(:x)), c.as(:y))` gives `{x:, y:}`.
   Generated parsers agree.
+- **Added:** generated parsers support nodes whose `initialize` gives
+  fields defaults, `node(:name, :args) { def initialize(name:, args: []) = super }`
+  as the README shows: each node is built with the default for any field
+  its value leaves out (named parts, captures, a single value, or a Hash
+  known only at parse time), written where it's built so a `[]` default
+  is a new Array for every node. The `initialize` must take exactly the
+  fields as keywords, with literal defaults, and only call `super`;
+  `to_ruby` refuses anything more, naming the node and what it does.
+- **Added:** copied actions may read `Float::INFINITY` and `Float::NAN`
+  (and `-Float::INFINITY`). Other constant paths are still refused.
 - **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
   parser, as Ruby source Spinel can compile to a native binary, that
   agrees with `parse` on values, spans and errors. Differential tests

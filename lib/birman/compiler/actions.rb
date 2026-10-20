@@ -29,6 +29,10 @@ module Birman
       # does, which copied methods may call and actions may name.
       PROVIDED = %i[large_integer].freeze
 
+      # The constant paths copied methods may read: Float::INFINITY and
+      # Float::NAN, which have no literal.
+      FLOAT_CONSTANTS = %i[INFINITY NAN].freeze
+
       def initialize(grammar)
         @grammar = grammar
         @methods = {}
@@ -73,12 +77,7 @@ module Birman
           raise(Error, "rule :#{rule}: #{name} isn't written with def, so it can't be copied")
       end
 
-      def tree(file)
-        @trees[file] ||= begin
-          load_prism
-          Prism.parse_file(file).value
-        end
-      end
+      def tree(file) = @trees[file] ||= MethodFinder.parse(file)
 
       def method_source(found, rule)
         node, scopes = found
@@ -89,13 +88,21 @@ module Birman
       def visit(node, scopes, rule)
         case node
         when Prism::ConstantReadNode then @constants.read(node.name, scopes, rule)
-        when Prism::ConstantPathNode
-          raise Error, "rule :#{rule}: copied methods can't read #{node.slice}; use a constant of the grammar"
+        when Prism::ConstantPathNode then constant_path(node, rule)
         when Prism::SuperNode, Prism::ForwardingSuperNode
           raise Error, "rule :#{rule}: copied methods can't call super"
         when Prism::BlockArgumentNode then Overflows.check_block(node, rule)
         when Prism::CallNode then call(node, rule)
         end
+      end
+
+      # Float::INFINITY and Float::NAN, which the generated parser reads
+      # as written (its Float is checked like any core class's).
+      def constant_path(node, rule)
+        float = node.parent.is_a?(Prism::ConstantReadNode) && node.parent.name == :Float
+        return if float && FLOAT_CONSTANTS.include?(node.name)
+
+        raise Error, "rule :#{rule}: copied methods can't read #{node.slice}; use a constant of the grammar"
       end
 
       def call(node, rule)
@@ -150,13 +157,6 @@ module Birman
       def walk(node, &)
         yield node
         node.compact_child_nodes.each { walk(_1, &) }
-      end
-
-      def load_prism
-        require "prism"
-      rescue LoadError
-        raise Error, "copying .action and .check methods needs the prism gem (bundled from Ruby 3.3): " \
-                     "add it to your Gemfile"
       end
     end
 
@@ -257,6 +257,19 @@ module Birman
       def initialize(name, line)
         @name = name
         @line = line
+      end
+
+      # file's syntax tree, read with Prism.
+      def self.parse(file)
+        load_prism
+        Prism.parse_file(file).value
+      end
+
+      def self.load_prism
+        require "prism"
+      rescue LoadError
+        raise Error, "copying .action and .check methods and node initializers needs the prism gem " \
+                     "(bundled from Ruby 3.3): add it to your Gemfile"
       end
 
       # The def's source, its lines indented as if written at the left
