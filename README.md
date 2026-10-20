@@ -383,7 +383,8 @@ bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpre
 ruby examples/calc.rb
 ruby examples/json.rb
 ruby examples/email.rb
-ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them)
+ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them);
+                    # also to_ruby, and its Spinel binary if Spinel is found
 ```
 
 ## License
