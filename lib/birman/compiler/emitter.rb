@@ -670,6 +670,9 @@ module Birman
         <<~RUBY
           # Grammar#parse: Success(value) if all of the input parses, else Failure.
           def parse
+            bad = BirmanRT.invalid_byte(@input)
+            return invalid_input(bad) if bad != FAIL
+
             reset
             init_memos
           #{indent(start)}

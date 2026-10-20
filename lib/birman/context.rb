@@ -29,6 +29,10 @@ module Birman
       @token_ends = {}
     end
 
+    # Where the parse begins: past whatever the ignore rule (if any)
+    # matches at the start of the input.
+    def start(ignore_rule) = (ignore_rule && Ref.new(ignore_rule).match(self, 0)&.pos) || 0
+
     # A lexeme ended at token_end, then the ignore rule consumed spacing
     # (whitespace, comments) up to pos. Spans use this to stop at the
     # token instead of including what was ignored after it.

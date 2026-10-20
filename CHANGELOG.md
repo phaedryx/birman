@@ -27,6 +27,12 @@
   - `.means(v)` replaces the value with `v`: `lit("null").means(nil)`.
 
   `.map { }` blocks still work.
+- **Fixed:** `parse` raised ArgumentError on invalid UTF-8 (from the
+  regexps). It's now a Failure at the first invalid byte, with
+  `reason` "invalid UTF-8" (or "invalid US-ASCII", and so on, for input
+  in other encodings), so `parse!` raises ParseError. The bytes before
+  it are valid, so line and column point at it as usual. Generated
+  parsers do the same.
 - The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
   `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
   blocks. EBNF output is unchanged; about 4% fewer allocations per

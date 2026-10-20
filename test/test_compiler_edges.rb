@@ -416,6 +416,36 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["\xA9c".b, "a\xA9".b, "ab".b, "a\nb\xA9".b]
   end
 
+  # The generated parser checks UTF-8 byte by byte, so it's compared
+  # with Ruby's own validity on every two-byte pair after an "a", and
+  # on three- and four-byte sequences around each edge: overlongs,
+  # surrogates, past U+10FFFF, truncated.
+  def test_invalid_utf8_fails_at_the_same_byte
+    g = grammar { rule(:top) { match(/[^\n]*\n?/).rep } }
+    edges = [0x00, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC, 0xED,
+             0xEE, 0xEF, 0xF0, 0xF1, 0xF3, 0xF4, 0xF5, 0xFF]
+    pairs = (0..255).to_a.repeated_permutation(2).map { [0x61, *_1] }
+    fours = edges.repeated_permutation(2).flat_map do |a, b|
+      [[0xF0, a, b, 0x80], [0xF4, a, b, 0x80], [0xF1, 0x80, a, b]]
+    end
+    bytes = pairs + edges.repeated_permutation(3).to_a + fours
+    inputs = bytes.map { _1.pack("C*").force_encoding("UTF-8") } + ["x\n\xFF", "é\nab\xC3"]
+    assert inputs.any? { !_1.valid_encoding? } && inputs.all? { _1.encoding == Encoding::UTF_8 }
+    assert_same_results g, inputs
+
+    # A message with a reason doesn't say what was found, so compare it.
+    parser = Differential.load(g, "CompilerTestParser")
+    ["a\xFF", "a\xE3\x81", "a\xF0\x9F\x90\x88\xC3"].each do |input|
+      assert_equal g.parse(input).found, parser.new(input).parse.found, input
+    end
+  end
+
+  def test_invalid_us_ascii_fails_like_the_interpreter
+    g = grammar { rule(:top) { match(/\w*/) } }
+    inputs = ["ab\xFF", "ab\xC3\xA9", "ab"].map { _1.dup.force_encoding("US-ASCII") }
+    assert_same_results g, inputs
+  end
+
   def test_refuses_input_in_other_encodings
     parser = Differential.load(grammar { rule(:top) { str("a") } }, "CompilerTestParser")
     error = assert_raises(ArgumentError) { parser.new("a".encode("UTF-16LE")) }

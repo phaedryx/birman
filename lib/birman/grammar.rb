@@ -125,11 +125,14 @@ module Birman
     # params = ["input: String"]
     # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
     # raises = ["ArgumentError for grammar mistakes (no root, undefined rule, left recursion)"]
-    # notes = "Bad input never raises: too-deep nesting is a Failure with reason set"
+    # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
     def parse(input)
+      if (bad = Birman.invalid_byte(input))
+        return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
+      end
+
       ctx = Context.new(input, self)
-      start = (ignore_rule && Ref.new(ignore_rule).match(ctx, 0)&.pos) || 0
-      result = Ref.new(root_rule).match(ctx, start)
+      result = Ref.new(root_rule).match(ctx, ctx.start(ignore_rule))
       return Success.new(result.value) if result && result.pos == input.bytesize
 
       ctx.fail_at(result.pos, "end of input") if result
