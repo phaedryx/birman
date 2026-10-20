@@ -131,8 +131,8 @@ module Birman
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      ctx = Context.new(input, self)
-      result = Ref.new(root_rule).match(ctx, ctx.start(ignore_rule))
+      ctx = Context.new(input, self, ignore_rule)
+      result = Ref.new(root_rule).match(ctx, ctx.start)
       return Success.new(result.value) if result && result.pos == input.bytesize
 
       ctx.fail_at(result.pos, "end of input") if result

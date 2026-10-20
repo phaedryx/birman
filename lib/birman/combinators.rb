@@ -70,8 +70,8 @@ module Birman
     def lit(x) = Birman.coerce(x)
 
     # The matcher a literal stands for: "let" is a keyword, "=" an exact
-    # string, either way followed by the grammar's ignore rule. Built
-    # once per grammar instance.
+    # string, either way followed by the ignore rule of the grammar
+    # running it. Built once per grammar instance.
     # [method.literal_matcher]
     # params = ["text: String"]
     # returns = "The matcher a literal stands for: keyword or exact string, then the ignore rule"
@@ -80,7 +80,7 @@ module Birman
     def literal_matcher(text)
       (@literal_matchers ||= {})[text] ||= begin
         base = text.match?(/\A\w+\z/) ? keyword(text) : str(text)
-        Lexeme.new(base, ignore_rule, text)
+        Lexeme.new(base, text)
       end
     end
 

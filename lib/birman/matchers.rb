@@ -546,22 +546,20 @@ module Birman
     def capture_key = inner.capture_key
   end
 
-  # A token: inner, then the grammar's ignore rule (usually spacing),
-  # keeping inner's value. With no ignore rule it's just inner. `source`
-  # is how a literal shows up in EBNF ("let" rather than its internals).
-  Lexeme = Data.define(:inner, :ignore, :source) do
+  # A token: inner, then the ignore rule (usually spacing) of the
+  # grammar running it, keeping inner's value. With no ignore rule it's
+  # just inner. `source` is how a literal shows up in EBNF ("let"
+  # rather than its internals).
+  Lexeme = Data.define(:inner, :source) do
     include Matcher
 
-    def initialize(inner:, ignore:, source: nil)
-      @ignore_ref = ignore && Ref.new(ignore) # built once, not per token
-      super
-    end
+    def initialize(inner:, source: nil) = super
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
-      return r unless ignore
+      ignore = ctx.ignore_ref or return r
 
-      s = @ignore_ref.match(ctx, r.pos) or return r
+      s = ignore.match(ctx, r.pos) or return r
       ctx.ignored_after(r.pos, s.pos)
       Match.new(s.pos, r.value)
     end

@@ -254,7 +254,7 @@ class BirmanTest < Minitest::Test
 
   def test_memo_hits_do_not_repeat_expectations
     g = nested_choices(12)
-    ctx = Birman::Context.new("x", g.new)
+    ctx = Birman::Context.new("x", g.new, g.ignore)
     Birman::Ref.new(:l12).match(ctx, 0)
     assert_equal 2, ctx.expected.size
     assert_equal ['"!"', '"?"'], ctx.expected
@@ -905,6 +905,42 @@ class BirmanTest < Minitest::Test
       rule(:top) { number.rep }
     end
     assert_equal [1, 2.5, 3], g.parse!(" 1  2.5\n3 ")
+  end
+
+  def test_a_lexeme_built_outside_a_grammar_skips_the_grammars_spacing
+    eq = Object.new.extend(Birman::Combinators).literal_matcher("=")
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(match(/\w+/), eq, match(/\w+/)) }
+    end
+    assert_equal %w[a = b], g.parse!("a=  b")
+  end
+
+  def test_a_lexeme_follows_the_ignore_rule_of_the_grammar_running_it
+    tok = grammar do
+      ignore :spacing
+      lexeme(:tok) { match(/\d+/) }
+    end.new.matcher_for(:tok)
+    g = grammar do
+      ignore :commas
+      rule(:commas) { match(/,*/) }
+      rule(:top) { tok.rep }
+    end
+    assert_equal %w[1 2 3], g.parse!("1,,2,3")
+    assert g.parse("1 2").failure?, "spacing was the other grammar's ignore rule"
+  end
+
+  def test_a_subclass_sees_its_parents_ignore_change_after_parsing
+    parent = grammar do
+      ignore :spacing
+      rule(:top) { seq("+", "-") }
+    end
+    child = Class.new(parent)
+    assert_equal %w[+ -], child.parse!("+ -")
+
+    parent.ignore nil
+    assert child.parse("+ -").failure?
+    assert_equal %w[+ -], child.parse!("+-")
   end
 
   def test_infix_is_left_associative_with_spans

@@ -654,13 +654,13 @@ module Birman
       end
 
       def lexeme(matcher, want, name)
-        return compile_matcher(matcher.inner, want, name) unless matcher.ignore
+        return compile_matcher(matcher.inner, want, name) unless ignore_rule
 
-        @ignores |= [matcher.ignore]
+        @ignores |= [ignore_rule]
         define(:lexeme, matcher, want, name) do |v|
           inner = compile_matcher(matcher.inner, want)
           keep = "#{v} = #{inner.value}\n" if v
-          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{keep}skip_#{ident(matcher.ignore)}(q)"
+          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{keep}skip_#{ident(ignore_rule)}(q)"
         end
       end
 

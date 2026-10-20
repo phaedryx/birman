@@ -18,11 +18,14 @@ module Birman
 
     # position: where the most recently entered rule started. When the
     # input nests too deeply for Ruby's stack, that's where it happened.
-    attr_reader :input, :grammar, :furthest, :expected, :position, :isolated_furthest, :isolated_expected
+    # ignore_ref: a Ref to the grammar's ignore rule, or nil. Lexemes
+    # read it here, so the grammar running them decides what they skip.
+    attr_reader :input, :grammar, :ignore_ref, :furthest, :expected, :position, :isolated_furthest, :isolated_expected
 
-    def initialize(input, grammar)
+    def initialize(input, grammar, ignore_rule)
       @input = input
       @grammar = grammar
+      @ignore_ref = ignore_rule && Ref.new(ignore_rule) # built once per parse, not per token
       @memo = {}
       @furthest = 0
       @expected = NOTHING_EXPECTED
@@ -31,7 +34,7 @@ module Birman
 
     # Where the parse begins: past whatever the ignore rule (if any)
     # matches at the start of the input.
-    def start(ignore_rule) = (ignore_rule && Ref.new(ignore_rule).match(self, 0)&.pos) || 0
+    def start = @ignore_ref&.match(self, 0)&.pos || 0
 
     # A lexeme ended at token_end, then the ignore rule consumed spacing
     # (whitespace, comments) up to pos. Spans use this to stop at the
