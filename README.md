@@ -78,7 +78,8 @@ end
 
 See `examples/calc.rb` for a complete small language with an
 interpreter, `examples/json.rb` for a full JSON parser (tested against
-`JSON.parse`), and `Grammar.to_ebnf` to print any grammar.
+`JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
+official toml-test suite), and `Grammar.to_ebnf` to print any grammar.
 
 ## Building blocks
 
@@ -383,6 +384,7 @@ bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpre
 ruby examples/calc.rb
 ruby examples/json.rb
 ruby examples/email.rb
+ruby examples/toml.rb
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them);
                     # also to_ruby, and its Spinel binary if Spinel is found
 ```
