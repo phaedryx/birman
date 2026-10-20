@@ -6,6 +6,11 @@
 # own style. To keep them short, the other libraries hand string
 # escapes to JSON.parse; Birman decodes them itself.
 #
+# Birman runs three ways: the interpreter, the parser Grammar.to_ruby
+# generates (under CRuby), and that parser compiled by Spinel, when
+# Spinel is found (SPINEL=/path/to/spinel, or spinel on PATH). The
+# binary is timed as a whole process, startup included.
+#
 #   ruby bench/json.rb   # not `bundle exec`: Parslet is installed inline
 
 require "bundler/inline"
@@ -17,8 +22,14 @@ gemfile do
   gem "citrus", "~> 3.0"
 end
 
+require "fileutils"
 require "json"
+require "open3"
 require_relative "../examples/json"
+
+# The generated parser, loaded for CRuby. Its BirmanRT.dump also checks
+# the binary's output.
+eval(JSONExample::Grammar.to_ruby(namespace: "GeneratedJSON")) # rubocop:disable Security/Eval
 
 # JSON in Parslet: a parser, and a transform from its tree to Ruby values.
 module ParsletJSON
@@ -165,6 +176,32 @@ def document(records)
   end)
 end
 
+# The generated parser compiled by Spinel, or nil without Spinel. It
+# prints the parsed value as BirmanRT.dump does, or with --bench just
+# "ok" or "fail".
+def spinel_binary
+  spinel = ENV.fetch("SPINEL") do
+    ENV["PATH"].split(File::PATH_SEPARATOR).map { File.join(_1, "spinel") }.find { File.executable?(_1) }
+  end
+  return unless spinel
+
+  out = File.expand_path("../tmp/bench", __dir__)
+  FileUtils.mkdir_p(out)
+  source = File.join(out, "json_parser.rb")
+  File.write(source, JSONExample::Grammar.to_ruby(namespace: "GeneratedJSON") + <<~RUBY)
+    parsed = GeneratedJSON::Parser.new($stdin.read).parse
+    if ARGV.size.positive? && ARGV[0] == "--bench"
+      puts parsed.success? ? "ok" : "fail"
+    else
+      puts parsed.success? ? GeneratedJSON::BirmanRT.dump(parsed.value) : parsed.message
+    end
+  RUBY
+  binary = source.delete_suffix(".rb")
+  log, status = Open3.capture2e(spinel, source, "-o", binary)
+  abort "spinel failed:\n#{log}" unless status.success?
+  binary
+end
+
 # Best of three runs, each after a full GC, so one parser's garbage
 # doesn't land on the next one's clock.
 def time
@@ -179,10 +216,14 @@ end
 parsers = {
   "JSON.parse" => ->(source) { JSON.parse(source) },
   "Birman" => ->(source) { JSONExample::Grammar.parse!(source) },
+  "to_ruby" => ->(source) { GeneratedJSON::Parser.new(source).parse.value },
   "Parslet" => ->(source) { ParsletJSON::Transform.new.apply(ParsletJSON::Parser.new.parse(source)) },
   "Treetop" => ->(source) { TreetopJSONParser.new.parse(source).to_ruby },
   "Citrus" => ->(source) { CitrusJSON.parse(source, root: :document).value }
 }
+
+binary = spinel_binary
+puts "Spinel not found (set SPINEL=/path/to/spinel): no binary row" unless binary
 
 [100, 1_000].each do |records|
   source = document(records)
@@ -199,4 +240,14 @@ parsers = {
     status = result == expected ? "" : "  (result differs from JSON.parse!)"
     puts "  #{name.ljust(11)} #{format("%<s>8.3f", s: seconds)}s#{status}"
   end
+  next unless binary
+
+  input = File.expand_path("../tmp/bench/input.json", __dir__)
+  File.write(input, source)
+  dumped, = Open3.capture2(binary, stdin_data: source)
+  status = dumped.chomp == GeneratedJSON::BirmanRT.dump(expected) ? "" : "  (result differs from JSON.parse!)"
+  seconds, = time { system(binary, "--bench", in: input, out: File::NULL) or abort "#{binary} failed" }
+  startup, = time { system(binary, "--bench", in: File::NULL, out: File::NULL) }
+  puts "  #{"Spinel".ljust(11)} #{format("%<s>8.3f", s: seconds)}s (whole process; " \
+       "#{format("%<s>.3f", s: startup)}s of it startup)#{status}"
 end
