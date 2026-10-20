@@ -404,11 +404,12 @@ class CompilerTest < Minitest::Test
   def test_mutable_defaults_arent_shared_between_nodes
     g = grammar { rule(:top) { sep_by(match(/[a-z]/).to(Call), str(",")) } }
     parser = Differential.load(g, "CompilerTestParser")
-    [g.parse!("a,b"), parser.new("a,b").parse.value, [g.parse!("c").first, parser.new("c").parse.value.first]]
-      .each do |first, second|
-        first.args << "x"
-        assert_empty second.args
-      end
+    pairs = [g.parse!("a,b"), parser.new("a,b").parse.value, [g.parse!("c"), g.parse!("c")].map(&:first),
+             [parser.new("c").parse.value, parser.new("c").parse.value].map(&:first)]
+    pairs.each do |first, second|
+      first.args << "x"
+      assert_empty second.args
+    end
   end
 
   # --- Diagnostics ---
