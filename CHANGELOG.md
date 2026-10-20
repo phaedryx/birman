@@ -39,6 +39,10 @@
   `to_ruby` refuses anything more, naming the node and what it does.
 - **Added:** copied actions may read `Float::INFINITY` and `Float::NAN`
   (and `-Float::INFINITY`). Other constant paths are still refused.
+- **Changed:** `examples/toml.rb` reads `inf` and `nan` as
+  `Float::INFINITY` and `Float::NAN`, and builds a local time as a
+  `Moment` with no date (its `initialize` defaults `date` and `offset`
+  to nil) rather than a separate `Clock` node.
 - **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
   parser, as Ruby source Spinel can compile to a native binary, that
   agrees with `parse` on values, spans and errors. Differential tests
