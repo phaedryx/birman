@@ -309,6 +309,107 @@ class BirmanTest < Minitest::Test
     assert_equal({ a: 1, b: true, c: "Y" }, g.parse!("1xy"))
   end
 
+  # --- Checks ---
+
+  # A grammar whose rules can check for even numbers and short arrays.
+  def checking(&rules)
+    grammar do
+      class_eval(&rules)
+      define_method(:even?) { |text| text.to_i.even? }
+      define_method(:short?) { |items| items.size <= 2 ? items : nil }
+      private :even?, :short?
+    end
+  end
+
+  EVEN = "an even number"
+
+  def test_check_accepts_or_rejects_the_value
+    g = checking { rule(:top) { seq(match(/\d+/).check(:even?, EVEN).as(:n), str("!")) } }
+    assert_equal({ n: "42" }, g.parse!("42!"))
+    assert_pattern { g.parse("41!") => Birman::Failure(pos: 0, expected: [EVEN], committed: false) }
+
+    g = checking { rule(:top) { seq(match(/\d+/).as(:n).check(:even?, EVEN), str("!")) } }
+    assert_equal({ n: "42" }, g.parse!("42!"), "the name passes through")
+
+    g = checking { rule(:top) { str("a").rep.check(:short?, "at most two") } }
+    assert_equal %w[a a], g.parse!("aa"), "the value is the inner one, not the predicate's"
+    assert_pattern { g.parse("aaa") => Birman::Failure(pos: 0, expected: ["at most two"]) }
+  end
+
+  def test_check_drops_inner_diagnostics_when_it_rejects
+    g = checking { rule(:top) { str("a").rep.check(:short?, "at most two") >> str("b") } }
+    assert_pattern { g.parse("aaab") => Birman::Failure(pos: 0, expected: ["at most two"]) }
+    assert_pattern { g.parse("aac") => Birman::Failure(pos: 2, expected: ['"a"', '"b"']) }
+  end
+
+  def test_a_later_alternative_that_gets_further_owns_the_error
+    g = checking do
+      rule(:top) { either(match(/\d+/).check(:even?, EVEN) >> str("!"), str("41") >> str("?")) }
+    end
+    assert_pattern { g.parse("41!") => Birman::Failure(pos: 2, expected: ['"?"'], committed: false) }
+
+    g = checking { rule(:top) { either(match(/\d+/).check(:even?, EVEN), str("x")) } }
+    assert_pattern { g.parse("41") => Birman::Failure(pos: 0, expected: [EVEN, '"x"']) }
+  end
+
+  def test_a_committed_check_stops_the_parse_at_its_start
+    g = checking { rule(:top) { either(str("n=") > match(/\d+/).check(:even?, EVEN), match(/.*/)) } }
+    assert_equal %w[n= 42], g.parse!("n=42")
+    assert_pattern { g.parse("n=41") => Birman::Failure(pos: 2, expected: [EVEN], committed: true) }
+  end
+
+  def test_present_then_check_commits_to_the_check
+    g = checking do
+      rule(:top) { either(match(/\d+/).present > match(/\d+/).check(:even?, EVEN), match(/.*/)) }
+    end
+    assert_equal [nil, "42"], g.parse!("42")
+    assert_equal "x", g.parse!("x")
+    assert_pattern { g.parse("41") => Birman::Failure(pos: 0, expected: [EVEN], committed: true) }
+  end
+
+  def test_checks_inside_lookaheads_stay_inside
+    g = checking { rule(:top) { match(/\d+/).check(:even?, EVEN).absent >> str("x") } }
+    assert_pattern { g.parse("41") => Birman::Failure(pos: 0, expected: ['"x"']) }
+
+    g = checking { rule(:top) { (str("n") > match(/\d+/).check(:even?, EVEN)).absent >> match(/.*/) } }
+    assert_equal [nil, "n41"], g.parse!("n41")
+
+    g = checking { rule(:top) { (str("n") > match(/\d+/).check(:even?, EVEN)).present >> match(/.*/) } }
+    assert_pattern { g.parse("n41") => Birman::Failure(pos: 0, committed: false) }
+
+    g = checking { rule(:top) { (str("n") > match(/\d+/).check(:even?, EVEN)) & match(/.*/) } }
+    assert_pattern { g.parse("n41") => Birman::Failure(pos: 0, committed: false) }
+  end
+
+  def test_an_outer_label_replaces_the_checks_label
+    g = checking { rule(:top) { match(/\d+/).check(:even?, EVEN).label("count") } }
+    assert_pattern { g.parse("41") => Birman::Failure(pos: 0, expected: ["count"]) }
+  end
+
+  def test_a_checked_rule_reached_twice_reports_the_same_failure
+    g = checking do
+      rule(:top) { either(even >> str("!"), even >> str("?")) }
+      rule(:even) { match(/\d+/).check(:even?, EVEN) }
+    end
+    once = checking { rule(:top) { match(/\d+/).check(:even?, EVEN) >> str("!") } }
+    assert_equal once.parse("41").expected, g.parse("41").expected
+    assert_pattern { g.parse("41") => Birman::Failure(pos: 0, expected: [EVEN]) }
+  end
+
+  def test_checks_in_rep_and_maybe_end_the_loop_or_give_nil
+    g = checking { rule(:top) { seq(match(/\d/).check(:even?, EVEN).rep, match(/\d*/)) } }
+    assert_equal [%w[2 4], "56"], g.parse!("2456")
+
+    g = checking { rule(:top) { seq(match(/\d/).check(:even?, EVEN).maybe, match(/\d*/)) } }
+    assert_equal [nil, "3"], g.parse!("3")
+  end
+
+  def test_check_is_left_out_of_ebnf
+    g = checking { rule(:top) { match(/\d+/).check(:even?, EVEN) } }
+    assert_equal [:check, EVEN, [:pat, "/\\d+/"]], g.to_ast[:top]
+    assert_equal "top = /\\d+/ ;", g.to_ebnf
+  end
+
   def test_library_rules_use_no_blocks
     g = grammar do
       include Birman::Rules::Comments

@@ -100,6 +100,69 @@ module Examples
     TOKENS = ["!", "(", ")", "x", "1", "7", "9" * 25, "0"].freeze
   end
 
+  # Entries each checked by a grammar method (.check): dates that
+  # exist, ascending ranges, even numbers after "even" (committed),
+  # vowels. 2024-02-29, 1979-02-30 (rejected), 3..7, 7..3 (rejected).
+  module Dates
+    # on 2024-02-29, 3..7, even 12, aei
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31].freeze
+
+      root :entries
+      ignore :spacing
+
+      rule(:entries) { sep_by(entry, ",") }
+      rule(:entry) do
+        either(seq("on", commit, date), date, range, seq("even", even), number,
+               match(/[a-z]/).check(:vowel?, "a vowel").rep(1).label("vowels"))
+      end
+      rule(:even) { number.present > number.check(:even?, "an even number") }
+      lexeme(:date) { match(/\d{4}-\d\d-\d\d/).check(:real_date?, "a real date") }
+      rule(:range) { seq(number.as(:from), "..", number.as(:to)).check(:ascending?, "an ascending range") }
+      lexeme(:number) { match(/[1-9]\d*|0/) }
+
+      private
+
+      def real_date?(text)
+        year = digits(text, 0, 4)
+        month = digits(text, 5, 2)
+        day = digits(text, 8, 2)
+        return false if month < 1 || month > 12 || day < 1
+
+        leap = (year % 4).zero? && (!(year % 100).zero? || (year % 400).zero?)
+        day <= (month == 2 && leap ? 29 : DAYS[month - 1])
+      end
+
+      # The number written in text's count bytes from from (all digits).
+      def digits(text, from, count)
+        n = 0
+        i = from
+        while i < from + count
+          n = (n * 10) + text.getbyte(i) - 48
+          i += 1
+        end
+        n
+      end
+
+      # Compared as text, so numbers of any length work.
+      def ascending?(range)
+        from = range[:from]
+        to = range[:to]
+        from.size < to.size || (from.size == to.size && from <= to)
+      end
+
+      def even?(text) = (text.getbyte(text.bytesize - 1) % 2).zero?
+      def vowel?(text) = "aeiou".include?(text)
+    end
+
+    TOKENS = ["on", "even", "2024-02-29", "1979-02-30", "2023-02-29", "1900-02-29", "2000-02-29", "2024-13-01",
+              "2024-00-10", "2024-04-31", "2024-12-31", "..", ",", " ", "3", "7", "10", "0", "12",
+              "9" * 25, "a", "e", "x", "-", "1"].freeze
+  end
+
   # Grammars whose large_integer calls only ever see one type: in a
   # Spinel binary, each must compile and agree on its own.
   module OneType
@@ -169,7 +232,9 @@ module Examples
 
   module_function
 
-  def all(count) = [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), *one_type(count)]
+  def all(count)
+    [let(count), calc(count), json(count), email(count), numbers(count), cycles(count), dates(count), *one_type(count)]
+  end
 
   def let(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
@@ -212,6 +277,16 @@ module Examples
     soup = Differential.fuzz(Cycles::TOKENS, rng, count, 8)
     inputs = ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!", ""] + soup + soup.map { "!#{_1}" }
     Example.new("cycles", Cycles::Grammar, "CyclesCompiled", inputs)
+  end
+
+  def dates(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    fixed = ["on 2024-02-29", "2024-02-29, 3..7, even 12, aei", "1979-02-30", "on 1979-02-30", "7..3", "3..3",
+             "#{"9" * 25}..1#{"0" * 25}", "1#{"0" * 25}..#{"9" * 25}", "even 13", "even x", "aex", "x", "", "0..10",
+             "2000-02-29, 1900-02-29", "2024-04-31", "2024-06-30 , 10 .. 9"]
+    entries = Array.new(count / 2) { Array.new(rng.rand(1..4)) { Dates::TOKENS.sample(random: rng) }.join(", ") }
+    inputs = fixed + Differential.fuzz(Dates::TOKENS, rng, count, 8) + entries
+    Example.new("dates", Dates::Grammar, "DatesCompiled", inputs)
   end
 
   def one_type(count)

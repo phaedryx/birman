@@ -313,6 +313,30 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["1 x", "1x", "a", "1 ", "1 y"]
   end
 
+  # Every check behavior the interpreter's tests cover: rejection, a
+  # later alternative getting further, commit, lookaheads, labels, rep,
+  # and a checked rule reached twice at one position.
+  def test_check
+    g = grammar do
+      rule(:top) { sep_by(entry, str(";")) }
+      rule(:entry) do
+        either(str("n=") > even, (str("m") > even).absent >> str("m") >> match(/\d+/),
+               even.label("count") >> str("!"), even >> str("?"), str("41") >> str("."),
+               match(/\d+/).present > even >> str("#"), str("a").rep.check(:few, "at most two") >> str("b"),
+               seq(match(/\d/).check(:even?, "an even digit").rep, str("~")))
+      end
+      rule(:even) { match(/\d+/).check(:even?, "an even number") }
+
+      private
+
+      def even?(text) = large_integer(text).even? # rubocop:disable Lint/NestedMethodDefinition
+      # Truthy rather than true.
+      def few(items) = items.size <= 2 ? items : nil # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["n=42", "n=41", "m41", "m42", "42!", "41!", "42?", "41?", "41.", "42#", "43#", "aab",
+                            "aaab", "aac", "24~", "245~", "~", "42!;n=4;41.", "42!;n=3", "", "x"]
+  end
+
   def test_refs_lexemes_and_memo
     g = grammar(ignore: :spacing, keywords: %w[if]) do
       include Birman::Rules::Identifiers

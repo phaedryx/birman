@@ -7,7 +7,7 @@ module Birman
   #   [:seq, commit_at, [parts...]]  [:choice, [alts...]]
   #   [:rep, min, max, inner]  [:not, inner]  [:and, inner]
   #   [:both, left, right]  [:action, inner]  [:label, name, inner]
-  #   [:quiet, inner]
+  #   [:check, name, inner]  [:quiet, inner]
   module AST
     module_function
 
@@ -27,6 +27,9 @@ module Birman
   #   a*  a+  a?  a{2,3}    !a  not      &a  lookahead / guard
   #
   # Actions and labels don't change what's accepted, so they're omitted.
+  # Checks do, but by running Ruby on the value, which EBNF can't show
+  # (`&{name}` would only repeat the error message), so they're omitted
+  # too: the EBNF accepts a superset of what the grammar does.
   module EBNF
     module_function
 
@@ -49,6 +52,7 @@ module Birman
       in [:ref, name]        then name.to_s
       in [:action, inner]    then expr(inner, prec)
       in [:label, _, inner]  then expr(inner, prec)
+      in [:check, _, inner]  then expr(inner, prec)
       in [:quiet, inner]     then expr(inner, prec)
       in [:both, [:not, guard], right]
         wrap("!#{expr(guard, ATOM)} #{expr(right, PREFIX)}", prec > SEQ)

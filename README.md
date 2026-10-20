@@ -98,6 +98,7 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 | `.absent`, `.present`         | negative / positive lookahead                        |
 | `.map(:to_i)`                 | call that method on the value                        |
 | `.action(:name)`              | pass the value to the grammar's method `name`        |
+| `.check(:name, "label")`      | fail as "expected label" unless the grammar's method `name` accepts the value |
 | `.means(v)`                   | the value is `v` (`lit("null").means(nil)`)          |
 | `.map { }`                    | transform the value with a block (prefer the above)  |
 | `.label("name")`              | "expected name" in errors                            |
@@ -143,6 +144,37 @@ of at whatever a looser alternative accepted.
 
 This is Parsec-style commitment, not the choice-local "cut" from the
 PEG literature.
+
+## Checks
+
+An action can only return a value, and raising escapes `parse`, so an
+action can't turn a match down. `.check` can:
+
+```ruby
+rule(:date) { match(/\d{4}-\d\d-\d\d/).check(:real_date?, "a real date") }
+
+private
+
+def real_date?(text) = Date.valid_date?(*text.split("-").map(&:to_i))
+```
+
+The method (it may be private) gets the value and returns truthy to
+accept it; the value passes through unchanged. A falsy result is an
+ordinary failure, "expected a real date", where the match began, and
+whatever the inner match recorded (a `rep`'s stopping point, say) is
+dropped. (This example uses `Date` and `to_i`, so it won't go into a
+generated parser; see below.)
+
+- It backtracks like any failure. The furthest failure still wins, so
+  if a later alternative gets further (`1979` matching a number before
+  `-02-30` trips it up), that alternative owns the error.
+- Inside `rep` it ends the loop, and inside `maybe` it gives `nil`.
+- It commits only when an enclosing `seq` already has:
+  `seq("on", commit, date)` stops at the rejected date. To commit to the
+  check itself, look first: `pattern.present > pattern.check(...)`.
+- An outer `.label` at the same position replaces its label.
+- Like actions, the method must depend only on the value: it also runs
+  inside lookaheads, and its result is memoized with the rule.
 
 ## Nodes
 
@@ -207,8 +239,9 @@ File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
 
 Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,
 with the same fields, `span`, `==` and `inspect`. Values transformed
-with `.map(:sym)`, `.action(:name)` and `.means(v)` compile: an action's
-method is copied from its source, with the grammar methods it calls
+with `.map(:sym)`, `.action(:name)` and `.means(v)` compile, as does
+`.check(:name, "label")`: an action's (or check's) method is copied from
+its source, with the grammar methods it calls
 and the constants it reads, so copying needs the `prism` gem (bundled
 from Ruby 3.3). The generator raises `Birman::Compiler::Error`, naming
 the rule, for what it can't translate faithfully:

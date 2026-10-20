@@ -36,7 +36,7 @@ module Birman
         when To then :node
         when Infix then infix(of(matcher.operand))
         when Ref then rules.fetch(matcher.name, :poly)
-        when Label, Quiet, Named, Lexeme then of(matcher.inner)
+        when Label, Check, Quiet, Named, Lexeme then of(matcher.inner)
         else :poly
         end
       end
@@ -45,7 +45,7 @@ module Birman
       def str_or_nil?(matcher, seen = {})
         case matcher
         when Maybe then of(matcher.inner) == :str
-        when Label, Quiet, Named, Lexeme then str_or_nil?(matcher.inner, seen)
+        when Label, Check, Quiet, Named, Lexeme then str_or_nil?(matcher.inner, seen)
         when Ref
           !seen.key?(matcher.name) && (seen[matcher.name] = true) &&
             str_or_nil?(@grammar.matcher_for(matcher.name), seen)

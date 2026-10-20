@@ -130,6 +130,7 @@ module Birman
         when Const then const(matcher, want)
         when Send, Action then transform(matcher, want, name)
         when Label then label(matcher, want, name)
+        when Check then check(matcher, want, name)
         when Named then compile_matcher(matcher.inner, want, name)
         when To then to(matcher, want, name)
         when Infix then infix(matcher, want, name)
@@ -170,7 +171,7 @@ module Birman
 
       def describe(matcher)
         kind = matcher.class.name.split("::").last
-        kind = "#{kind} #{matcher.name.inspect}" if matcher.is_a?(Label)
+        kind = "#{kind} #{matcher.name.inspect}" if matcher.is_a?(Label) || matcher.is_a?(Check)
         "#{kind}: #{EBNF.expr(matcher.to_ast, EBNF::CHOICE)}"
       end
 
@@ -449,11 +450,7 @@ module Birman
       end
 
       def apply(matcher, value)
-        name = matcher.method_name
-        unless name.match?(/\A[a-z_]\w*[?!]?\z/)
-          raise Error, "rule :#{@rule} uses .#{matcher.is_a?(Send) ? "map" : "action"}(#{name.inspect}), " \
-                       "which isn't a plain method name"
-        end
+        name = plain_name(matcher)
         # String#to_i, Bignums included (Spinel's overflows past 63 bits).
         if name == :to_i && matcher.is_a?(Send)
           return "BirmanRT.to_i(#{value})" if @types.of(matcher.inner) == :str
@@ -461,8 +458,18 @@ module Birman
         end
         return "#{value}.#{name}" if matcher.is_a?(Send)
 
-        @actions.copy(name, @rule)
+        @actions.copy(name, @rule, "action")
         "#{name}(#{value})"
+      end
+
+      # The method name of a .map, .action or .check, which the generated
+      # code calls as written.
+      def plain_name(matcher)
+        name = matcher.method_name
+        return name if name.match?(/\A[a-z_]\w*[?!]?\z/)
+
+        form = { Send => "map", Action => "action", Check => "check" }.fetch(matcher.class)
+        raise Error, "rule :#{@rule} uses .#{form}(#{name.inspect}), which isn't a plain method name"
       end
 
       # .map(:hex) and .map(:oct) raise past 63 bits in a Spinel binary, as
@@ -521,7 +528,7 @@ module Birman
           keys = matcher.parts.filter_map(&:capture_key)
           keys.empty? ? nil : keys.uniq
         when Pick then hash_keys(matcher.parts[matcher.index], seen)
-        when Label, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
+        when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
         when Both then hash_keys(matcher.right, seen)
         when Lit, Str, Pat, Rep, SepBy, Not, And, To then nil
         when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
@@ -601,6 +608,22 @@ module Birman
           "#{SAVE}q = #{inner.name}(p)\nlabel_end(p, q, of, oe, #{matcher.name.inspect})"
         end
         Call.new(call.name, inner.value) # label_end leaves values alone
+      end
+
+      # The predicate runs whether or not anything reads the value (so the
+      # inner value is always kept), as an action does, but only after a
+      # match: after a failure the value variable is stale.
+      # `? true : false` keeps ok a bool for Spinel.
+      def check(matcher, want, name)
+        inner = nil
+        call = define(:check, matcher, false, name) do
+          inner = compile_matcher(matcher.inner, true)
+          predicate = plain_name(matcher)
+          @actions.copy(predicate, @rule, "check")
+          "#{SAVE}q = #{inner.name}(p)\nok = q == FAIL || (#{predicate}(#{inner.value}) ? true : false)\n" \
+            "check_end(p, q, ok, of, oe, #{matcher.name.inspect})"
+        end
+        Call.new(call.name, want ? inner.value : nil) # check_end leaves values alone
       end
 
       def quiet(matcher, want, name)

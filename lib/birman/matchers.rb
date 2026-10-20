@@ -108,6 +108,19 @@ module Birman
     # returns = "Matcher whose value is grammar.method_name(self's value) (self's .as name is kept)"
     def action(method_name) = Action.new(self, method_name)
 
+    # Reject a match the grammar can't accept for reasons a pattern
+    # can't express (1979-02-30 isn't a date). The method may be
+    # private, and, like an action, must depend only on the value: it
+    # runs inside lookaheads, and its result is memoized with the rule.
+    # A rejection is an ordinary failure where self began, so a choice
+    # backtracks past it (and a later alternative that gets further
+    # owns the error) unless an enclosing seq has committed.
+    # [method.check]
+    # params = ["method_name: Symbol, a grammar instance method taking one argument", "name: String"]
+    # returns = "self, failing as \"expected <name>\" when grammar.method_name(self's value) is falsy"
+    # value = "self's value (self's .as name is kept)"
+    def check(method_name, name) = Check.new(self, method_name, name)
+
     # Replace the value with a constant: lit("null").means(nil). The
     # same object comes back from every match.
     # [method.means]
@@ -452,6 +465,24 @@ module Birman
     end
 
     def to_ast = [:label, name, inner.to_ast]
+    def capture_key = inner.capture_key
+  end
+
+  # Semantic predicate (see Matcher#check). Like Label, inner runs
+  # isolated, so a rejection can drop what inner recorded (a rep's
+  # stopping point, say), as Not does, and report only its own name.
+  Check = Data.define(:inner, :method_name, :name) do
+    include Matcher
+
+    def match(ctx, pos)
+      result = ctx.isolate(pos) { inner.match(ctx, pos) }
+      return ctx.fail_at(pos, name) if result && !ctx.grammar.__send__(method_name, result.value)
+
+      ctx.merge(ctx.isolated_furthest, ctx.isolated_expected)
+      result
+    end
+
+    def to_ast = [:check, name, inner.to_ast]
     def capture_key = inner.capture_key
   end
 
