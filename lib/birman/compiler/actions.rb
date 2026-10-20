@@ -2,7 +2,7 @@
 
 module Birman
   class Compiler
-    # Copies the grammar methods that .action(:name) calls into the
+    # Copies the grammar methods that .action(:name) and .check(:name) call into the
     # generated Parser, read from their source with Prism, together with
     # the grammar methods they call and the constants they read (as
     # literals, looked up lexically from where the method was written).
@@ -13,7 +13,7 @@ module Birman
     # large_integer (Grammar's, and the generated parser's) is the way to
     # read a number.
     # [class.Compiler.Actions]
-    # purpose = "Copies .action methods, their helpers and constants, into the generated parser"
+    # purpose = "Copies .action and .check methods, their helpers and constants, into the generated parser"
     # dependencies = ["prism (bundled from Ruby 3.3; a gem on 3.2), loaded on first use"]
     class Actions
       # Methods of the generated Parser and its runtime base class that a
@@ -21,7 +21,7 @@ module Birman
       RESERVED = /\A(?:rule_|ref_|lit_|init_|skip_|str_)/
       RUNTIME_METHODS = %i[
         initialize parse reset skip_ignored fail_at merge commit_failure ignored_after token_end span_end span
-        failure failure_because label_end peek_end bytes_at? abandon left_recursion large_integer
+        failure failure_because label_end check_end peek_end bytes_at? abandon left_recursion large_integer
       ].freeze
 
       # Methods the generated parser's runtime provides as Birman::Grammar
@@ -36,11 +36,12 @@ module Birman
       end
 
       # Copies grammar method name (and what it needs), once.
-      def copy(name, rule)
+      # form: "action" or "check", for the error if there's no such method.
+      def copy(name, rule, form = "action")
         return if @methods.key?(name) || provided?(name)
 
         @methods[name] = nil # reserved first: methods can call each other
-        @methods[name] = method_source(find(name, rule), rule)
+        @methods[name] = method_source(find(name, rule, form), rule)
       end
 
       def any? = !@methods.empty?
@@ -55,9 +56,9 @@ module Birman
 
       private
 
-      def find(name, rule)
+      def find(name, rule, form)
         unless @grammar.respond_to?(name, true)
-          raise Error, "rule :#{rule} uses .action(:#{name}), but the grammar has no method #{name}"
+          raise Error, "rule :#{rule} uses .#{form}(:#{name}), but the grammar has no method #{name}"
         end
         if RESERVED.match?(name) || RUNTIME_METHODS.include?(name)
           raise Error, "the grammar method #{name} would clash with the generated parser's own #{name}"
@@ -153,7 +154,8 @@ module Birman
       def load_prism
         require "prism"
       rescue LoadError
-        raise Error, "copying .action methods needs the prism gem (bundled from Ruby 3.3): add it to your Gemfile"
+        raise Error, "copying .action and .check methods needs the prism gem (bundled from Ruby 3.3): " \
+                     "add it to your Gemfile"
       end
     end
 

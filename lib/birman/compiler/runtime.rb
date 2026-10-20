@@ -619,6 +619,21 @@ module BirmanRT
       q
     end
 
+    # The end of a Check, after its isolated inner match: ok says the
+    # inner match failed or the predicate accepted it. A rejection drops
+    # what the inner match recorded and says "expected <name>" at p.
+    #: (Integer, Integer, bool, Integer, Array[String], String) -> Integer
+    def check_end(p, q, ok, of, oe, name)
+      f = @furthest
+      ex = @expected
+      @furthest = of
+      @expected = oe
+      return fail_at(p, name) unless ok
+
+      merge(f, ex)
+      q
+    end
+
     # The end of a positive lookahead (Context#peek?), after its isolated
     # inner match g: whether it matched. If not, the failure is recorded
     # at p, as what it expected there or as the lookahead itself.

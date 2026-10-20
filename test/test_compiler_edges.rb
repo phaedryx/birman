@@ -91,6 +91,61 @@ class CompilerEdgesTest < Minitest::Test
     assert_equal want.message, got.message
   end
 
+  # --- Checks ---
+
+  # The check's value is never read, but the predicate still decides.
+  def test_unread_checks_still_run
+    g = grammar do
+      rule(:top) { seq(str("a").as(:key), match(/\d/).check(:odd?, "odd"), str("a").check(:odd?, "x").present) }
+
+      private
+
+      def odd?(text) = text == "a" || large_integer(text).odd? # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, %w[a1a a2a a1 a3b]
+  end
+
+  def test_checks_over_nodes
+    g = grammar do
+      rule(:top) { either(node_checked, checked_node) }
+      rule(:node_checked) { seq(digits.as(:left), ",", digits.as(:right)).to(Pair).check(:ordered_pair?, "in order") }
+      rule(:checked_node) { seq(digit.as(:left), digit.as(:right)).check(:ordered?, "ordered digits").to(Pair) }
+      rule(:digits) { match(/\d+/) }
+      rule(:digit) { match(/\d/) }
+
+      private
+
+      # rubocop:disable Lint/NestedMethodDefinition
+      def ordered?(parts) = large_integer(parts[:left]) <= large_integer(parts[:right])
+      def ordered_pair?(pair) = large_integer(pair.left) <= large_integer(pair.right)
+      # rubocop:enable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["1,2", "2,1", "10,9", "1,", "12", "21", "1", ""]
+  end
+
+  def test_check_values_keep_their_type
+    g = grammar do
+      rule(:top) { match(/\d+/).check(:even?, "an even number") }
+
+      private
+
+      def even?(text) = large_integer(text).even? # rubocop:disable Lint/NestedMethodDefinition
+    end
+    types = Birman::Compiler::Types.new(g.new)
+    assert_equal :str, types.of(Birman::Ref.new(:top))
+    assert types.str_or_nil?(Birman::Ref.new(:top).maybe.check(:even?, "x"))
+  end
+
+  def test_refuses_checks_it_cant_copy_or_name
+    g = grammar do
+      rule(:top) { str("a").check(:check_end, "x") }
+      define_method(:check_end) { |_text| true }
+    end
+    assert_refused g, /check_end/
+    assert_refused grammar { rule(:top) { str("a").check(:"no way", "x") } }, /\.check\(:"no way"\).*plain method name/
+    assert_refused grammar { rule(:top) { str("a").check(:gone?, "x") } }, /\.check\(:gone\?\).*no method gone\?/
+  end
+
   def test_copies_birman_helpers_and_self_calls
     g = grammar do
       include Birman::Rules::Strings
