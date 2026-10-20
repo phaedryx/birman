@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+- **Added:** `sep_by(x, sep, trailing: true)` (and `sep_by1`) allows one
+  separator after the last item, as in TOML's `[1, 2,]`. A list of none
+  still can't be just a separator. After a trailing separator the item
+  is still expected, so `[1, x` reports `expected value or "]"`; without
+  `trailing`, `[1,]` still reports `expected value`. Generated parsers
+  support it.
 - **Added:** `Birman::Failure.at(span, reason)`, for checks made in a
   second pass over the AST: a committed `Failure` at the start of a
   node's span, whose message is the reason. The README's Checks

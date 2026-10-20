@@ -76,6 +76,17 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["[1,2,3]abc", "[]x", "[1,]a", "[,]a", "[1]", "[1,2]"]
   end
 
+  def test_sep_by_with_a_trailing_separator
+    g = grammar do
+      rule(:top) do
+        seq("[", sep_by(match(/\d+/).label("value"), ",", trailing: true), "]",
+            sep_by1(seq(str("a"), commit, str("b")), str(";"), trailing: true))
+      end
+    end
+    assert_same_results g, ["[1,2,]ab;", "[1,2]ab;ab", "[1,]ab", "[,]ab", "[]ab;;", "[1,2,x", "[1,,]", "[]ab;a",
+                            "[]", "[1]"]
+  end
+
   # --- Choice and repetition ---
 
   def test_choice

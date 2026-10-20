@@ -289,11 +289,14 @@ module Birman
 
   # Items separated by sep: at least one, or with min 0 possibly none.
   # The value is an array of the items (a new one each time, even when
-  # empty), and the name (see Matcher#as) is the item's.
-  SepBy = Data.define(:item, :sep, :min) do
+  # empty), and the name (see Matcher#as) is the item's. With trailing,
+  # a separator with no item after it ends the list and is kept in the
+  # match; the item's failure there is still recorded, so whatever
+  # comes next shares the error ("expected value or ]").
+  SepBy = Data.define(:item, :sep, :min, :trailing) do
     include Matcher
 
-    def initialize(item:, sep:, min: 1) = super
+    def initialize(item:, sep:, min: 1, trailing: false) = super
 
     def match(ctx, pos)
       r = item.match(ctx, pos) or return (min.zero? ? Match.new(pos, []) : nil)
@@ -301,8 +304,9 @@ module Birman
       pos = r.pos
       loop do
         s = sep.match(ctx, pos) or break
-        r = item.match(ctx, s.pos) or break
-        break if r.pos == pos # an empty separator and item would loop forever
+        r = item.match(ctx, s.pos)
+        pos = s.pos if r.nil? && trailing
+        break if r.nil? || r.pos == pos # an empty separator and item would loop forever
 
         values << r.value
         pos = r.pos
@@ -311,7 +315,9 @@ module Birman
     end
 
     def to_ast
-      list = [:seq, nil, [item.to_ast, [:rep, 0, nil, [:seq, nil, [sep.to_ast, item.to_ast]]]]]
+      parts = [item.to_ast, [:rep, 0, nil, [:seq, nil, [sep.to_ast, item.to_ast]]]]
+      parts << [:rep, 0, 1, sep.to_ast] if trailing
+      list = [:seq, nil, parts]
       min.zero? ? [:rep, 0, 1, list] : list
     end
 

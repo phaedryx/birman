@@ -94,6 +94,7 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
+| `sep_by(x, ",", trailing: true)` | and one more `","` may end the list (not an empty one) |
 | `.rep(min, max)`, `.maybe`    | repetition, optional                                 |
 | `.absent`, `.present`         | negative / positive lookahead                        |
 | `.map(:to_i)`                 | call that method on the value                        |
@@ -136,6 +137,9 @@ of at whatever a looser alternative accepted.
 - `rep` and `maybe` don't stop a commit. `seq("else", commit, expr).maybe`
   rejects `else` followed by garbage rather than quietly treating it as
   "no else clause".
+- Neither does a trailing separator. `sep_by(x, ",", trailing: true)`
+  ends the list at a last `","` only when the `x` after it fails
+  without committing.
 - Lookaheads do. `x.absent`, `x.present` and the guard in `a & b` only
   ask whether `x` would match, so a commit failure inside them is just
   "no".

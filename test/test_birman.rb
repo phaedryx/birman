@@ -258,6 +258,37 @@ class BirmanTest < Minitest::Test
     assert_equal [], g.parse!("")
   end
 
+  def test_sep_by_with_a_trailing_separator
+    g = grammar { rule(:top) { sep_by(match(/\d+/), str(","), trailing: true) } }
+    assert_equal %w[1 2], g.parse!("1,2,")
+    assert_equal %w[1 2], g.parse!("1,2")
+    assert_equal [], g.parse!("")
+    assert g.parse(",").failure?, "a separator needs an item before it"
+    assert g.parse("1,,").failure?, "only one"
+    assert_equal 'top = (/\d+/ ("," /\d+/)* ","?)? ;', g.to_ebnf
+
+    g = grammar { rule(:top) { sep_by1(match(/\d+/), str(","), trailing: true) } }
+    assert_equal %w[1], g.parse!("1,")
+    assert g.parse("").failure?
+  end
+
+  # After a separator, the item is expected (and, when trailing is
+  # allowed, so is whatever follows the list).
+  def test_errors_after_a_separator
+    trailing, plain = [true, false].map do |trailing|
+      grammar { rule(:top) { seq(str("["), sep_by(match(/\d+/).label("value"), str(","), trailing:), str("]")) } }
+    end
+    assert_pattern { trailing.parse("[1,2,x") => Birman::Failure(pos: 5, expected: ["value", '"]"']) }
+    assert_equal %w[1 2], trailing.parse!("[1,2,]")[1]
+    assert_pattern { plain.parse("[1,2,]") => Birman::Failure(pos: 5, expected: ["value"]) }
+  end
+
+  def test_a_trailing_separator_doesnt_stop_a_commit
+    g = grammar { rule(:top) { sep_by(seq(str("a"), commit, str("b")), str(","), trailing: true) } }
+    assert_equal [%w[a b]], g.parse!("ab,")
+    assert_pattern { g.parse("ab,a") => Birman::Failure(pos: 4, expected: ['"b"'], committed: true) }
+  end
+
   def test_one_of_a_hash_maps_literals_to_values
     g = grammar do
       ignore :spacing

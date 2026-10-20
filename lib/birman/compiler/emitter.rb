@@ -306,7 +306,7 @@ module Birman
               break if s == FAIL
 
               r = #{item.name}(s)
-              break if r == FAIL || r == q
+              #{"q = s if r == FAIL # a trailing separator\n  " if matcher.trailing}break if r == FAIL || r == q
 
               #{"values << #{item.value}" if v}
               q = r
