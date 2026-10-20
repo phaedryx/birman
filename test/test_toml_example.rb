@@ -70,6 +70,7 @@ class TestTOMLExample < Minitest::Test
     assert_equal Date.new(1979, 5, 27), doc["ld"]
     assert_equal TOMLExample::LocalTime.new(hour: 7, minute: 32, second: Rational(1, 4)), doc["lt"]
     assert_equal "07:32:00.25", doc["lt"].to_s
+    assert_equal "23:59:60", TOMLExample.parse!("leap = 23:59:60")["leap"].to_s
     assert_equal 0xffff_ffff_ffff_ffff_ff, doc["big"]
     assert_equal [15, 5, -1000], doc["ints"]
     assert_equal [-Float::INFINITY, 6.02e23], doc["floats"]
@@ -81,8 +82,8 @@ class TestTOMLExample < Minitest::Test
       "a = [1, 2\nb = 3" => [2, 1, 'expected "," or "]"'],
       "a = { b = 1,\n c = 2 }" => [1, 13, "expected key"],
       "a = 1 b = 2" => [1, 7, "expected newline or end of input"],
-      # Semantic errors, found after parsing, point at the statement
-      # that broke the rule: here the second [fruit].
+      # Semantic errors, found after parsing, point at the node that
+      # broke the rule: here the second [fruit], and below, the date.
       "[fruit]\napple = 1\n\n[fruit]\npear = 2" => [4, 1, "fruit is already defined"],
       "a = 1\n  a = 2" => [2, 3, "a is already defined"],
       "[t]\nx.y = 1\n[t.x]" => [3, 1, "t.x is already defined"],

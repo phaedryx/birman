@@ -25,7 +25,10 @@ module TOMLExample
   # A time of day with no date or offset (07:32:00). second is a
   # Rational when it has a fraction.
   LocalTime = Data.define(:hour, :minute, :second) do
-    def to_s = Time.at((hour * 3600) + (minute * 60) + second, in: "UTC").strftime("%H:%M:%S.%N").sub(/\.?0+\z/, "")
+    def to_s
+      fraction = Time.at(second % 1).strftime(".%N").sub(/\.?0+\z/, "")
+      format("%<hour>02d:%<minute>02d:%<second>02d%<fraction>s", hour:, minute:, second:, fraction:)
+    end
   end
 
   # The first pass: the document as a flat list of statements.
