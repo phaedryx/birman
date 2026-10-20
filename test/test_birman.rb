@@ -495,6 +495,28 @@ class BirmanTest < Minitest::Test
     assert_operator failure.pos, :>, 0
   end
 
+  # Regexps raise on invalid UTF-8, so it's a Failure before any rule
+  # runs, at the first bad byte. Everything before that byte is valid,
+  # so line and column count characters as usual.
+  def test_invalid_utf8_is_a_failure_not_a_crash
+    g = grammar { rule(:top) { match(/[^\n]*\n/).rep } }
+    input = "ok\nab\xE3\x81c\xFF\n"
+    failure = g.parse(input)
+    assert_equal "invalid UTF-8", failure.reason
+    assert_equal [5, 2, 3], [failure.pos, failure.line, failure.column]
+    refute failure.committed
+    assert_empty failure.expected
+
+    error = assert_raises(Birman::ParseError) { g.parse!(input) }
+    assert_match(/\Aline 2, column 3: invalid UTF-8\n  ab.*\n    \^\z/, error.message.b)
+  end
+
+  def test_invalid_input_in_other_encodings_names_the_encoding
+    g = grammar { rule(:top) { match(/\w*/) } }
+    assert_equal "invalid US-ASCII", g.parse("a\xFF".dup.force_encoding("US-ASCII")).reason
+    assert_nil g.parse("\xFF".b).reason, "binary input is never invalid"
+  end
+
   def test_left_recursion_is_reported_by_rule_name
     g = grammar do
       rule(:top) { either(seq(top, "+", "1"), "1") }

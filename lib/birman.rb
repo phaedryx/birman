@@ -33,6 +33,25 @@ module Birman
   def self.char_offset(input, byte_pos)
     input.ascii_only? ? byte_pos : input.byteslice(0, byte_pos).length
   end
+
+  # The byte offset of the first byte in input that doesn't start a
+  # valid character, or nil if input is valid. Grammar#parse fails
+  # there before a regexp can raise on it. Ruby splits invalid bytes
+  # into characters of their own, so everything before it is valid,
+  # and a Failure's line and column count as usual.
+  # [method."Birman.invalid_byte"]
+  # params = ["input: String"]
+  # returns = "Integer | nil: the byte offset of the first invalid byte"
+  def self.invalid_byte(input)
+    return if input.valid_encoding?
+
+    pos = 0
+    input.each_char do |char|
+      return pos unless char.valid_encoding?
+
+      pos += char.bytesize
+    end
+  end
 end
 
 require "strscan"

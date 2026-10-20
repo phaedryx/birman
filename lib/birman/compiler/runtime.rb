@@ -159,7 +159,8 @@ module BirmanRT
     def found
       return "end of input" if @byte_pos >= @input.bytesize
 
-      width = BirmanRT.single_byte?(@input) ? 1 : BirmanRT.char_width(@input.getbyte(@byte_pos))
+      width = BirmanRT.single_byte?(@input) ? 1 : BirmanRT.utf8_width(@input, @byte_pos)
+      width = 1 if width.zero?
       @input.byteslice(@byte_pos, width).inspect
     end
 
@@ -222,6 +223,59 @@ module BirmanRT
     return 3 if b < 0xF0
 
     4
+  end
+
+  # The first byte of input that doesn't start a valid character, or
+  # FAIL: Birman.invalid_byte, by hand. Binary input is always valid,
+  # and US-ASCII is only ASCII.
+  def self.invalid_byte(input)
+    return FAIL if input.encoding == Encoding::BINARY
+
+    ascii = single_byte?(input)
+    i = 0
+    while i < input.bytesize
+      w = utf8_width(input, i)
+      # US-ASCII has no multibyte characters.
+      return i if w.zero? || (ascii && w > 1)
+
+      i += w
+    end
+    FAIL
+  end
+
+  # The width of the UTF-8 character at byte i, or 0 if the bytes there
+  # aren't one, as String#valid_encoding? sees it: the second byte's
+  # range rules out overlong forms, surrogates and code points past
+  # U+10FFFF, and a truncated character is invalid at its first byte.
+  def self.utf8_width(input, i)
+    b = input.getbyte(i)
+    return 1 if b < 0x80
+    return 0 if b < 0xC2 || b > 0xF4
+
+    w = char_width(b)
+    return 0 if i + w > input.bytesize
+
+    lo = 0x80
+    hi = 0xBF
+    if b == 0xE0
+      lo = 0xA0
+    elsif b == 0xF0
+      lo = 0x90
+    elsif b == 0xED
+      hi = 0x9F
+    elsif b == 0xF4
+      hi = 0x8F
+    end
+    c = input.getbyte(i + 1)
+    return 0 if c < lo || c > hi
+
+    k = 2
+    while k < w
+      return 0 unless continuation?(input.getbyte(i + k))
+
+      k += 1
+    end
+    w
   end
 
   # Characters in input's bytes from...to: in UTF-8, every byte that
@@ -601,6 +655,13 @@ module BirmanRT
     #: (Integer, String) -> Failure
     def failure_because(byte_pos, reason)
       Failure.new(@input, byte_pos, [], false, reason)
+    end
+
+    # Grammar#parse's check, made before a regexp can raise on the bad
+    # byte: invalid input fails at the first one.
+    #: (Integer) -> Failure
+    def invalid_input(byte_pos)
+      failure_because(byte_pos, BirmanRT.single_byte?(@input) ? "invalid US-ASCII" : "invalid UTF-8")
     end
 
     # The end of a Label, after its isolated inner match: keep the

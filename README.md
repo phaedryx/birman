@@ -201,7 +201,8 @@ has one.
 - `Grammar.parse` returns `Success`/`Failure`; `parse!` raises `ParseError`
   (`parse!(input, formatter: f)` words it your way).
   Input nested too deeply for Ruby's stack is a `Failure` too, with
-  `reason` set (see Limits).
+  `reason` set (see Limits), and so is invalid UTF-8: `reason` is
+  "invalid UTF-8", at the first bad byte.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
