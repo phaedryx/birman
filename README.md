@@ -181,6 +181,99 @@ has one.
   `class`, `match`, `token`...). Defining one raises `ArgumentError`
   instead of silently breaking the grammar. Redefining a rule is fine.
 
+## Generating a parser
+
+`Grammar.to_ruby` writes a standalone parser: Ruby source with no
+dependency on Birman that gives exactly the results `parse` gives
+(values, spans, error positions, expected lists and messages).
+
+```ruby
+File.write("calc_parser.rb", Calc::Grammar.to_ruby(namespace: "CalcParser"))
+require_relative "calc_parser"
+CalcParser::Parser.new("print 1 + 2").parse   # => Success or Failure
+```
+
+The output is written in the Ruby subset that
+[Spinel](https://github.com/matz/spinel) compiles to a native binary.
+Add an entry point and compile it:
+
+```ruby
+source = Calc::Grammar.to_ruby(namespace: "CalcParser") + <<~RUBY
+  result = CalcParser::Parser.new($stdin.read).parse
+  puts result.success? ? result.value.inspect : result.message
+RUBY
+File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
+```
+
+Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,
+with the same fields, `span`, `==` and `inspect`. Values transformed
+with `.map(:sym)`, `.action(:name)` and `.means(v)` compile: an action's
+method is copied from its source, with the grammar methods it calls
+and the constants it reads, so copying needs the `prism` gem (bundled
+from Ruby 3.3). The generator raises `Birman::Compiler::Error`, naming
+the rule, for what it can't translate faithfully:
+
+- `.map { }` blocks (their source is lost) and custom matcher classes
+- regexps using `\A`, `^`, lookbehind, or `\b`/`\B` at their start:
+  the generated parser scans from the current position, where those
+  would see less of the input than the interpreter's do
+- regexps with a wide `{m,n}` (more than 16 apart) alongside a
+  lookaround, atomic group, backreference or lazy interval: Spinel's
+  regexp engine tries every length on those, exponentially. Making the
+  repeat atomic on its own, `(?>[a-z]{1,63})`, is allowed
+- `.to(Node)` on a value that may or may not be a Hash of fields
+- node classes with methods of their own (a `node(...) { }` body), and
+  names that would clash in the generated code (a node called `Success`,
+  a copied constant called `FAIL`, two copied constants of one name)
+- actions that call `super`, Birman's own API (`keywords`, rules), or
+  classes the generated parser won't have
+- actions that call `Integer(...)`, `.hex`, `.oct` or `.to_i` (on
+  anything but an Integer literal, since a receiver's type can't be
+  told), or name them (`map(&:to_i)`): past 63 bits, in a Spinel
+  binary they raise or, where Spinel can't tell the receiver is a
+  String, silently give 2**63 - 1. Use `large_integer(text)` or
+  `large_integer(text, base)` (`16` for `hex`, `8` for `oct`), which
+  Birman gives every grammar: it is `Integer(text, base)` in Ruby, and
+  in the generated parser it returns Bignums under Spinel too (from
+  Floats as well: exactly, as Ruby's `Integer` does). `.map(:to_i)` is
+  fine on a String, an optional String (`.maybe`; nil is 0) or an
+  Integer; `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on anything
+  else are refused, as are `send` and `method` with a name that isn't
+  a literal symbol. This is a net for the common forms, not a proof:
+  `Float(text).round`, `text.to_f.to_int` and whatever else slips past
+  it may raise, or give a wrong number without a word. `large_integer`
+  takes Integer bases and Floats (truncated) as Ruby does; Rational and
+  NaN bases differ (`TypeError`, `FloatDomainError`), a base that isn't
+  a number raises `TypeError` as in Ruby 3.3+ (3.2's `Integer` ignores
+  it), and in a binary negative bases (Ruby's "prefix or this base")
+  raise
+
+```ruby
+def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)
+```
+
+Actions and `.map(:name)` always run, as in the interpreter, even when
+nothing reads their value. The generated parser reads UTF-8 or binary input (other
+encodings raise `ArgumentError`). It also nests deeper before reporting
+"input is nested too deeply": its methods use less stack than the
+interpreter's matchers, and a Spinel binary has a 64 MB stack (JSON
+arrays nest about 55,000 deep), so input that fails with the interpreter
+can parse when compiled. One limit runs the other way: Spinel allows 64
+`begin` blocks active at once (and exits the process past that), and
+each lookahead (`absent`, `present`, `&`) holds one while its inner
+matcher runs. So lookaheads nested more than 56 deep are a Failure,
+"input is nested too deeply". To allow more, build with a bigger stack
+and say so when generating:
+
+```ruby
+File.write("p.rb", G.to_ruby(namespace: "P", lookahead_depth: 4000))
+# spinel p.rb -o p --cc="cc -DSP_EXC_STACK_MAX=4096"
+```
+
+Copied actions are exactly what you wrote. Under Spinel, a string that
+isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
+`inspect`s differently.
+
 ## Limits
 
 - **Deep nesting.** Each level of nesting in the input uses Ruby
@@ -209,7 +302,6 @@ has one.
 - Left recursion. A rule that can reach itself without consuming input
   raises `ArgumentError` naming the rule; use `infix`, or
   `term (op term)*` with a fold, instead.
-- Compiling grammars to Ruby methods for speed
 - Railroad diagrams from `to_ast`
 
 ## Development
@@ -217,8 +309,11 @@ has one.
 ```sh
 bin/setup           # install dependencies
 bundle exec rake    # tests + rubocop
+bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpreter
+                          # (SPINEL=/path/to/spinel; skipped if not found)
 ruby examples/calc.rb
 ruby examples/json.rb
+ruby examples/email.rb
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them)
 ```
 

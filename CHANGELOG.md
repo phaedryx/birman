@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+- **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
+  parser, as Ruby source Spinel can compile to a native binary, that
+  agrees with `parse` on values, spans and errors. Differential tests
+  check the README grammar, `examples/calc.rb` and `examples/json.rb`
+  against the interpreter (`rake test`, and `rake spinel` for the
+  compiled binaries). Actions and `.map(:name)` run even when nothing
+  reads their value, as in the interpreter.
+- **Added:** `large_integer(value, base = 0)`, for actions: `Integer`,
+  but a generated parser's gives Bignums in a Spinel binary too, where
+  `Integer`, `String#to_i`, `#hex` and `#oct` raise past 63 bits, or
+  silently give 2**63 - 1 when Spinel can't tell the receiver's type.
+  `to_ruby` refuses actions that call any of those (or `send` them by
+  a computed name), and `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)`
+  on values that may not be Strings. `examples/json.rb` uses it for
+  integers and `\u` escapes.
+- **Added:** `examples/email.rb`, RFC 5322 email addresses (addr-spec,
+  with UTF-8 and nested comments): a grammar with no ignore rule. It's
+  checked against the generated parsers too.
 - **Added:** ways to transform a value without a block, so a grammar
   can be plain data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,

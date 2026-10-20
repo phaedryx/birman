@@ -2,6 +2,13 @@ AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
   SuggestExtensions: false
+  Exclude:
+    # Generated parsers, and the runtime they ship with: written in the
+    # Ruby subset Spinel compiles (while loops, no blocks), not idiomatic
+    # Ruby, and copied into generated code rather than loaded.
+    - "lib/birman/compiler/runtime.rb"
+    - "tmp/**/*"
+    - "vendor/**/*"
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes
@@ -55,6 +62,8 @@ Metrics/CyclomaticComplexity:
 
 Metrics/MethodLength:
   Max: 12
+  # The compiler's code templates are heredocs, read as a whole.
+  CountAsOne: ["heredoc"]
   Exclude:
     - "test/**/*"
 
@@ -65,5 +74,6 @@ Metrics/ModuleLength:
 # Tests are long, linear scripts; size limits only push them toward
 # helpers that hide what's being checked.
 Metrics/ClassLength:
+  CountAsOne: ["heredoc"]
   Exclude:
     - "test/**/*"

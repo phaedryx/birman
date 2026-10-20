@@ -10,3 +10,8 @@ require "rubocop/rake_task"
 RuboCop::RakeTask.new
 
 task default: %i[test rubocop]
+
+desc "Compile the generated example parsers with Spinel and diff them against the interpreter"
+task :spinel do
+  ruby "test/spinel/diff.rb"
+end
