@@ -1090,10 +1090,45 @@ class BirmanTest < Minitest::Test
   end
 
   def test_rule_names_cannot_replace_methods_birman_relies_on
-    %i[send class match str keywords token].each do |name|
+    %i[match str keywords token].each do |name|
       error = assert_raises(ArgumentError) { grammar { rule(name) { str("x") } } }
-      assert_match(/rule :#{name} would replace/, error.message)
+      assert_match(/rule :#{name} would replace Birman::.*##{name}, which Birman relies on/, error.message)
     end
+    %i[send class freeze].each do |name|
+      error = assert_raises(ArgumentError) { grammar { rule(name) { str("x") } } }
+      assert_match(/rule :#{name} would replace Object##{name}, a method every Ruby object has/, error.message)
+    end
+  end
+
+  # Every private method Birman gives a grammar, so a new helper is
+  # either reserved or fails here.
+  def test_rule_names_cannot_replace_private_methods_birman_defines
+    rule_modules = Birman::Rules.constants.map { Birman::Rules.const_get(_1) }
+    birman = grammar { include(*rule_modules) }.ancestors.select { _1.name&.start_with?("Birman::") }
+    owned = birman.flat_map do |mod|
+      mod.private_instance_methods(false).grep_v(/\A__rule_/).map { [mod, _1] }
+    end
+    assert_includes owned, [Birman::Rules::Strings, :decode_escape]
+    owned.each do |mod, name|
+      error = assert_raises(ArgumentError, "#{mod}##{name}") do
+        grammar do
+          include(*rule_modules)
+
+          rule(name) { str("x") }
+        end
+      end
+      assert_match(/would replace #{mod}##{name}, which Birman relies on/, error.message)
+    end
+  end
+
+  def test_rule_names_cannot_replace_the_grammars_own_public_methods
+    error = assert_raises(ArgumentError) do
+      grammar do
+        def helper = "h" # rubocop:disable Lint/NestedMethodDefinition
+        rule(:helper) { str("x") }
+      end
+    end
+    assert_match(/rule :helper would replace .*#helper, a method of this grammar/, error.message)
   end
 
   def test_rule_names_can_reuse_private_kernel_methods_and_redefine_rules
@@ -1103,6 +1138,21 @@ class BirmanTest < Minitest::Test
       rule(:print) { str("b") }
     end
     assert_equal "b", g.parse!("b")
+  end
+
+  # A grammar's own private helpers are its to replace, as in any Ruby
+  # class; so are rules from Birman's rule modules.
+  def test_rule_names_can_replace_the_grammars_own_private_helpers_and_birmans_rules
+    g = grammar do
+      include Birman::Rules::Strings
+
+      private def helper = "h" # rubocop:disable Lint/NestedMethodDefinition
+
+      rule(:top)    { seq(helper, string) }
+      rule(:helper) { str("a") }
+      rule(:string) { str("b") }
+    end
+    assert_equal %w[a b], g.parse!("ab")
   end
 
   def test_grammar_can_be_shared_through_modules

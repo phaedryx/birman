@@ -341,8 +341,12 @@ has one.
   combinators; any class that includes it is a grammar. Settings
   (`root`, `ignore`, `keywords`) still go on the class.
 - A rule can't be named after a method the grammar relies on (`send`,
-  `class`, `match`, `token`...). Defining one raises `ArgumentError`
-  instead of silently breaking the grammar. Redefining a rule is fine.
+  `class`, `match`, `token`, or a private helper in one of Birman's
+  modules, like `Rules::Strings`'s `decode_escape`), nor after a public
+  method of your own. Defining one raises `ArgumentError` saying whose
+  method it would replace, instead of silently breaking the grammar.
+  Redefining a rule is fine, and so is replacing your grammar's own
+  private helpers.
 
 ## Generating a parser
 
