@@ -165,9 +165,10 @@ module Examples
 
   # Lists that may end in a comma (sep_by's trailing:), of moments read
   # with named captures (built into nodes, and left as Hashes) and of
-  # such lists: [1979-05-27T07:32Z, [ab!, 2024-02-29,], ].
+  # such lists: [1979-05-27T07:32Z, [ab!, 2024-02-29,], ]. MOMENT's
+  # unnamed group checks that Spinel doesn't number it either.
   module Moments
-    MOMENT = /(?<date>\d{4}-\d\d-\d\d)(?:T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/
+    MOMENT = /(?<date>\d{4}-\d\d-\d\d)(T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/ # rubocop:disable Lint/MixedRegexpCaptureTypes
 
     # [1979-05-27T07:32Z, [ab!, 2024-02-29,], ]
     class Grammar

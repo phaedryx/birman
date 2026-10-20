@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+- **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
+  parser, as Ruby source Spinel can compile to a native binary, that
+  agrees with `parse` on values, spans and errors. Differential tests
+  check the README grammar, `examples/calc.rb` and `examples/json.rb`
+  against the interpreter (`rake test`, and `rake spinel` for the
+  compiled binaries). Actions and `.map(:name)` run even when nothing
+  reads their value, as in the interpreter.
 - **Added:** `match(re).captures`: the value is a Hash of `re`'s named
   groups, `{date: "1979-05-27", time: nil}`, with Symbol keys, in
   order, and `nil` for a group that didn't match, so
@@ -17,13 +24,6 @@
   second pass over the AST: a committed `Failure` at the start of a
   node's span, whose message is the reason. The README's Checks
   section shows one.
-- **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
-  parser, as Ruby source Spinel can compile to a native binary, that
-  agrees with `parse` on values, spans and errors. Differential tests
-  check the README grammar, `examples/calc.rb` and `examples/json.rb`
-  against the interpreter (`rake test`, and `rake spinel` for the
-  compiled binaries). Actions and `.map(:name)` run even when nothing
-  reads their value, as in the interpreter.
 - **Added:** `large_integer(value, base = 0)`, for actions: `Integer`,
   but a generated parser's gives Bignums in a Spinel binary too, where
   `Integer`, `String#to_i`, `#hex` and `#oct` raise past 63 bits, or
