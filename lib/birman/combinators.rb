@@ -90,7 +90,8 @@ module Birman
     # params = ["*items: String | Regexp | Matcher | commit | only(...)"]
     # returns = "Matcher for the items in order"
     # value = "Array of item values; a Hash of the .as-named parts if any; the only(...) part's value if used"
-    # raises = ["ArgumentError (commit first; more than one only; only mixed with .as names)"]
+    # raises = ["ArgumentError (commit first; more than one only; only mixed with .as names)",
+    #           "ArgumentError (a name used twice; a nested seq's names the value would drop)"]
     def seq(*items)
       commit_at = items.index(COMMIT)
       raise ArgumentError, "commit can't come first in a seq: nothing has matched yet" if commit_at&.zero?
@@ -118,7 +119,7 @@ module Birman
     # [method.either]
     # params = ["*alts: String | Regexp | Matcher"]
     # returns = "Ordered choice: the first alternative that matches wins"
-    # value = "The winning alternative's value"
+    # value = "The winning alternative's value (a name all the alternatives share passes outward)"
     def either(*alts) = alts.size == 1 ? lit(alts.first) : Choice.new(alts.map { lit(_1) })
 
     # One of several literals. Given a hash, each literal produces its

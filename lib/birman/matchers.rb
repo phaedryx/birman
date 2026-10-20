@@ -38,8 +38,9 @@ module Birman
   module Matcher
     # [method.">>"]
     # params = ["other: String | Regexp | Matcher"]
-    # returns = "Sequence of self then other (flattens into an existing sequence)"
-    def >>(other) = Seq.new([self, Birman.coerce(other)])
+    # returns = "Sequence of self then other, the same as seq(self, other)"
+    # notes = "A seq on either side with no commit, only or names is flattened in"
+    def >>(other) = Seq.new([*inline_parts(self), *inline_parts(Birman.coerce(other))])
 
     # [method."|"]
     # params = ["other: String | Regexp | Matcher"]
@@ -61,8 +62,8 @@ module Birman
     # params = ["other: String | Regexp | Matcher"]
     # returns = "Sequence of self then other, committed after self (like seq(self, commit, other))"
     def >(other)
-      left  = uncommitted_parts(self)
-      right = uncommitted_parts(Birman.coerce(other))
+      left  = inline_parts(self)
+      right = inline_parts(Birman.coerce(other))
       Seq.new([*left, *right], left.size)
     end
 
@@ -160,7 +161,11 @@ module Birman
 
     private
 
-    def uncommitted_parts(m) = m.is_a?(Seq) && m.commit_at.nil? && m.only_at.nil? ? m.parts : [m]
+    # A seq's parts join the enclosing seq only if that can't change what
+    # it means: its commit, only(...) or names would apply to the whole.
+    def inline_parts(m)
+      m.is_a?(Seq) && m.commit_at.nil? && m.only_at.nil? && m.parts.none?(&:capture_key) ? m.parts : [m]
+    end
   end
 
   # A bare string: a literal (see Combinators#literal_matcher). What a
@@ -241,19 +246,15 @@ module Birman
   # Sequence: parts match in order. The value is an array, or a hash
   # of the named parts if any are named (see Matcher#as). Parts at
   # index `commit_at` and beyond are committed: if one fails, parsing stops.
+  # A name used twice, or a nested seq's names the value would drop, raise.
   Seq = Data.define(:parts, :commit_at, :only_at) do
     include Matcher
 
     # Arrays are copied and frozen so a matcher is immutable all the way down.
     def initialize(parts:, commit_at: nil, only_at: nil)
-      if only_at && parts.each_with_index.any? { |part, i| i != only_at && part.capture_key }
-        raise ArgumentError, "a seq with only(...) can't also name parts with .as"
-      end
-
+      check_names(parts, only_at)
       super(parts: parts.dup.freeze, commit_at:, only_at:)
     end
-
-    def >>(other) = with(parts: [*parts, Birman.coerce(other)])
 
     def match(ctx, pos)
       values = Array.new(parts.size)
@@ -270,7 +271,45 @@ module Birman
     # With only(...), the kept part's name (if any) passes outward.
     def capture_key = only_at && parts[only_at].capture_key
 
+    # The names a part's value is a hash of, when the part has no name of
+    # its own to carry that hash: seen through wrappers that keep the
+    # value, but not into rep, sep_by or a transform, which reshape it.
+    def self.names_inside(part) # rubocop:disable Metrics
+      case part
+      when Seq then part.only_at ? names_inside(part.parts[part.only_at]) : part.parts.filter_map(&:capture_key)
+      when Pick then names_inside(part.parts[part.index])
+      when Label, Quiet, Lexeme, Check, Maybe then names_inside(part.inner)
+      when Both then names_inside(part.right)
+      when Choice then part.alts.flat_map { names_inside(_1) }.uniq
+      when Captures then part.pat.re.names.map(&:to_sym)
+      else []
+      end
+    end
+
     private
+
+    def check_names(parts, only_at)
+      keys = parts.filter_map(&:capture_key)
+      twice = keys.find { keys.count(_1) > 1 }
+      raise ArgumentError, "a seq can't name two parts #{twice.inspect}" if twice
+
+      if only_at
+        check_dropped(parts.reject.with_index { |_, i| i == only_at })
+      elsif keys.any?
+        check_dropped(parts.reject(&:capture_key))
+      end
+    end
+
+    # Parts the seq's value leaves out can't have names.
+    def check_dropped(dropped)
+      raise ArgumentError, "a seq with only(...) can't also name parts with .as" if dropped.any?(&:capture_key)
+
+      hidden = dropped.flat_map { Seq.names_inside(_1) }
+      return if hidden.empty?
+
+      raise ArgumentError, "a seq inside a seq would lose its names #{hidden.map(&:inspect).join(", ")}: " \
+                           "list its parts in the outer seq, or name it with .as"
+    end
 
     def failed(ctx, part, pos, index)
       fail_committed!(ctx, part, pos) if commit_at && index >= commit_at
@@ -370,6 +409,9 @@ module Birman
     end
 
     def to_ast = [:choice, alts.map(&:to_ast)]
+
+    # A name every alternative has passes outward; differing names don't.
+    def capture_key = alts.map(&:capture_key).uniq.then { _1.size == 1 ? _1.first : nil }
   end
 
   # Repetition with min/max; value is an array.

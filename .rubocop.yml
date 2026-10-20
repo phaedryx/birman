@@ -69,7 +69,7 @@ Metrics/MethodLength:
 
 # matchers.rb is a catalog of small matcher classes in one module.
 Metrics/ModuleLength:
-  Max: 325
+  Max: 330
 
 # Tests are long, linear scripts; size limits only push them toward
 # helpers that hide what's being checked.
