@@ -59,7 +59,17 @@ module Birman
       nil
     end
 
-    def merge(pos, expected) = expected.each { fail_at(pos, _1) }
+    # Record a finished frame's expectations (a memo hit, a label, a
+    # check) at pos. Ones already recorded there are skipped: a rule
+    # reached from several alternatives at one position is merged in
+    # once per alternative, and copying its whole list each time grew
+    # it exponentially. Failure#expected is uniq'd anyway, so this
+    # changes no error, only the work behind it. fail_at itself doesn't
+    # check: it runs far more often, and repeats there grow only
+    # linearly.
+    def merge(pos, expected)
+      expected.each { fail_at(pos, _1) unless pos == @furthest && @expected.include?(_1) }
+    end
 
     # Run the block with fresh failure tracking starting at pos, then
     # restore the outer state, and return the block's result. What the

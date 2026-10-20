@@ -601,11 +601,13 @@ module BirmanRT
       FAIL
     end
 
+    # Skips expectations already recorded at pos, as Context#merge does.
     #: (Integer, Array[String]) -> void
     def merge(pos, expected)
       i = 0
       while i < expected.size
-        fail_at(pos, expected[i])
+        what = expected[i]
+        fail_at(pos, what) unless pos == @furthest && @expected.include?(what)
         i += 1
       end
     end
