@@ -81,6 +81,34 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 `JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
 official toml-test suite), and `Grammar.to_ebnf` to print any grammar.
 
+## Why not a regex?
+
+A Ruby regex can match nested input with `\g<name>`, but it can't
+build the structure (a capture keeps only its last match), and it
+can't say what's wrong when the match fails.
+
+```ruby
+re = /\A(?<l>\[\s*(?:(?:\d+|\g<l>)(?:\s*,\s*(?:\d+|\g<l>))*)?\s*\])\z/
+re.match?("[1, [2, 3], []]")      # => true
+re.match("[1, [2, 3], []]")[:l]   # => "[1, [2, 3], []]"  (just the string back)
+re.match?("[1, [2, 3]")           # => false              (no hint why)
+
+class Lists
+  include Birman::Grammar
+  include Birman::Rules::Whitespace
+  ignore :spacing
+  root :list
+  rule(:list) { seq("[", commit, only(sep_by(item, ",")), "]") }
+  rule(:item) { either(match(/\d+/).map(&:to_i), list) }
+end
+
+Lists.parse("[1, [2, 3], []]")   # => Success([1, [2, 3], []])
+puts Lists.parse("[1, [2, x], []]").message
+# line 1, column 9: expected /\d+/ or "[", found "x"
+#   [1, [2, x], []]
+#           ^
+```
+
 ## Building blocks
 
 | Form                          | Meaning                                              |
@@ -248,11 +276,35 @@ in a grammar with `ignore`, but `str` and `match` stay raw, so skip
 spacing after them yourself if you need to. Matchers are values, so the grammar built
 for one is cached and reused for an equal one.
 
-What needs a grammar class still does: rules (so recursion, and
-`Birman::Rules`), `keywords`, and `.action`/`.check` with methods of
-your own (`large_integer` works). A rule reference, or an action or
-check naming a method of your own, raises `ArgumentError` before
-parsing starts.
+To drop the `Birman.` prefix, mix `Birman::Combinators` into a class
+of your own: `extend` it for matchers held in constants, `include` it
+for matchers built by instance methods.
+
+```ruby
+class Dates
+  extend Birman::Combinators
+  DATE = seq(match(/\d{4}/), "-", match(/\d\d/))
+  def self.parse(s) = Birman.parse(DATE, s)
+end
+Dates.parse("2026-10")  # => Success(["2026", "-", "10"])
+
+class Inst
+  include Birman::Combinators
+  def date = seq(match(/\d{4}/).as(:y), "-", match(/\d\d/).as(:m))
+end
+Birman.parse(Inst.new.date, "2026-10")  # => Success({y: "2026", m: "10"})
+```
+
+The class is just a namespace, not a grammar: matchers have no `parse`
+of their own, so run them with `Birman.parse`, and bare strings skip
+spacing only when you pass `ignore:`.
+
+`rule` and `lexeme` aren't in `Combinators`, so anything named or
+recursive, and `Birman::Rules` (`number`, `identifier`, ...), still
+needs `include Birman::Grammar`; so do `keywords` and `.action`/`.check`
+with methods of your own (`large_integer` works). A rule reference,
+or an action or check naming a method of your own, raises
+`ArgumentError` before parsing starts.
 
 ## Nodes
 
