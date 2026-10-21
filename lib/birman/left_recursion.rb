@@ -4,8 +4,8 @@ module Birman
   # Finds left recursion from a grammar's ASTs ({ rule_name => ast },
   # as Grammar#to_ast returns), without parsing anything: a rule that
   # can call itself, directly or through other rules, before consuming
-  # input would loop forever on some input. Grammar#parse runs it once
-  # per grammar instance. Internal: the answers (which rules are
+  # input would loop forever on some input. Grammar#left_recursion runs
+  # it once per grammar instance, on the first parse or to_ruby. Internal: the answers (which rules are
   # nullable, which rules a rule calls first, the cycles and the rule
   # each is reached through first) are also what left-recursion support
   # would need.
@@ -190,6 +190,9 @@ module Birman
     # text around it allows, replaced by (?:), which matches anywhere:
     # lookarounds, anchors (\A, ^, $, \z, \Z, \G) and \b, \B.
     # Escapes, character classes and comments are copied as they are.
+    # Only /x makes # start a comment; an inline (?x) doesn't, so a "[" or
+    # "(" in such a comment can hide an assertion after it (it's then
+    # taken as written, as before this rewrite).
     module Assertions
       module_function
 
