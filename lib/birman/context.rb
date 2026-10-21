@@ -118,7 +118,9 @@ module Birman
     # time. Meeting the rule again at the same position while it is
     # still being matched means it reaches itself without consuming
     # input: left recursion, which would never terminate. That's a bug
-    # in the grammar, not the input, so it raises.
+    # in the grammar, not the input, so it raises. Grammar#parse already
+    # rejects the left recursion it can see in the grammar's ASTs (see
+    # LeftRecursion); this catches the rest, as through a custom matcher.
     def memoize(name, pos, &)
       table = @memo[name] ||= {}
       entry = table[pos]

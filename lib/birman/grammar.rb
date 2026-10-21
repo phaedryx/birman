@@ -124,23 +124,18 @@ module Birman
     # [method.parse]
     # params = ["input: String"]
     # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
-    # raises = ["ArgumentError for grammar mistakes (no root, undefined rule, left recursion)"]
+    # raises = [
+    #   "ArgumentError on the first parse, whatever the input, for no root rule or left recursion (naming the cycle)",
+    #   "ArgumentError for an undefined rule, when the parse reaches it"
+    # ]
     # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
     def parse(input)
+      left_recursion
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      ctx = Context.new(input, self, ignore_rule)
-      result = Ref.new(root_rule).match(ctx, ctx.start)
-      return Success.new(result.value) if result && result.pos == input.bytesize
-
-      ctx.fail_at(result.pos, "end of input") if result
-      build_failure(input, ctx.furthest, ctx.expected)
-    rescue Committed => e
-      build_failure(input, e.pos, e.expected, committed: true)
-    rescue SystemStackError
-      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
+      match_all(input)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
@@ -161,19 +156,54 @@ module Birman
 
     # { rule_name => ast } for every rule reachable from the root (and
     # the ignore rule), in first-use order.
-    def to_ast
+    def to_ast = reachable_asts { matcher_for(_1).to_ast }
+
+    private
+
+    def match_all(input)
+      ctx = Context.new(input, self, ignore_rule)
+      result = Ref.new(root_rule).match(ctx, ctx.start)
+      return Success.new(result.value) if result && result.pos == input.bytesize
+
+      ctx.fail_at(result.pos, "end of input") if result
+      build_failure(input, ctx.furthest, ctx.expected)
+    rescue Committed => e
+      build_failure(input, e.pos, e.expected, committed: true)
+    rescue SystemStackError
+      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
+    end
+
+    # The grammar's left-call analysis (see LeftRecursion), built on the
+    # first parse. It raises then, and on every parse after, if the
+    # grammar is left-recursive; later parses only read the ivar.
+    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts).check!
+
+    # As to_ast, leaving out what it can't describe: undefined rules
+    # (the parse reports them if it gets there) and rules using a
+    # matcher with no to_ast. The analysis takes those to consume input.
+    def analyzable_asts
+      reachable_asts do |name|
+        next unless respond_to?(:"__rule_#{name}", true)
+
+        matcher_for(name).to_ast
+      rescue NoMethodError => e
+        raise unless e.name == :to_ast
+      end
+    end
+
+    # { rule_name => yield(rule_name) } for every rule reachable from the
+    # root and the ignore rule, in first-use order, skipping nil results.
+    def reachable_asts
       rules = {}
       queue = [root_rule, ignore_rule].compact
       while (name = queue.shift)
         next if rules.key?(name)
 
-        rules[name] = matcher_for(name).to_ast
+        rules[name] = yield(name)
         queue.concat(AST.refs(rules[name]))
       end
-      rules
+      rules.compact
     end
-
-    private
 
     # Kernel#Integer(value, base), for actions: use it instead of Integer
     # or String#to_i in a grammar you'll generate a parser from (see
