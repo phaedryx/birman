@@ -104,20 +104,27 @@ module Birman
     # The parts up to and including the first that consumes input.
     def leading(parts) = parts.take((parts.index { !nullable_node?(_1) } || parts.size) + 1)
 
-    # Approximate: the regexp is rebuilt from its inspect form and tried
-    # on "". Anchors and lookaround see the text around a position, so
-    # /\A/ counts as nullable though it only matches at the start, and
-    # /(?<=a)b?/ and /(?=a)/ don't though they match empty next to an
-    # "a". A pattern that can't be rebuilt is assumed to consume.
+    # The regexp is rebuilt from its inspect form and tried on "" with
+    # every assertion (see Assertions) taken to hold, since each holds
+    # somewhere: /(?=a)/ matches empty before an "a", though not in "".
+    # That overestimates: /(?=a)(?!a)/ counts as nullable though it never
+    # matches. A pattern that can't be rebuilt is assumed to consume.
     def nullable_pattern?(source)
-      @patterns.fetch(source) { @patterns[source] = pattern(source)&.match?("") || false }
+      @patterns.fetch(source) do
+        body, flags = %r{\A/(.*)/([a-z]*)\z}m.match(source)&.captures
+        @patterns[source] = body ? empty_match?(body, flags.chars.sum { FLAGS.fetch(_1, 0) }) : false
+      end
     end
 
-    def pattern(source)
-      body, flags = %r{\A/(.*)/([a-z]*)\z}m.match(source)&.captures
-      body && Regexp.new(body, flags.chars.sum { FLAGS.fetch(_1, 0) })
-    rescue RegexpError
-      nil
+    # Falls back to the regexp as written when taking out its assertions
+    # breaks it (a \1 naming a group inside a lookahead).
+    def empty_match?(body, options)
+      [Assertions.strip(body, options.anybits?(Regexp::EXTENDED)), body].each do |source|
+        return Regexp.new(source, options).match?("")
+      rescue RegexpError
+        next
+      end
+      false
     end
 
     def cyclic?(rules) = rules.size > 1 || left_calls(rules.first).include?(rules.first)
@@ -172,6 +179,60 @@ module Birman
       names = [name]
       names.unshift(from[names.first]) while from.key?(names.first)
       names
+    end
+
+    # A regexp's source with each assertion, which matches only where the
+    # text around it allows, replaced by (?:), which matches anywhere:
+    # lookarounds, anchors (\A, ^, $, \z, \Z, \G) and \b, \B.
+    # Escapes, character classes and comments are copied as they are.
+    module Assertions
+      module_function
+
+      def strip(source, extended)
+        scanner = StringScanner.new(source)
+        out = +""
+        out << piece(scanner, extended) until scanner.eos?
+        out
+      end
+
+      # The next piece of the source, rewritten.
+      def piece(s, extended) # rubocop:disable Metrics
+        if s.skip(/\\[bBAzZG]|[\^$]/) then "(?:)"
+        elsif s.skip(/\(\?<?[=!]/) then skip_group(s, extended)
+        elsif s.scan(/\\./m) || s.scan(/\(\?#[^)]*\)/) then s.matched
+        elsif s.skip(/\[/) then character_class(s)
+        elsif extended && s.scan(/#[^\n]*/) then s.matched
+        else s.getch
+        end
+      end
+
+      # The rest of a lookaround, after its "(?=" (or "(?!", "(?<=", "(?<!").
+      def skip_group(s, extended)
+        depth = 1
+        until depth.zero? || s.eos?
+          case piece(s, extended)
+          when "(" then depth += 1
+          when ")" then depth -= 1
+          end
+        end
+        "(?:)"
+      end
+
+      # A character class (nested ones included), after its "[". A "]"
+      # right after "[" or "[^" is a character, not the end.
+      def character_class(s)
+        start = s.pos - 1
+        s.skip(/\^?\]?/)
+        depth = 1
+        while depth.positive? && !s.eos?
+          if s.skip(/\\./m) then next
+          elsif s.skip(/\[/) then depth += 1
+          elsif s.skip(/\]/) then depth -= 1
+          else s.getch
+          end
+        end
+        s.string.byteslice(start, s.pos - start)
+      end
     end
   end
 end

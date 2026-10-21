@@ -478,13 +478,17 @@ class CompilerTest < Minitest::Test
     assert_equal "left recursion: :top -> :top (each rule can call the next without consuming input)", error.message
   end
 
-  # /(?=y)/ matches empty only before a "y", so the static check, which
-  # tries patterns on "", takes it to consume input.
+  # An empty literal is a lexeme, so it runs the ignore rule where it
+  # starts, a call no AST shows: the static check can't see :sp -> :top
+  # -> :sp, but the generated parser still stops.
   def test_left_recursion_the_static_check_misses_raises_like_the_interpreter
-    g = grammar { rule(:top) { (match(/(?=y)/) >> top >> "x") | str("y") } }
+    g = grammar(ignore: :sp) do
+      rule(:top) { seq("", "x") }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
     parser = Differential.load(g, "CompilerTestParser")
-    error = assert_raises(ArgumentError) { parser.new("yx").parse }
-    assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message
+    error = assert_raises(ArgumentError) { parser.new("x").parse }
+    assert_equal "left recursion in rule :sp: it can reach itself without consuming input", error.message
   end
 
   # --- Shape of the generated code ---

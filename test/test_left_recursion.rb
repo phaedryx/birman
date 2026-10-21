@@ -99,6 +99,14 @@ class TestLeftRecursion < Minitest::Test
     refute_left_recursion g
   end
 
+  def test_left_recursion_behind_patterns_that_only_look
+    [/(?=y)/, /(?!y)/, /(?<=y)/, /(?<!y)z?/, /\b/, /\B/, /\G/, /\Z/, /^/, /$/].each do |re|
+      g = grammar { rule(:top) { either("x", seq(match(re), top, "!")) } }
+      error = assert_raises(ArgumentError, re.inspect) { g.parse("x") }
+      assert_match(/left recursion: :top -> :top/, error.message, re.inspect)
+    end
+  end
+
   def test_left_recursion_behind_lookaheads
     g = grammar { rule(:top) { either("x", seq(match(/y/).absent, top, "!")) } }
     assert_left_recursion ":top -> :top", g
@@ -272,7 +280,8 @@ class TestLeftRecursion < Minitest::Test
 
   def test_nullability_of_each_node_type
     nullable = [
-      [:str, ""], [:pat, "/ */"], [:pat, "/a?/i"], [:pat, "/\\A/"],
+      [:str, ""], [:pat, "/ */"], [:pat, "/a?/i"], [:pat, "/\\A/"], [:pat, "/(?=a)/"],
+      [:pat, "/(?<!a)b?/"], [:pat, "/(?=(?:a|[)]))\\b/"], [:pat, "/(?!a)*/"], [:pat, "/(?=a) # x\n/x"],
       [:seq, nil, []], [:seq, 1, [[:str, ""], [:rep, 0, nil, [:str, "a"]]]],
       [:choice, [[:str, "a"], [:str, ""]]],
       [:rep, 0, nil, [:str, "a"]], [:rep, 0, 1, [:str, "a"]], [:rep, 2, nil, [:pat, "/a*/"]],
@@ -280,7 +289,9 @@ class TestLeftRecursion < Minitest::Test
       [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]]
     ]
     non_nullable = [
-      [:str, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"], [:pat, "/(?!)/"],
+      [:str, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
+      [:pat, "/(?=a)a/"], [:pat, "/a(?!b)/"], [:pat, "/[(?=]/"], [:pat, "/\\(?=a/"], [:pat, "/[\\]^]/"],
+      [:pat, "/\\\\b/"], [:pat, "/a # (?=b) [\n/x"], [:pat, "/(?#(?=)a/"], [:pat, "/(?=(a))\\1/"],
       [:seq, nil, [[:str, ""], [:str, "a"]]], [:choice, [[:str, "a"], [:str, "b"]]], [:choice, []],
       [:rep, 1, nil, [:str, "a"]], [:both, [:str, ""], [:str, "a"]],
       [:action, [:str, "a"]], [:label, "x", [:str, "a"]], [:check, "x", [:str, "a"]], [:quiet, [:str, "a"]]
