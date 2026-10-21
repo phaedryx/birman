@@ -57,6 +57,11 @@
   - `.means(v)` replaces the value with `v`: `lit("null").means(nil)`.
 
   `.map { }` blocks still work.
+- **Fixed:** a lexeme (and a literal) skips the ignore rule of the
+  grammar running it, as a bare string always has. Before, it kept the
+  ignore rule of wherever it was built: none when built outside a
+  grammar, another grammar's when reused, and a parent's old one in a
+  subclass that had already parsed when the parent's `ignore` changed.
 - **Fixed:** `parse` raised ArgumentError on invalid UTF-8 (from the
   regexps). It's now a Failure at the first invalid byte, with
   `reason` "invalid UTF-8" (or "invalid US-ASCII", and so on, for input

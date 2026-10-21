@@ -38,7 +38,7 @@ module Birman
     # returns = "nil"
     # side_effects = ["Defines a rule that skips trailing spacing via the grammar's ignore rule"]
     def lexeme(name, &body)
-      rule(name) { Lexeme.new(Birman.coerce(instance_exec(&body)), ignore_rule) }
+      rule(name) { Lexeme.new(Birman.coerce(instance_exec(&body))) }
     end
 
     private
