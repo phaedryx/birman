@@ -259,6 +259,9 @@ module Birman
 
     def open? = @open
 
+    # Data#with rebuilds through initialize, which would close the copy.
+    def with(**changes) = changes.empty? ? self : Seq.new(open: open?, **to_h, **changes)
+
     def match(ctx, pos)
       values = Array.new(parts.size)
       parts.each_with_index do |part, i|

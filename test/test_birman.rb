@@ -887,6 +887,18 @@ class BirmanTest < Minitest::Test
     assert g.parse("abx").committed
   end
 
+  def test_copies_of_a_seq_compose_as_it_does
+    a, b, c = %w[a b c].map { Birman::Str.new(_1) }
+    chain = a >> b
+    [chain.with(commit_at: nil), chain.dup, chain.clone].each do |copy|
+      assert_equal Birman::Seq.new([a, b, c]), copy >> c
+      assert_equal 3, (copy >> c).parts.size, "#{copy.inspect} stays open"
+    end
+    assert_equal 2, (Birman::Seq.new([a, b]).with(commit_at: nil) >> c).parts.size, "and a closed one closed"
+    refute chain.with(open: false).open?
+    assert_same chain, chain.with
+  end
+
   def test_sequence_operators_keep_a_seq_built_otherwise_whole
     g = grammar { rule(:top) { seq(str("a"), str("b")) >> str("c") } }
     assert_equal [%w[a b], "c"], g.parse!("abc"), "the same as seq(seq(a, b), c)"
