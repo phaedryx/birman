@@ -179,9 +179,18 @@ class TestLeftRecursion < Minitest::Test
     assert g.parse("x!x").success?
   end
 
-  def test_a_new_instance_is_checked_too
+  def test_each_instance_is_checked
     g = grammar { rule(:top) { either("x", seq(top, "!")) } }
     assert_raises(ArgumentError) { g.new.parse("x") }
+    assert_raises(ArgumentError) { g.new.parse("x") }
+  end
+
+  def test_the_analysis_runs_once_per_instance
+    g = grammar { rule(:top) { either(seq("x", "!", top), "x") } }.new
+    g.parse("x")
+    analysis = g.instance_variable_get(:@left_recursion)
+    g.parse("x!x")
+    assert_same analysis, g.instance_variable_get(:@left_recursion)
   end
 
   def test_no_root_rule_is_still_reported
@@ -220,11 +229,15 @@ class TestLeftRecursion < Minitest::Test
   end
 
   def test_the_example_grammars_are_not_left_recursive
-    [Calc::Grammar, JSONExample::Grammar, QueryExample::Grammar, TOMLExample::Grammar,
-     EmailExample::Grammar].each do |g|
-      Birman::LeftRecursion.new(g.to_ast).check!
+    examples = {
+      Calc::Grammar => "1 + 2 * (3 - 4)", JSONExample::Grammar => '{"a": [1, true]}',
+      QueryExample::Grammar => "title:cat dog", TOMLExample::Grammar => "a = 1\n[t]\nb = 'x'\n",
+      EmailExample::Grammar => "a@example.com"
+    }
+    examples.each do |g, input|
+      assert g.new.parse(input).success?, g.name
+      assert_empty Birman::LeftRecursion.new(g.to_ast).cycles, g.name
     end
-    pass
   end
 
   def test_matchers_without_an_ast_are_skipped
@@ -235,6 +248,17 @@ class TestLeftRecursion < Minitest::Test
     end
     g = grammar { rule(:top) { seq(custom.new(1), "!") } }
     assert_equal [1, "!"], g.parse!("x!")
+  end
+
+  def test_left_recursion_hidden_by_a_custom_matcher_is_still_caught_while_parsing
+    nothing = Data.define do
+      include Birman::Matcher
+
+      def match(_ctx, pos) = Birman::Match.new(pos, nil)
+    end
+    g = grammar { rule(:top) { either(seq(nothing.new, top, "!"), "x") } }
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message
   end
 
   def test_an_undefined_rule_is_still_reported_only_when_reached

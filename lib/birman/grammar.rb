@@ -180,14 +180,16 @@ module Birman
 
     # As to_ast, leaving out what it can't describe: undefined rules
     # (the parse reports them if it gets there) and rules using a
-    # matcher with no to_ast. The analysis takes those to consume input.
+    # matcher with no to_ast. The analysis takes those to consume input
+    # and to call nothing, so a cycle through one is left to
+    # Context#memoize, and rules only it refers to aren't analyzed.
     def analyzable_asts
       reachable_asts do |name|
         next unless respond_to?(:"__rule_#{name}", true)
 
         matcher_for(name).to_ast
       rescue NoMethodError => e
-        raise unless e.name == :to_ast
+        raise unless e.name == :to_ast && e.receiver.is_a?(Matcher)
       end
     end
 
