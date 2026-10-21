@@ -59,6 +59,12 @@ class StandaloneTest < Minitest::Test
     assert B.parse(m, "let x = 1").failure?, "no ignore, no spacing"
   end
 
+  def test_lexemes_built_outside_a_grammar_skip_the_ignore_matcher
+    word = Birman::Lexeme.new(B.match(/\w+/))
+    assert_equal %w[a b], B.parse!(B.seq(word, word), "a  b ", ignore: /\s*/)
+    assert B.parse(B.seq(word, word), "a b").failure?, "no ignore, no spacing"
+  end
+
   def test_ignore_accepts_any_matcher
     spacing = B.either(B.match(/\s+/), B.match(/#[^\n]*/)).rep
     assert_equal %w[a b], B.parse!(B.seq("a", "b"), "a # one\n b # two", ignore: spacing)
