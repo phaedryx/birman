@@ -79,7 +79,10 @@ end
 See `examples/calc.rb` for a complete small language with an
 interpreter, `examples/json.rb` for a full JSON parser (tested against
 `JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
-official toml-test suite), and `Grammar.to_ebnf` to print any grammar.
+official toml-test suite), `examples/query.rb` for a GitHub-style
+search query (lookahead, implicit AND, a custom error formatter) with
+an evaluator that filters records, and `Grammar.to_ebnf` to print any
+grammar.
 
 ## Why not a regex?
 
@@ -495,6 +498,7 @@ ruby examples/calc.rb
 ruby examples/json.rb
 ruby examples/email.rb
 ruby examples/toml.rb
+ruby examples/query.rb
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them);
                     # also to_ruby, and its Spinel binary if Spinel is found
 ```
