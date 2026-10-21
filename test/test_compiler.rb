@@ -418,7 +418,7 @@ class CompilerTest < Minitest::Test
 
   def test_unread_values_are_not_kept
     source = Calc::Grammar.to_ruby(namespace: "X")
-    refute_match(/@v_spacing\b|@mv_spacing\b|@mv_reserved_word\b|@mv_comment\b/, source)
+    refute_match(/@v_ref_spacing\b|@mv_spacing\b|@mv_reserved_word\b|@mv_comment\b/, source)
     assert_match(/@mv_expr\b/, source)
   end
 

@@ -65,11 +65,7 @@ module Birman
           @rules[name] = compile_rule(name)
           queue.concat(@pending)
         end
-        clash = @actions.names.find { @taken.key?(_1.to_s) || @rules.key?(_1) }
-        raise Error, "the grammar method #{clash} would clash with a generated method" if clash
-
-        shared = (@actions.constant_names & @nodes.names).first
-        raise Error, "#{shared} is both a node class and a constant copied actions read" if shared
+        refuse_clashes
       end
 
       def node_classes = @nodes.sources
@@ -86,6 +82,17 @@ module Birman
 
       def ignore_rule = @grammar.class.ignore
 
+      def refuse_clashes
+        met = @rules.keys.group_by { ident(_1) }.values.find { _1.size > 1 }
+        raise Error, "rules #{met.map(&:inspect).join(" and ")} would have one name in the generated parser" if met
+
+        clash = @actions.names.find { @taken.key?(_1.to_s) || @rules.key?(_1) }
+        raise Error, "the grammar method #{clash} would clash with a generated method" if clash
+
+        shared = (@actions.constant_names & @nodes.names).first
+        raise Error, "#{shared} is both a node class and a constant copied actions read" if shared
+      end
+
       # A rule's name as part of a Ruby identifier: rule(:valid?) is ref_valid_3f.
       def ident(name) = name.to_s.gsub(/[^A-Za-z0-9_]/) { format("_%02x", _1.ord) }
 
@@ -100,7 +107,7 @@ module Birman
         end
         want = @valued.include?(name)
         call = compile_matcher(matcher, want, "rule_#{ident(name)}")
-        @values["@v_#{ident(name)}"] = @types.initial(Ref.new(name)) if want
+        @values["@v_ref_#{ident(name)}"] = @types.initial(Ref.new(name)) if want
         call
       end
 
@@ -161,8 +168,11 @@ module Birman
         Call.new(name, value || ivar)
       end
 
-      # name, or name with a number added if it's taken.
+      # name, or name with a number added if it's taken. ref_ and skip_
+      # names (and @v_ref_ values) are the rules' own (see ref_method and
+      # skip_method), so a part of rule :ref is rule_ref_seq, not ref_seq.
       def claim(name)
+        name = "rule_#{name}" if name.start_with?("ref_", "skip_")
         candidate = name
         n = 1
         candidate = "#{name}#{n += 1}" while @taken.key?(candidate)
@@ -667,7 +677,7 @@ module Birman
       def ref(matcher, want)
         @pending << matcher.name
         @read_rules |= [matcher.name] if want
-        Call.new("ref_#{ident(matcher.name)}", want ? "@v_#{ident(matcher.name)}" : nil)
+        Call.new("ref_#{ident(matcher.name)}", want ? "@v_ref_#{ident(matcher.name)}" : nil)
       end
 
       # --- The rest of the Parser ---
@@ -695,7 +705,7 @@ module Birman
             init_memos
           #{indent(start)}
             q = ref_#{ident(root)}(start)
-            return Success.new(@v_#{ident(root)}) if q == @len
+            return Success.new(@v_ref_#{ident(root)}) if q == @len
 
             fail_at(q, "end of input") if q != FAIL
             failure(@furthest, @expected, false)
@@ -749,7 +759,7 @@ module Birman
             q = @mp_#{id}[p]
             unless q.nil? || q == ABSENT
               left_recursion(#{name.to_s.inspect}) if q == IN_PROGRESS
-          #{"    @v_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
+          #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
               merge(@mf_#{id}[p], @me_#{id}[p])
               return q
             end
@@ -769,7 +779,7 @@ module Birman
             @furthest = of
             @expected = oe
             @mp_#{id}[p] = q
-          #{indent("if q != FAIL\n  @v_#{id} = #{call.value || "nil"}\n  @mv_#{id}[p] = @v_#{id}\nend").chomp if valued}
+          #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @mv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
             @mf_#{id}[p] = f
             @me_#{id}[p] = ex
             merge(f, ex)

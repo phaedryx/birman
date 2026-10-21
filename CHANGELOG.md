@@ -102,6 +102,20 @@
   3^n (a 16-deep grammar took 7 seconds). Merging one in now skips
   expectations already recorded, in the interpreter and in generated
   parsers; `Failure#expected` and error messages are unchanged.
+- **Fixed:** a rule named after a private helper of one of Birman's
+  rule modules (`Rules::Strings`'s `decode_escape`) silently replaced
+  it; it now raises `ArgumentError`, as Grammar's and Combinators'
+  private methods already did, and a test lists every private method
+  Birman gives a grammar, so a new one can't slip through. The error
+  now says why the name is taken: a method Birman relies on, one every
+  Ruby object has, or one of the grammar's own.
+- **Fixed:** generated parsers called the wrong method when a rule
+  named `ref` or `skip` had a part named like another rule's method
+  (rule `:ref`'s choice was `ref_pat`, as was rule `:pat`'s entry), and
+  kept a rule's value in the same variable as a part of another rule
+  (`:a_pat`'s and `:a`'s `a_pat`). Rules whose names meet in the
+  generated parser (`:a?` and `:a_3f`) are refused, and copied action
+  methods can no longer replace the runtime's `input` or `invalid_input`.
 - The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
   `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
   blocks. EBNF output is unchanged; about 4% fewer allocations per

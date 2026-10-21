@@ -44,15 +44,28 @@ module Birman
     private
 
     # A rule named after a method the grammar relies on (send, class,
-    # match, token...) would silently replace it. Redefining a rule is
-    # fine, and so are private Kernel names like print or select.
+    # match, token, or a private helper in any of Birman's modules) would
+    # silently replace it. Redefining a rule is fine, and so are private
+    # Kernel names like print or select, and the grammar's own private
+    # helpers: those are the grammar's to replace.
     def check_rule_name!(name)
       return if private_method_defined?(:"__rule_#{name}")
 
-      owner = [Object, Combinators, Grammar].find { _1.public_method_defined?(name) } ||
-              [Combinators, Grammar].find { _1.private_method_defined?(name) } ||
+      birman = [Object, Combinators, Grammar] | ancestors.select { _1.name&.start_with?("Birman::") }
+      owner = birman.find { _1.public_method_defined?(name) } ||
+              (birman - [Object]).find { _1.private_method_defined?(name, false) } ||
               (instance_method(name).owner if method_defined?(name))
-      raise ArgumentError, "rule :#{name} would replace #{owner}##{name}; give the rule another name" if owner
+      return unless owner
+
+      raise ArgumentError, "rule :#{name} would replace #{owner}##{name}, #{why_taken(owner, birman)}, " \
+                           "since rules are methods too; give the rule another name"
+    end
+
+    def why_taken(owner, birman)
+      if owner == Object then "a method every Ruby object has"
+      elsif birman.include?(owner) then "which Birman relies on"
+      else "a method of this grammar"
+      end
     end
   end
 end
