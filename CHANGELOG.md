@@ -8,6 +8,27 @@
   matcher that refers to a rule, or whose `.action`/`.check` names a
   method only a grammar of your own would have, raises `ArgumentError`
   before parsing.
+- **Changed:** a chain of `>>` builds one seq, however it's grouped,
+  so `a.as(:x) >> (b.as(:y) >> c.as(:z))` now gives `{x:, y:, z:}`
+  like `(a.as(:x) >> b.as(:y)) >> c.as(:z)`. A seq built any other way
+  (`seq(...)`, or with a `commit` or `only`) is one part on either side
+  of `>>` or `>`, as in `seq(x, y)`: `(seq(a, commit, b) >> c) | d`
+  backtracks when `c` fails instead of committing to it,
+  `seq("[", only(x), "]") >> y` keeps `y`, a stored
+  `pair = seq(k.as(:k), v.as(:v))` gives `pair >> z` as
+  `[{k:, v:}, z]`, and `seq(a, b) >> c` is `[[a, b], c]` rather than
+  `[a, b, c]`.
+- **Changed:** names can't be dropped silently. The same `.as` name
+  twice in one `seq`, or a `seq` of named parts or a `.captures`
+  (seen through `maybe`, `label`, `quiet`, `check`, `&`, `either`,
+  `between` and `only`, but not `rep`, `sep_by` or a transform) inside
+  a `seq` whose value would drop it, raises `ArgumentError` when the
+  matcher is built. Name
+  the inner seq with `.as`, or list its parts in the outer one. A rule
+  reference still keeps its names to itself.
+- **Added:** `either` passes on a name all its alternatives share:
+  `seq(either(a.as(:x), b.as(:x)), c.as(:y))` gives `{x:, y:}`.
+  Generated parsers agree.
 - **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
   parser, as Ruby source Spinel can compile to a native binary, that
   agrees with `parse` on values, spans and errors. Differential tests

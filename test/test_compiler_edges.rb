@@ -258,6 +258,14 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["1", "1+2", "1+"]
   end
 
+  def test_a_name_shared_by_every_alternative_of_a_choice
+    g = grammar do
+      rule(:top) { either(pair.to(Pair), seq(either(str("a").as(:left), str("b").as(:left)), str("c").as(:right))) }
+      rule(:pair) { seq(either(match(/\d/).as(:left), str("x").as(:left)), "=", match(/\d/).as(:right)) }
+    end
+    assert_same_results g, ["1=2", "x=3", "ac", "bc", "b", "1="]
+  end
+
   def test_to_over_refs_choices_and_actions
     g = grammar do
       rule(:top) { either(pair.to(Pair), named.to(Pair), match(/\w/).action(:hashed).to(Wrap)) }

@@ -17,6 +17,8 @@ class BirmanTest < Minitest::Test
 
   def top_matcher(grammar) = grammar.new.matcher_for(:top)
 
+  def seq_of_names = Birman::Seq.new([Birman::Str.new("a").as(:x), Birman::Str.new("b").as(:y)])
+
   # --- Matchers ---
 
   def test_sequence_choice_and_repetition
@@ -816,6 +818,114 @@ class BirmanTest < Minitest::Test
   def test_named_parts_make_a_hash
     g = grammar { rule(:top) { seq("[", match(/\d+/).as(:n), ",", match(/\d+/).as(:m), "]") } }
     assert_equal({ n: "1", m: "2" }, g.parse!("[1,2]"))
+  end
+
+  def test_a_name_used_twice_in_a_seq_raises
+    g = grammar { rule(:top) { seq(str("a").as(:x), str("b").as(:x)) } }
+    error = assert_raises(ArgumentError) { g.parse("ab") }
+    assert_match(/:x/, error.message)
+  end
+
+  def test_either_passes_on_a_name_all_its_alternatives_share
+    g = grammar { rule(:top) { seq(either(str("a").as(:x), str("b").as(:x)), str("c").as(:y)) } }
+    assert_equal({ x: "b", y: "c" }, g.parse!("bc"))
+
+    g = grammar { rule(:top) { seq(either(str("a").as(:x), str("b").as(:w)), str("c").as(:y)) } }
+    assert_equal({ y: "c" }, g.parse!("bc"), "alternatives named differently pass on no name")
+
+    g = grammar { rule(:top) { seq(either(str("a").as(:x), str("b").as(:x)), str("c").as(:x)) } }
+    assert_raises(ArgumentError) { g.parse("ac") }
+  end
+
+  def test_a_nested_seq_whose_names_would_be_dropped_raises
+    error = assert_raises(ArgumentError) do
+      grammar { rule(:top) { seq(seq(str("a").as(:x), str("b").as(:y)), str("c").as(:z)) } }.parse("abc")
+    end
+    assert_match(/:x, :y/, error.message)
+
+    g = grammar { rule(:top) { seq(seq(str("a").as(:x)).label("ax"), str("c").as(:z)) } }
+    assert_raises(ArgumentError, "names are seen through labels") { g.parse("ac") }
+
+    g = grammar { rule(:top) { seq(str("[").as(:open), only(seq(str("a").as(:x))), "]") } }
+    assert_raises(ArgumentError) { g.parse("[a]") }
+
+    [
+      seq_of_names.maybe, seq_of_names.quiet, Birman::Str.new("a").present & seq_of_names,
+      Birman::Choice.new([seq_of_names, Birman::Str.new("b")]), Birman::Pat.new(/(?<x>a)b/).captures
+    ].each do |part|
+      g = grammar { rule(:top) { seq(part, str("c").as(:z)) } }
+      assert_raises(ArgumentError, part.inspect) { g.parse("abc") }
+    end
+  end
+
+  def test_a_nested_seq_keeps_its_names_where_nothing_drops_them
+    g = grammar { rule(:top) { seq(seq(str("a").as(:x), str("b").as(:y)).as(:p), str("c").as(:z)) } }
+    assert_equal({ p: { x: "a", y: "b" }, z: "c" }, g.parse!("abc"))
+
+    g = grammar { rule(:top) { seq(seq(str("a").as(:x), str("b").as(:y)), str("c")) } }
+    assert_equal [{ x: "a", y: "b" }, "c"], g.parse!("abc")
+
+    g = grammar do
+      rule(:top) { seq(pair, str("c").as(:z)) }
+      rule(:pair) { seq(str("a").as(:x), str("b").as(:y)) }
+    end
+    assert_equal({ z: "c" }, g.parse!("abc"), "a rule's names stay inside the rule")
+  end
+
+  def test_a_chain_of_sequence_operators_is_one_seq
+    a, b, c = %w[a b c].map { Birman::Str.new(_1) }
+    assert_equal Birman::Seq.new([a, b, c]), (a >> b) >> c
+    assert_equal Birman::Seq.new([a, b, c]), a >> (b >> c)
+
+    x, y, z = %w[a b c].zip(%i[x y z]).map { |text, key| Birman::Str.new(text).as(key) }
+    [(x >> y) >> z, x >> (y >> z), x > (y >> z), (x >> y) > z].each do |m|
+      assert_equal({ x: "a", y: "b", z: "c" }, grammar { rule(:top) { m } }.parse!("abc"), m.inspect)
+    end
+
+    g = grammar { rule(:top) { str("a") > str("b").as(:y) >> str("c").as(:z) } }
+    assert_equal({ y: "b", z: "c" }, g.parse!("abc"))
+    assert g.parse("abx").committed
+  end
+
+  def test_copies_of_a_seq_compose_as_it_does
+    a, b, c = %w[a b c].map { Birman::Str.new(_1) }
+    chain = a >> b
+    [chain.with(commit_at: nil), chain.dup, chain.clone].each do |copy|
+      assert_equal Birman::Seq.new([a, b, c]), copy >> c
+      assert_equal 3, (copy >> c).parts.size, "#{copy.inspect} stays open"
+    end
+    assert_equal 2, (Birman::Seq.new([a, b]).with(commit_at: nil) >> c).parts.size, "and a closed one closed"
+    refute chain.with(open: false).open?
+    assert_same chain, chain.with
+  end
+
+  def test_sequence_operators_keep_a_seq_built_otherwise_whole
+    g = grammar { rule(:top) { seq(str("a"), str("b")) >> str("c") } }
+    assert_equal [%w[a b], "c"], g.parse!("abc"), "the same as seq(seq(a, b), c)"
+
+    g = grammar { rule(:top) { (seq(str("a"), commit, str("b")) >> str("c")) | str("abd") } }
+    assert_equal "abd", g.parse!("abd"), "the commit stays inside the left seq"
+
+    g = grammar { rule(:top) { (str("a") >> seq(str("b"), commit, str("c"))) | str("ad") } }
+    assert_equal "ad", g.parse!("ad"), "and inside the right one"
+
+    g = grammar { rule(:top) { (str("a") > str("b")) >> str("c") } }
+    assert_equal [%w[a b], "c"], g.parse!("abc"), "a > b is closed by its commit"
+
+    g = grammar { rule(:top) { seq("[", only(match(/\d/)), "]") >> str("y") } }
+    assert_equal %w[1 y], g.parse!("[1]y"), "only(...) still picks within its own seq"
+
+    pair = seq_of_names
+    assert_equal [{ x: "a", y: "b" }, "c"], grammar { rule(:top) { pair >> str("c") } }.parse!("abc")
+    assert_equal grammar { rule(:top) { seq(pair, commit, str("c")) } }.parse!("abc"),
+                 grammar { rule(:top) { pair > str("c") } }.parse!("abc")
+  end
+
+  def test_sequence_operators_raise_where_a_closed_seq_would_lose_names
+    x, y, z = %w[a b c].map { Birman::Str.new(_1).as(_1.to_sym) }
+    assert_raises(ArgumentError) { seq_of_names >> z }
+    assert_raises(ArgumentError) { x >> seq_of_names }
+    assert_raises(ArgumentError) { (x > y) >> z }
   end
 
   def test_as_sees_through_labels

@@ -107,9 +107,21 @@ official toml-test suite), and `Grammar.to_ebnf` to print any grammar.
 | `.label("name")`              | "expected name" in errors                            |
 | `.quiet`                      | never mention in errors                              |
 
+A name used twice in one `seq` raises `ArgumentError`, and so does a
+`seq` of named parts (or `match(re).captures`) inside another whose
+value would drop it, even through `maybe`, `label`, `either` and the
+like: list the parts in the outer `seq`, or name the inner one,
+`seq(...).as(:pair)`. A name every alternative of an `either` shares
+passes outward; alternatives named differently pass on none. A rule
+keeps its names to itself, so using one inside a `seq` is always fine.
+
 The operator forms still work for short rules: `a >> b` (sequence),
 `a | b` (choice), `a & b` (guard), `a > b` (commit). Precedence, tightest
-first: `>>`, `&`, `|`, `>`.
+first: `>>`, `&`, `|`, `>`. A chain of `>>` is one sequence:
+`a.as(:x) >> b.as(:y) >> c.as(:z)` is `seq(a.as(:x), b.as(:y), c.as(:z))`,
+however it's grouped, and `a > b >> c` is `seq(a, commit, b, c)`. A seq
+built any other way (by `seq(...)`, or with a commit or `only`) stays
+one part, as it would in `seq`: `pair >> c` is `seq(pair, c)`.
 
 ## Literals, spacing, and lexemes
 

@@ -116,4 +116,12 @@ class StandaloneTest < Minitest::Test
     assert_equal pair.new(key: "a", value: 1), result
     assert_equal "a= 1", result.span.text
   end
+
+  def test_seq_and_sequence_operators_compose_as_in_a_grammar
+    x, y, z = %w[a b c].zip(%i[x y z]).map { |text, key| B.str(text).as(key) }
+    assert_equal({ x: "a", y: "b", z: "c" }, B.parse!(x >> (y >> z), "abc"), "a >> chain is one seq")
+    assert_equal [%w[a b], "c"], B.parse!(B.seq(B.str("a"), B.str("b")) >> B.str("c"), "abc"), "a seq(...) is one part"
+    assert_raises(ArgumentError) { B.seq(x, y) >> z }
+    assert_equal "abd", B.parse!((B.seq(B.str("a"), B.commit, B.str("b")) >> B.str("c")) | B.str("abd"), "abd")
+  end
 end
