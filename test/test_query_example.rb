@@ -153,4 +153,65 @@ class TestQueryExample < Minitest::Test
     error = assert_raises(Birman::ParseError) { G.parse!("bug OR", formatter: QueryExample::ErrorFormatter.new) }
     assert_equal "bug OR\n      ^ expected search term, found end of query", error.message
   end
+
+  WHERE = QueryExample::Where.new(
+    columns: { "status" => "status", "label" => "label", "created" => "issues.created_at", "comments" => "comments" },
+    text_columns: %w[title]
+  )
+
+  LIKE = "LOWER(title) LIKE ? ESCAPE '!'"
+
+  WHERES = {
+    "status:open" => ["status = ?", "open"],
+    "comments:>=3" => ["comments >= ?", 3],
+    "comments:<10" => ["comments < ?", 10],
+    "created:>2026-01-01" => ["issues.created_at > ?", Date.new(2026, 1, 1)],
+    "comments:3..10" => ["comments BETWEEN ? AND ?", 3, 10],
+    "created:2026-01-01..2026-03-31" => ["issues.created_at BETWEEN ? AND ?", Date.new(2026, 1, 1),
+                                         Date.new(2026, 3, 31)],
+    "Bug" => [LIKE, "%bug%"],
+    '"parse error"' => [LIKE, "%parse error%"],
+    "-label:wontfix" => ["NOT COALESCE(label = ?, FALSE)", "wontfix"],
+    "status:open -label:wontfix" => ["status = ? AND NOT COALESCE(label = ?, FALSE)", "open", "wontfix"],
+    "a OR b OR c" => ["#{LIKE} OR #{LIKE} OR #{LIKE}", "%a%", "%b%", "%c%"],
+    "a b OR c" => ["(#{LIKE} AND #{LIKE}) OR #{LIKE}", "%a%", "%b%", "%c%"],
+    "a (b OR c)" => ["#{LIKE} AND (#{LIKE} OR #{LIKE})", "%a%", "%b%", "%c%"],
+    "-(a OR b)" => ["NOT COALESCE(#{LIKE} OR #{LIKE}, FALSE)", "%a%", "%b%"],
+    "status:open comments:1..2" => ["status = ? AND comments BETWEEN ? AND ?", "open", 1, 2],
+    # Values are always binds, never part of the SQL.
+    %(status:"'; DROP TABLE issues; --") => ["status = ?", "'; DROP TABLE issues; --"],
+    "status:a?b" => ["status = ?", "a?b"],
+    "why?" => [LIKE, "%why?%"]
+  }.freeze
+
+  def test_where_compiles_queries_to_sql_with_binds
+    WHERES.each do |query, expected|
+      assert_equal expected, WHERE.call(G.parse!(query)), query
+    end
+  end
+
+  def test_where_escapes_like_wildcards
+    assert_equal [LIKE, "%100!%!_done!!%"], WHERE.call(G.parse!('"100%_done!"'))
+  end
+
+  def test_where_searches_every_text_column
+    where = QueryExample::Where.new(columns: {}, text_columns: %w[title body])
+    assert_equal ["(LOWER(title) LIKE ? ESCAPE '!' OR LOWER(body) LIKE ? ESCAPE '!') AND " \
+                  "(LOWER(title) LIKE ? ESCAPE '!' OR LOWER(body) LIKE ? ESCAPE '!')",
+                  "%a%", "%a%", "%b%", "%b%"], where.call(G.parse!("a b"))
+  end
+
+  def test_where_rejects_fields_not_in_the_allowlist
+    error = assert_raises(QueryExample::UnknownField) { WHERE.call(G.parse!("bug milestone:v1")) }
+    assert_equal "unknown field `milestone` at line 1, column 5 (known: status, label, created, comments)",
+                 error.message
+    assert_raises(QueryExample::UnknownField) { WHERE.call(G.parse!("-(a OR created_at:>3)")) }
+  end
+
+  def test_where_rejects_column_names_it_cant_write_safely
+    assert_raises(ArgumentError) { QueryExample::Where.new(columns: { "x" => "x; --" }, text_columns: %w[title]) }
+    assert_raises(ArgumentError) { QueryExample::Where.new(columns: { "x" => "café" }, text_columns: %w[title]) }
+    assert_raises(ArgumentError) { QueryExample::Where.new(columns: {}, text_columns: ["LOWER(title)"]) }
+    assert_raises(ArgumentError) { QueryExample::Where.new(columns: {}, text_columns: []) }
+  end
 end
