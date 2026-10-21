@@ -93,9 +93,13 @@ module QueryExample
     # Dates before integers, so 2026-01-01 isn't the number 2026. Each
     # must end where a word would, so 3abc is the word "3abc".
     rule(:date) do
-      seq(only(match(/\d{4}-\d\d-\d\d/)), word_end).check(:real_date?, "a real date").action(:to_date)
+      seq(date_text.present, commit, only(date_text.check(:real_date?, "a real date"))).action(:to_date)
     end
     rule(:integer) { seq(only(match(/\d+/)), word_end).map(:to_i) }
+
+    # Anything shaped like a date must be a real one: looking first and
+    # then committing makes 2026-02-30 an error rather than a word.
+    rule(:date_text) { seq(only(match(/\d{4}-\d\d-\d\d/)), word_end) }
 
     # A name or value can't start with - (that negates) or with < or >
     # (those compare), so `created:>x` isn't a test for equality.
@@ -204,7 +208,7 @@ if __FILE__ == $PROGRAM_NAME
   end
 
   puts "--- Errors ---"
-  ["created:>banana", "comments:3..", "status: open", "(bug OR crash"].each do |bad|
+  ["created:>banana", "created:2026-02-30", "comments:3..", "status: open", "(bug OR crash"].each do |bad|
     QueryExample::Grammar.parse!(bad, formatter: QueryExample::ErrorFormatter.new)
   rescue Birman::ParseError => e
     puts e.message, ""

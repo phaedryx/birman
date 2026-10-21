@@ -41,6 +41,8 @@ class TestQueryExample < Minitest::Test
     # Free text is any word that isn't a field or OR.
     "ORANGE or" => -> { all(text("ORANGE"), text("or")) },
     "3abc" => -> { text("3abc") },
+    "2026-02-30" => -> { text("2026-02-30") },
+    "created:2026-01-01x" => -> { field("created", "2026-01-01x") },
     "comments:3abc" => -> { field("comments", "3abc") },
     "c++ a>b x..y <3" => -> { all(text("c++"), text("a>b"), text("x..y"), text("<3")) },
     'status:open author:tad -label:wontfix "parse error" (bug OR crash) created:>2026-01-01 comments:3..10' => lambda {
@@ -114,7 +116,9 @@ class TestQueryExample < Minitest::Test
     "comments:3.." => [1, 13, "expected a number"],
     "comments:4..2026-01-01" => [1, 13, "expected a number"],
     "created:2026-01-01..3" => [1, 21, "expected a date"],
-    "created:>2026-02-30" => [1, 10, "expected a date or number"],
+    "created:>2026-02-30" => [1, 10, "expected a real date"],
+    "created:2026-02-30" => [1, 9, "expected a real date"],
+    "created:2026-01-01..2026-02-30" => [1, 21, "expected a real date"],
     "status: open" => [1, 8, "expected value"],
     "status:" => [1, 8, "expected value"],
     "bug OR" => [1, 7, "expected search term"],
