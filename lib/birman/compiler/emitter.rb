@@ -525,8 +525,8 @@ module Birman
         define(:to, matcher, true, name) do |v|
           inner = compile_matcher(matcher.inner, true)
           args = node_args(members, keys, inner.value)
-          value = "x = #{inner.value}\n" if keys == :unknown
-          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{value}#{v} = #{node}.new(#{args}, span(p, q))\nq"
+          value = "x = #{inner.value}\n" if keys == :unknown && !members.empty?
+          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{value}#{v} = #{node_call(node, args, "span(p, q)")}\nq"
         end
       end
 
@@ -540,8 +540,11 @@ module Birman
       def node_new(seq, node, members, locals)
         by_key = {}
         seq.parts.each_with_index { |part, i| by_key[part.capture_key] = locals[i] if part.capture_key }
-        "#{node}.new(#{members.map { by_key.fetch(_1) }.join(", ")}, span(p, q))"
+        node_call(node, members.map { by_key.fetch(_1) }, "span(p, q)")
       end
+
+      # node.new(fields..., span), with no stray comma when there are no fields.
+      def node_call(node, args, span) = "#{node}.new(#{[*args, span].join(", ")})"
 
       def direct_seq?(matcher) = matcher.is_a?(Seq) && matcher.only_at.nil?
 
@@ -574,13 +577,14 @@ module Birman
       def node_args(members, keys, value)
         if keys.is_a?(Array)
           check_keys(members, keys)
-          return members.map { |member| "#{value}[#{member.inspect}]" }.join(", ")
+          return members.map { |member| "#{value}[#{member.inspect}]" }
         end
+        return [] if members.empty? # As in To#match: a node with no fields drops the value.
         raise Error, "rule :#{@rule} builds a node with #{members.size} fields from one value" if members.size != 1
         # Like Birman.build: a Hash value fills the fields by name.
-        return "x.is_a?(Hash) ? x.fetch(#{members.first.inspect}) : x" if keys == :unknown
+        return ["x.is_a?(Hash) ? x.fetch(#{members.first.inspect}) : x"] if keys == :unknown
 
-        value
+        [value]
       end
 
       def check_keys(members, keys)

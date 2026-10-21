@@ -12,6 +12,7 @@ class CompilerTest < Minitest::Test
   Wrap = Birman.node(:value)
   Bin = Birman.node(:op, :left, :right)
   Moment = Birman.node(:date, :time, :offset)
+  Empty = Birman.node
 
   include CompilerTestHelpers
 
@@ -318,6 +319,14 @@ class CompilerTest < Minitest::Test
       rule(:wrapped) { match(/\w+/).to(Wrap) }
     end
     assert_same_results g, ["1+2", "1 + 2  ", "1+", "+"]
+  end
+
+  # A node with no fields drops its value, whatever it is.
+  def test_to_builds_nodes_with_no_fields
+    g = grammar(ignore: :spacing) do
+      rule(:top) { either(seq("(", ")").to(Empty), str("{}").means({}).to(Empty), match(/\w+/).to(Empty)) }
+    end
+    assert_same_results g, ["()", "( ) ", "{}", "ab", "(", ""]
   end
 
   def test_infix

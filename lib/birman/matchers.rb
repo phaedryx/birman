@@ -586,7 +586,10 @@ module Birman
 
     def match(ctx, pos)
       r = inner.match(ctx, pos) or return nil
-      fields = r.value.is_a?(Hash) ? r.value : { node.members.first => r.value }
+      fields = if r.value.is_a?(Hash) then r.value
+               elsif node.members.empty? then {} # a node with no fields drops the value
+               else { node.members.first => r.value }
+               end
       Match.new(r.pos, Birman.build(node, fields, ctx, pos, r.pos))
     end
 

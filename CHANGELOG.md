@@ -116,6 +116,11 @@
   (`:a_pat`'s and `:a`'s `a_pat`). Rules whose names meet in the
   generated parser (`:a?` and `:a_3f`) are refused, and copied action
   methods can no longer replace the runtime's `input` or `invalid_input`.
+- **Fixed:** a node with no fields, `Empty = node`, built with `.to`
+  drops the value: `seq("(", ")").to(Empty)` gives `(Empty)` with its
+  span. Before, `parse` raised TypeError when the value wasn't a Hash,
+  and `to_ruby` refused it or, for `.means({})`, generated
+  `Empty.new(, span(p, q))`, a syntax error.
 - The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
   `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
   blocks. EBNF output is unchanged; about 4% fewer allocations per

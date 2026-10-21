@@ -797,6 +797,25 @@ class BirmanTest < Minitest::Test
     assert_equal "abc", pair.with(right: "x").span.text
   end
 
+  def test_nodes_with_no_fields_drop_the_value
+    g = Class.new do
+      include Birman::Grammar
+
+      const_set(:Empty, node)
+      root :top
+      rule(:top) { seq("(", ")").to(self.class::Empty) }
+    end
+
+    empty = g.parse!("()")
+    assert_equal g::Empty.new, empty
+    assert_equal "()", empty.span.text
+    assert_equal "(Empty)", empty.inspect
+    assert_equal "()", empty.with.span.text
+    matched = empty in [] # as `in Empty[]` does, with a constant to name it
+    assert matched
+    assert_empty empty.to_h
+  end
+
   def test_span_is_not_a_field_name
     error = assert_raises(ArgumentError) { Birman.node(:span) }
     assert_match(/span/, error.message)

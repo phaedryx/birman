@@ -167,8 +167,9 @@ module Examples
 
   # Lists that may end in a comma (sep_by's trailing:), of moments read
   # with named captures (built into nodes, and left as Hashes) and of
-  # such lists: [1979-05-27T07:32Z, [ab!, 2024-02-29,], ]. MOMENT's
-  # unnamed group checks that Spinel doesn't number it either.
+  # such lists, or empty ones (a node with no fields):
+  # [1979-05-27T07:32Z, [ab!, 2024-02-29,], [ ]]. MOMENT's unnamed group
+  # checks that Spinel doesn't number it either.
   module Moments
     MOMENT = /(?<date>\d{4}-\d\d-\d\d)(T(?<time>\d\d:\d\d))?(?<offset>Z|[-+]\d\d:\d\d)?/ # rubocop:disable Lint/MixedRegexpCaptureTypes
 
@@ -178,12 +179,16 @@ module Examples
       include Birman::Rules::Whitespace
 
       Moment = node(:date, :time, :offset)
+      Empty = node
 
       root :list
       ignore :spacing
 
       rule(:list) { seq("[", commit, only(sep_by(item, ",", trailing: true)), "]") }
-      rule(:item) { either(moment, word, seq("[", only(sep_by1(either(moment, word), ",", trailing: true)), "]")) }
+      rule(:item) do
+        either(moment, word, seq("[", "]").to(Empty),
+               seq("[", only(sep_by1(either(moment, word), ",", trailing: true)), "]"))
+      end
       lexeme(:moment) { match(MOMENT).captures.to(Moment).label("moment") }
       lexeme(:word) { match(/(?<word>[a-zé]+)(?<bang>!)?/).captures.label("word") }
     end
@@ -330,7 +335,8 @@ module Examples
   def moments(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
     fixed = ["[]", "[,]", "[1979-05-27T07:32Z, [ab!, 2024-02-29,], ]", "[ab,cd]", "[ab,,]", "[[], ab]", "[[ab,]]",
-             "[1979-05-27-07:00 ,1979-05-27T07:32+05:30,]", "[1979-05-27T]", "[ab", "[ab,", "[é!,", "", "ab"]
+             "[[ ] ,[]]", "[1979-05-27-07:00 ,1979-05-27T07:32+05:30,]", "[1979-05-27T]", "[ab", "[ab,", "[é!,", "",
+             "ab"]
     lists = Array.new(count / 2) do
       items = Array.new(rng.rand(0..4)) { Moments::TOKENS.drop(4).sample(rng.rand(1..2), random: rng).join }
       "[#{items.join(", ")}#{"," if rng.rand < 0.5}]"
