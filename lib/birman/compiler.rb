@@ -62,8 +62,12 @@ module Birman
 
     # [method."Compiler#to_ruby"]
     # returns = "String: Ruby source defining <namespace>::Parser, its node classes and BirmanRT"
-    # raises = ["Compiler::Error for what can't be compiled (named by rule)"]
+    # raises = [
+    #   "ArgumentError for left recursion, as Grammar#parse",
+    #   "Compiler::Error for what can't be compiled (named by rule)"
+    # ]
     def to_ruby
+      @grammar.left_recursion
       emitter = emit
       check_namespace(emitter.node_names)
       body = [*emitter.node_classes, parser_class(emitter)].join("\n")

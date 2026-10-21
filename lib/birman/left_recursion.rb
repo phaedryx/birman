@@ -105,10 +105,10 @@ module Birman
     def leading(parts) = parts.take((parts.index { !nullable_node?(_1) } || parts.size) + 1)
 
     # Approximate: the regexp is rebuilt from its inspect form and tried
-    # on "". \A, ^, \b and lookbehind see the text around a position, so
+    # on "". Anchors and lookaround see the text around a position, so
     # /\A/ counts as nullable though it only matches at the start, and
-    # /(?<=a)b?/ doesn't though it matches empty after an "a". A pattern
-    # that can't be rebuilt is assumed to consume.
+    # /(?<=a)b?/ and /(?=a)/ don't though they match empty next to an
+    # "a". A pattern that can't be rebuilt is assumed to consume.
     def nullable_pattern?(source)
       @patterns.fetch(source) { @patterns[source] = pattern(source)&.match?("") || false }
     end

@@ -97,6 +97,7 @@ module Birman
       # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = [
+      #   "ArgumentError for left recursion (naming the cycle), as parse",
       #   "Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)",
       #   "Birman::Compiler::Error for actions calling Integer() or to_i: use large_integer"
       # ]
@@ -158,6 +159,11 @@ module Birman
     # the ignore rule), in first-use order.
     def to_ast = reachable_asts { matcher_for(_1).to_ast }
 
+    # The grammar's left-call analysis (see LeftRecursion), built on the
+    # first parse or to_ruby. It raises then, and every time after, if
+    # the grammar is left-recursive; later parses only read the ivar.
+    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts).check!
+
     private
 
     def match_all(input)
@@ -172,11 +178,6 @@ module Birman
     rescue SystemStackError
       build_failure(input, ctx.position, [], reason: "input is nested too deeply")
     end
-
-    # The grammar's left-call analysis (see LeftRecursion), built on the
-    # first parse. It raises then, and on every parse after, if the
-    # grammar is left-recursive; later parses only read the ivar.
-    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts).check!
 
     # As to_ast, leaving out what it can't describe: undefined rules
     # (the parse reports them if it gets there) and rules using a
