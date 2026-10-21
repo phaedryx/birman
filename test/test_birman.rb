@@ -239,6 +239,28 @@ class BirmanTest < Minitest::Test
     assert_pattern { g.parse("(x") => Birman::Failure(pos: 1, expected: ['")"']) }
   end
 
+  # Each level tries the one below in three alternatives, so a memo hit
+  # merged its expectations in again every time: 3**depth entries for
+  # two distinct ones ("!" and "?" at position 1).
+  def nested_choices(depth)
+    grammar(:"l#{depth}") do
+      rule(:l0) { str("x") }
+      (1..depth).each do |i|
+        below = :"l#{i - 1}"
+        rule(:"l#{i}") { either(seq(send(below), "!"), seq(send(below), "?"), send(below)) }
+      end
+    end
+  end
+
+  def test_memo_hits_do_not_repeat_expectations
+    g = nested_choices(12)
+    ctx = Birman::Context.new("x", g.new)
+    Birman::Ref.new(:l12).match(ctx, 0)
+    assert_equal 2, ctx.expected.size
+    assert_equal ['"!"', '"?"'], ctx.expected
+    assert_equal ['"!"', '"?"', "end of input"], g.parse("x.").expected
+  end
+
   def test_quiet_hides_whitespace_from_errors
     g = grammar { rule(:top) { token("a") >> str("b") } }
     assert_equal ['"b"'], g.parse("a  x").expected

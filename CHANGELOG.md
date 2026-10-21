@@ -63,6 +63,11 @@
   in other encodings), so `parse!` raises ParseError. The bytes before
   it are valid, so line and column point at it as usual. Generated
   parsers do the same.
+- **Fixed:** a rule reached from several alternatives at one position
+  repeated its expectations on every memo hit, growing the list as
+  3^n (a 16-deep grammar took 7 seconds). Merging one in now skips
+  expectations already recorded, in the interpreter and in generated
+  parsers; `Failure#expected` and error messages are unchanged.
 - The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
   `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
   blocks. EBNF output is unchanged; about 4% fewer allocations per

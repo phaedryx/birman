@@ -370,6 +370,23 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["x = 1", "x(1.5)", "if = 1", "x (", "x = ", "iffy=2"]
   end
 
+  # See BirmanTest#test_memo_hits_do_not_repeat_expectations.
+  def test_memo_hits_do_not_repeat_expectations
+    g = grammar(:l12) do
+      rule(:l0) { str("x") }
+      (1..12).each do |i|
+        below = :"l#{i - 1}"
+        rule(:"l#{i}") { either(seq(send(below), "!"), seq(send(below), "?"), send(below)) }
+      end
+    end
+    parser = Differential.load(g, "CompilerTestParser").new("x.")
+    parser.parse
+    expected = parser.instance_variable_get(:@expected)
+    assert_equal 3, expected.size
+    assert_equal ['"!"', '"?"', "end of input"], expected
+    assert_same_results g, ["x", "x.", "x!?", ""]
+  end
+
   def test_left_recursion_raises_like_the_interpreter
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
     parser = Differential.load(g, "CompilerTestParser")
