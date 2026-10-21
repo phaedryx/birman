@@ -99,6 +99,11 @@ class TestLeftRecursion < Minitest::Test
     refute_left_recursion g
   end
 
+  def test_a_pattern_that_never_matches_hides_no_left_recursion
+    g = grammar { rule(:top) { either("x", seq(match(/(?=y)(?!y)/), top, "!")) } }
+    refute_left_recursion g
+  end
+
   def test_left_recursion_behind_patterns_that_only_look
     [/(?=y)/, /(?!y)/, /(?<=y)/, /(?<!y)z?/, /\b/, /\B/, /\G/, /\Z/, /^/, /$/].each do |re|
       g = grammar { rule(:top) { either("x", seq(match(re), top, "!")) } }
@@ -355,6 +360,23 @@ class TestLeftRecursion < Minitest::Test
 
     rules = { top: [:lexeme, %i[ref b]], b: [:pat, "/b?/"] }
     assert_equal %i[b sp], Birman::LeftRecursion.new(rules, ignore: :sp).left_calls(:top)
+  end
+
+  # Assertions side by side hold at one position, so a pair that
+  # contradicts there never matches; anything between them, or a
+  # quantifier on one, and they may hold apart.
+  def test_patterns_whose_assertions_contradict_never_match_empty
+    a = analysis({ top: [:str, "a"] })
+    never = ["/(?=a)(?!a)/", "/(?!a)(?=a)/", "/(?<=a)(?<!a)/", "/\\b\\B/", "/x|(?=a)^(?!a)/",
+             "/(?=[ab])(?!(?=[ab]))(?![ab])/"]
+    never.each do |source|
+      refute a.nullable_node?([:pat, source]), source
+      refute Regexp.new(source[1...-1]).match?("aa a"), "#{source} never matches anything"
+    end
+
+    maybe = ["/(?=a)(?=a)/", "/(?=a)|(?!a)/", "/(?=a)(?:)(?!a)/", "/(?=a)(?!a)?/", "/(?=a)(?!b)/",
+             "/(?=a)(?<!a)/", "/(?=a)(?!(?:a))/"]
+    maybe.each { assert a.nullable_node?([:pat, _1]), _1 }
   end
 
   def test_left_calls_stop_after_the_first_part_that_consumes

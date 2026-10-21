@@ -112,8 +112,9 @@ module Birman
     # The regexp is rebuilt from its inspect form and tried on "" with
     # every assertion (see Assertions) taken to hold, since each holds
     # somewhere: /(?=a)/ matches empty before an "a", though not in "".
-    # That overestimates: /(?=a)(?!a)/ counts as nullable though it never
-    # matches. A pattern that can't be rebuilt is assumed to consume.
+    # Assertions that contradict each other side by side are caught;
+    # other combinations that can't hold, like /(?=a)(?=b)/, still count
+    # as nullable. A pattern that can't be rebuilt is assumed to consume.
     def nullable_pattern?(source)
       @patterns.fetch(source) do
         body, flags = %r{\A/(.*)/([a-z]*)\z}m.match(source)&.captures
@@ -188,7 +189,11 @@ module Birman
 
     # A regexp's source with each assertion, which matches only where the
     # text around it allows, replaced by (?:), which matches anywhere:
-    # lookarounds, anchors (\A, ^, $, \z, \Z, \G) and \b, \B.
+    # lookarounds, anchors (\A, ^, $, \z, \Z, \G) and \b, \B. Assertions
+    # side by side hold at one position, so a pair there that can't both
+    # hold, (?=X) with (?!X), (?<=X) with (?<!X), or \b with \B, becomes
+    # (?!), which matches nowhere. Only that shape: (?=a)(?=b) can't hold
+    # either, but stays (?:)(?:).
     # Escapes, character classes and comments are copied as they are.
     # Only /x makes # start a comment; an inline (?x) doesn't, so a "[" or
     # "(" in such a comment can hide an assertion after it (it's then
@@ -196,17 +201,39 @@ module Birman
     module Assertions
       module_function
 
+      # kind: "=", "!", "<=" or "<!" for a lookaround (body: its source),
+      # or the anchor itself ("^", "\\b"...).
+      Assertion = Data.define(:kind, :body)
+      OPPOSITE = { "=" => "!", "<=" => "<!", "\\b" => "\\B" }.freeze
+
       def strip(source, extended)
         scanner = StringScanner.new(source)
         out = +""
-        out << piece(scanner, extended) until scanner.eos?
+        run = []
+        until scanner.eos?
+          item = piece(scanner, extended)
+          next run << item if item.is_a?(Assertion)
+
+          flush(run, out, quantified: item.match?(/\A[?*+{]/))
+          out << item
+        end
+        flush(run, out, quantified: false)
         out
       end
 
-      # The next piece of the source, rewritten.
+      # Writes out a run of assertions side by side. A quantifier after the
+      # last one may skip it, so then it can't contradict the rest.
+      def flush(run, out, quantified:)
+        held = quantified ? run[0...-1] : run
+        out << "(?!)" if held.any? { |a| held.include?(Assertion.new(OPPOSITE[a.kind], a.body)) }
+        out << ("(?:)" * run.size)
+        run.clear
+      end
+
+      # The next piece of the source: an Assertion, or text to copy.
       def piece(s, extended) # rubocop:disable Metrics
-        if s.skip(/\\[bBAzZG]|[\^$]/) then "(?:)"
-        elsif s.skip(/\(\?<?[=!]/) then skip_group(s, extended)
+        if s.scan(/\\[bBAzZG]|[\^$]/) then Assertion.new(s.matched, nil)
+        elsif s.scan(/\(\?(<?[=!])/) then lookaround(s, s[1], extended)
         elsif s.scan(/\\./m) || s.scan(/\(\?#[^)]*\)/) then s.matched
         elsif s.skip(/\[/) then character_class(s)
         elsif extended && s.scan(/#[^\n]*/) then s.matched
@@ -215,15 +242,17 @@ module Birman
       end
 
       # The rest of a lookaround, after its "(?=" (or "(?!", "(?<=", "(?<!").
-      def skip_group(s, extended)
+      def lookaround(s, kind, extended)
+        start = finish = s.pos
         depth = 1
         until depth.zero? || s.eos?
+          finish = s.pos
           case piece(s, extended)
           when "(" then depth += 1
           when ")" then depth -= 1
           end
         end
-        "(?:)"
+        Assertion.new(kind, s.string.byteslice(start, finish - start))
       end
 
       # A character class (nested ones included), after its "[". A "]"
