@@ -81,6 +81,34 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 `JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
 official toml-test suite), and `Grammar.to_ebnf` to print any grammar.
 
+## Why not a regex?
+
+A Ruby regex can match nested input with `\g<name>`, but it can't
+build the structure (a capture keeps only its last match), and it
+can't say what's wrong when the match fails.
+
+```ruby
+re = /\A(?<l>\[\s*(?:(?:\d+|\g<l>)(?:\s*,\s*(?:\d+|\g<l>))*)?\s*\])\z/
+re.match?("[1, [2, 3], []]")      # => true
+re.match("[1, [2, 3], []]")[:l]   # => "[1, [2, 3], []]"  (just the string back)
+re.match?("[1, [2, 3]")           # => false              (no hint why)
+
+class Lists
+  include Birman::Grammar
+  include Birman::Rules::Whitespace
+  ignore :spacing
+  root :list
+  rule(:list) { seq("[", commit, only(sep_by(item, ",")), "]") }
+  rule(:item) { either(match(/\d+/).map(&:to_i), list) }
+end
+
+Lists.parse("[1, [2, 3], []]")   # => Success([1, [2, 3], []])
+puts Lists.parse("[1, [2, x], []]").message
+# line 1, column 9: expected /\d+/ or "[", found "x"
+#   [1, [2, x], []]
+#           ^
+```
+
 ## Building blocks
 
 | Form                          | Meaning                                              |
