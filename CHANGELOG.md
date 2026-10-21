@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+- **Added:** matchers without a grammar class. The combinators are
+  available on `Birman` (`Birman.seq`, `Birman.str`, `Birman.match`...),
+  and `Birman.parse(matcher, input, ignore: nil)` and `Birman.parse!`
+  run one as a whole grammar, returning `Success`/`Failure` as
+  `Grammar.parse` does. `ignore:` takes a matcher, not a rule name. A
+  matcher that refers to a rule, or whose `.action`/`.check` names a
+  method only a grammar of your own would have, raises `ArgumentError`
+  before parsing.
 - **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
   parser, as Ruby source Spinel can compile to a native binary, that
   agrees with `parse` on values, spans and errors. Differential tests

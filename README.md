@@ -212,6 +212,36 @@ end
 #   ^
 ```
 
+## Without a grammar
+
+For a one-off pattern, skip the class: the combinators are on `Birman`
+too, and `Birman.parse` runs a matcher as a whole grammar.
+
+```ruby
+B = Birman
+date = B.seq(B.match(/\d{4}/), "-", B.match(/\d\d/)).map { _1.join }
+
+B.parse(date, "2026-10")    # => Success("2026-10")
+B.parse!(date, "26-10")     # raises Birman::ParseError
+
+B.parse(B.seq("let", B.match(/\w+/)), "let  x", ignore: /\s*/)
+# => Success(["let", "x"])
+```
+
+`parse` returns `Success`/`Failure` and never raises on bad input, as
+`Grammar.parse` does; `parse!` takes `formatter:` too. `ignore:` is a
+matcher (a regexp, a string or any matcher) rather than a rule name,
+since there's no grammar for a name to refer to; literals skip it, as
+in a grammar with `ignore`, but `str` and `match` stay raw, so skip
+spacing after them yourself if you need to. Matchers are values, so the grammar built
+for one is cached and reused for an equal one.
+
+What needs a grammar class still does: rules (so recursion, and
+`Birman::Rules`), `keywords`, and `.action`/`.check` with methods of
+your own (`large_integer` works). A rule reference, or an action or
+check naming a method of your own, raises `ArgumentError` before
+parsing starts.
+
 ## Nodes
 
 `node(:a, :b)` (in any grammar class, from `extend Birman::Nodes`, or

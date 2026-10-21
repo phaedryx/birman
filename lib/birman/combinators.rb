@@ -183,4 +183,11 @@ module Birman
 
     def ignore_rule = self.class.respond_to?(:ignore) ? self.class.ignore : nil
   end
+
+  # Birman.seq, Birman.str and the rest, for building matchers outside a
+  # grammar (see Birman.parse). literal_matcher stays private: it's what
+  # a grammar runs for a literal, and Birman isn't one.
+  extend Combinators
+
+  singleton_class.send(:private, :literal_matcher)
 end
