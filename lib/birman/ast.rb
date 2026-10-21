@@ -7,7 +7,11 @@ module Birman
   #   [:seq, commit_at, [parts...]]  [:choice, [alts...]]
   #   [:rep, min, max, inner]  [:not, inner]  [:and, inner]
   #   [:both, left, right]  [:action, inner]  [:label, name, inner]
-  #   [:check, name, inner]  [:quiet, inner]
+  #   [:check, name, inner]  [:quiet, inner]  [:lexeme, inner]
+  #
+  # A lexeme is inner, then the grammar's ignore rule. Literals are
+  # lexemes too, but show as [:str, text]: the ignore rule runs only
+  # after the text, so only an empty literal shows as [:lexeme, ...].
   module AST
     module_function
 
@@ -54,6 +58,7 @@ module Birman
       in [:label, _, inner]  then expr(inner, prec)
       in [:check, _, inner]  then expr(inner, prec)
       in [:quiet, inner]     then expr(inner, prec)
+      in [:lexeme, inner]    then expr(inner, prec)
       in [:both, [:not, guard], right]
         wrap("!#{expr(guard, ATOM)} #{expr(right, PREFIX)}", prec > SEQ)
       in [:choice, alts]     then wrap(alts.map { expr(_1, SEQ) }.join(" / "), prec > CHOICE)

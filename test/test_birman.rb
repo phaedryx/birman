@@ -720,6 +720,18 @@ class BirmanTest < Minitest::Test
     assert_equal [:rep, 0, nil, %i[ref item]], g.to_ast[:top]
   end
 
+  # A lexeme runs the ignore rule after its token, which matters only
+  # when the token can be empty; a literal's text can't be, unless "".
+  def test_to_ast_marks_lexemes_that_could_be_empty
+    g = grammar do
+      rule(:top) { seq("", "let", num) }
+      lexeme(:num) { match(/\d+/) }
+    end
+    assert_equal [:seq, nil, [[:lexeme, [:str, ""]], [:str, "let"], %i[ref num]]], g.to_ast[:top]
+    assert_equal [:lexeme, [:pat, "/\\d+/"]], g.to_ast[:num]
+    assert_equal "top = \"\" \"let\" num ;\nnum = /\\d+/ ;", g.to_ebnf
+  end
+
   def test_ebnf
     g = grammar do
       rule(:top)  { (str("let") > name >> str("=").maybe) | name.rep(1) }

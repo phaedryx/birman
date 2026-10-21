@@ -161,6 +161,35 @@ class TestLeftRecursion < Minitest::Test
     assert_left_recursion ":top -> :top", g
   end
 
+  # A lexeme runs the ignore rule where its token ends: where it began,
+  # if the token was empty.
+  def test_left_recursion_through_the_ignore_rule_after_an_empty_token
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq("", "x") }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    assert_left_recursion ":top -> :sp -> :top", g
+
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq(sign, "x") }
+      lexeme(:sign) { match(/-?/) }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    assert_left_recursion ":top -> :sign -> :sp -> :top", g
+  end
+
+  def test_tokens_that_consume_run_the_ignore_rule_after_input
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq("x", num) }
+      lexeme(:num) { match(/\d+/) }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    refute_left_recursion g, "x1"
+  end
+
   def test_the_ignore_rule_is_checked
     g = grammar do
       ignore :spacing
@@ -286,7 +315,8 @@ class TestLeftRecursion < Minitest::Test
       [:choice, [[:str, "a"], [:str, ""]]],
       [:rep, 0, nil, [:str, "a"]], [:rep, 0, 1, [:str, "a"]], [:rep, 2, nil, [:pat, "/a*/"]],
       [:not, [:str, "a"]], [:and, [:str, "a"]], [:both, [:str, "a"], [:str, ""]],
-      [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]]
+      [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]],
+      [:lexeme, [:str, ""]]
     ]
     non_nullable = [
       [:str, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
@@ -294,7 +324,8 @@ class TestLeftRecursion < Minitest::Test
       [:pat, "/\\\\b/"], [:pat, "/a # (?=b) [\n/x"], [:pat, "/(?#(?=)a/"], [:pat, "/(?=(a))\\1/"],
       [:seq, nil, [[:str, ""], [:str, "a"]]], [:choice, [[:str, "a"], [:str, "b"]]], [:choice, []],
       [:rep, 1, nil, [:str, "a"]], [:both, [:str, ""], [:str, "a"]],
-      [:action, [:str, "a"]], [:label, "x", [:str, "a"]], [:check, "x", [:str, "a"]], [:quiet, [:str, "a"]]
+      [:action, [:str, "a"]], [:label, "x", [:str, "a"]], [:check, "x", [:str, "a"]], [:quiet, [:str, "a"]],
+      [:lexeme, [:str, "a"]]
     ]
     a = analysis({ top: [:str, "a"] })
     nullable.each { assert a.nullable_node?(_1), "#{_1.inspect} is nullable" }
@@ -315,6 +346,15 @@ class TestLeftRecursion < Minitest::Test
     refute a.nullable?(:top)
     refute a.nullable?(:loop), "a rule that only calls itself never matches, so isn't nullable"
     refute a.nullable?(:undefined)
+  end
+
+  def test_an_empty_lexeme_calls_the_ignore_rule_if_there_is_one
+    rules = { top: [:seq, nil, [[:lexeme, [:str, ""]], [:lexeme, [:str, "a"]], [:lexeme, %i[ref b]]]], b: [:str, "b"] }
+    assert_equal [], analysis(rules).left_calls(:top)
+    assert_equal %i[sp], Birman::LeftRecursion.new(rules, ignore: :sp).left_calls(:top)
+
+    rules = { top: [:lexeme, %i[ref b]], b: [:pat, "/b?/"] }
+    assert_equal %i[b sp], Birman::LeftRecursion.new(rules, ignore: :sp).left_calls(:top)
   end
 
   def test_left_calls_stop_after_the_first_part_that_consumes

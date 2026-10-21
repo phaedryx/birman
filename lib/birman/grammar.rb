@@ -162,7 +162,7 @@ module Birman
     # The grammar's left-call analysis (see LeftRecursion), built on the
     # first parse or to_ruby. It raises then, and every time after, if
     # the grammar is left-recursive; later parses only read the ivar.
-    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts).check!
+    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts, ignore: ignore_rule).check!
 
     private
 

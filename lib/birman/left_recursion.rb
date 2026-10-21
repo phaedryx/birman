@@ -18,8 +18,11 @@ module Birman
     # first: its leader.
     attr_reader :cycles
 
-    def initialize(rules)
+    # ignore: the grammar's ignore rule, which a lexeme calls after its
+    # token; at its start, if the token was empty.
+    def initialize(rules, ignore: nil)
       @rules = rules
+      @ignore = ignore
       @patterns = {}
       @nullable = nullable_rules
       @calls = rules.to_h { |name, ast| [name, calls(ast).uniq] }
@@ -63,6 +66,7 @@ module Birman
       in [:quiet, inner]         then nullable_node?(inner)
       in [:label, _, inner]      then nullable_node?(inner)
       in [:check, _, inner]      then nullable_node?(inner) # it may reject, but it can match empty
+      in [:lexeme, inner]        then nullable_node?(inner)
       else false
       end
     end
@@ -97,6 +101,7 @@ module Birman
       in [:quiet, inner]       then calls(inner)
       in [:label, _, inner]    then calls(inner)
       in [:check, _, inner]    then calls(inner)
+      in [:lexeme, inner]      then calls(inner) + (@ignore && nullable_node?(inner) ? [@ignore] : [])
       else []
       end
     end
