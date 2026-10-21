@@ -117,11 +117,11 @@ keeps its names to itself, so using one inside a `seq` is always fine.
 
 The operator forms still work for short rules: `a >> b` (sequence),
 `a | b` (choice), `a & b` (guard), `a > b` (commit). Precedence, tightest
-first: `>>`, `&`, `|`, `>`. `a >> b` means `seq(a, b)`, and `a > b`
-means `seq(a, commit, b)`; `a >> b >> c` is one flat `seq(a, b, c)`,
-but a side with a `commit`, `only` or names stays a `seq` of its own,
-so `a.as(:x) >> b.as(:y) >> c.as(:z)` raises: write
-`seq(a.as(:x), b.as(:y), c.as(:z))`.
+first: `>>`, `&`, `|`, `>`. A chain of `>>` is one sequence:
+`a.as(:x) >> b.as(:y) >> c.as(:z)` is `seq(a.as(:x), b.as(:y), c.as(:z))`,
+however it's grouped, and `a > b >> c` is `seq(a, commit, b, c)`. A seq
+built any other way (by `seq(...)`, or with a commit or `only`) stays
+one part, as it would in `seq`: `pair >> c` is `seq(pair, c)`.
 
 ## Literals, spacing, and lexemes
 

@@ -38,9 +38,9 @@ module Birman
   module Matcher
     # [method.">>"]
     # params = ["other: String | Regexp | Matcher"]
-    # returns = "Sequence of self then other, the same as seq(self, other)"
-    # notes = "A seq on either side with no commit, only or names is flattened in"
-    def >>(other) = Seq.new([*inline_parts(self), *inline_parts(Birman.coerce(other))])
+    # returns = "Sequence of self then other: a chain of >> is one seq"
+    # notes = "A seq from seq(...), or with a commit or only, is one part, as in seq(self, other)"
+    def >>(other) = Seq.new(parts: [*inline_parts(self), *inline_parts(Birman.coerce(other))], open: true)
 
     # [method."|"]
     # params = ["other: String | Regexp | Matcher"]
@@ -161,11 +161,9 @@ module Birman
 
     private
 
-    # A seq's parts join the enclosing seq only if that can't change what
-    # it means: its commit, only(...) or names would apply to the whole.
-    def inline_parts(m)
-      m.is_a?(Seq) && m.commit_at.nil? && m.only_at.nil? && m.parts.none?(&:capture_key) ? m.parts : [m]
-    end
+    # Only a seq built by >> joins the enclosing one, and only if that
+    # can't change what it means: a commit or only(...) would apply to the whole.
+    def inline_parts(m) = m.is_a?(Seq) && m.open? && m.commit_at.nil? && m.only_at.nil? ? m.parts : [m]
   end
 
   # A bare string: a literal (see Combinators#literal_matcher). What a
@@ -251,10 +249,15 @@ module Birman
     include Matcher
 
     # Arrays are copied and frozen so a matcher is immutable all the way down.
-    def initialize(parts:, commit_at: nil, only_at: nil)
+    # `open` (built by >>, so a later >> extends it) isn't a member: it
+    # changes how the seq composes, not what it matches, so == ignores it.
+    def initialize(parts:, commit_at: nil, only_at: nil, open: false)
       check_names(parts, only_at)
+      @open = open
       super(parts: parts.dup.freeze, commit_at:, only_at:)
     end
+
+    def open? = @open
 
     def match(ctx, pos)
       values = Array.new(parts.size)

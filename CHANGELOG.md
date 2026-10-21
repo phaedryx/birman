@@ -8,14 +8,16 @@
   matcher that refers to a rule, or whose `.action`/`.check` names a
   method only a grammar of your own would have, raises `ArgumentError`
   before parsing.
-- **Changed:** `a >> b` means `seq(a, b)` and `a > b` means
-  `seq(a, commit, b)`. A `seq` on either side is flattened in only when
-  it has no `commit`, `only` or `.as` names, so a commit no longer
-  spreads to parts after it (`(seq(a, commit, b) >> c) | d` backtracks
-  when `c` fails), `seq("[", only(x), "]") >> y` keeps `y`, and both
-  sides are treated alike. A seq with names on either side now stays a
-  part of its own, so `a.as(:x) >> b.as(:y) >> c.as(:z)` raises (see
-  below): write `seq(a.as(:x), b.as(:y), c.as(:z))`.
+- **Changed:** a chain of `>>` builds one seq, however it's grouped,
+  so `a.as(:x) >> (b.as(:y) >> c.as(:z))` now gives `{x:, y:, z:}`
+  like `(a.as(:x) >> b.as(:y)) >> c.as(:z)`. A seq built any other way
+  (`seq(...)`, or with a `commit` or `only`) is one part on either side
+  of `>>` or `>`, as in `seq(x, y)`: `(seq(a, commit, b) >> c) | d`
+  backtracks when `c` fails instead of committing to it,
+  `seq("[", only(x), "]") >> y` keeps `y`, a stored
+  `pair = seq(k.as(:k), v.as(:v))` gives `pair >> z` as
+  `[{k:, v:}, z]`, and `seq(a, b) >> c` is `[[a, b], c]` rather than
+  `[a, b, c]`.
 - **Changed:** names can't be dropped silently. The same `.as` name
   twice in one `seq`, or a `seq` of named parts or a `.captures`
   (seen through `maybe`, `label`, `quiet`, `check`, `&`, `either`,

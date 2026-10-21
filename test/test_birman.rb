@@ -872,10 +872,24 @@ class BirmanTest < Minitest::Test
     assert_equal({ z: "c" }, g.parse!("abc"), "a rule's names stay inside the rule")
   end
 
-  def test_sequence_operators_mean_the_same_as_seq
+  def test_a_chain_of_sequence_operators_is_one_seq
     a, b, c = %w[a b c].map { Birman::Str.new(_1) }
     assert_equal Birman::Seq.new([a, b, c]), (a >> b) >> c
     assert_equal Birman::Seq.new([a, b, c]), a >> (b >> c)
+
+    x, y, z = %w[a b c].zip(%i[x y z]).map { |text, key| Birman::Str.new(text).as(key) }
+    [(x >> y) >> z, x >> (y >> z), x > (y >> z), (x >> y) > z].each do |m|
+      assert_equal({ x: "a", y: "b", z: "c" }, grammar { rule(:top) { m } }.parse!("abc"), m.inspect)
+    end
+
+    g = grammar { rule(:top) { str("a") > str("b").as(:y) >> str("c").as(:z) } }
+    assert_equal({ y: "b", z: "c" }, g.parse!("abc"))
+    assert g.parse("abx").committed
+  end
+
+  def test_sequence_operators_keep_a_seq_built_otherwise_whole
+    g = grammar { rule(:top) { seq(str("a"), str("b")) >> str("c") } }
+    assert_equal [%w[a b], "c"], g.parse!("abc"), "the same as seq(seq(a, b), c)"
 
     g = grammar { rule(:top) { (seq(str("a"), commit, str("b")) >> str("c")) | str("abd") } }
     assert_equal "abd", g.parse!("abd"), "the commit stays inside the left seq"
@@ -883,22 +897,23 @@ class BirmanTest < Minitest::Test
     g = grammar { rule(:top) { (str("a") >> seq(str("b"), commit, str("c"))) | str("ad") } }
     assert_equal "ad", g.parse!("ad"), "and inside the right one"
 
+    g = grammar { rule(:top) { (str("a") > str("b")) >> str("c") } }
+    assert_equal [%w[a b], "c"], g.parse!("abc"), "a > b is closed by its commit"
+
     g = grammar { rule(:top) { seq("[", only(match(/\d/)), "]") >> str("y") } }
     assert_equal %w[1 y], g.parse!("[1]y"), "only(...) still picks within its own seq"
 
     pair = seq_of_names
-    assert_equal grammar { rule(:top) { seq(pair, str("c")) } }.parse!("abc"),
-                 grammar { rule(:top) { pair >> str("c") } }.parse!("abc")
+    assert_equal [{ x: "a", y: "b" }, "c"], grammar { rule(:top) { pair >> str("c") } }.parse!("abc")
     assert_equal grammar { rule(:top) { seq(pair, commit, str("c")) } }.parse!("abc"),
                  grammar { rule(:top) { pair > str("c") } }.parse!("abc")
-    assert_equal [{ x: "a", y: "b" }, "c"], grammar { rule(:top) { pair >> str("c") } }.parse!("abc")
   end
 
-  def test_sequence_operators_raise_where_seq_would_drop_names
+  def test_sequence_operators_raise_where_a_closed_seq_would_lose_names
     x, y, z = %w[a b c].map { Birman::Str.new(_1).as(_1.to_sym) }
-    assert_raises(ArgumentError) { (x >> y) >> z }
-    assert_raises(ArgumentError) { x >> (y >> z) }
-    assert_raises(ArgumentError) { x > (y >> z) }
+    assert_raises(ArgumentError) { seq_of_names >> z }
+    assert_raises(ArgumentError) { x >> seq_of_names }
+    assert_raises(ArgumentError) { (x > y) >> z }
   end
 
   def test_as_sees_through_labels
