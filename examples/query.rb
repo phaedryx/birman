@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 # A GitHub/Gmail-style search query, parsed into nodes and turned into a
-# Ruby predicate over Hash records:
+# Ruby predicate over Hash records, or into a SQL condition for
+# ActiveRecord's where:
 #
 #   status:open author:tad -label:wontfix "parse error" (bug OR crash)
 #   created:>2026-01-01 comments:3..10
@@ -157,6 +158,120 @@ module QueryExample
     end
   end
 
+  # A query naming a field that Where wasn't given a column for.
+  class UnknownField < StandardError
+    def initialize(node, known)
+      super("unknown field `#{node.name}` at #{node.span} (known: #{known.join(", ")})")
+    end
+  end
+
+  # Compiles a query's AST into a SQL condition with bind parameters,
+  # ready for ActiveRecord: Issue.where(*sql), or sanitize_sql(sql) for a
+  # string to hand to Arel.sql.
+  #
+  #   ["status = ? AND NOT COALESCE(label = ?, FALSE) AND created_at > ?", "open", "wontfix", #<Date 2026-01-01>]
+  #
+  # Why not a hash like { and: [{ status: "open" }, { not: ... }] }? where
+  # can't take one: its hashes say only "these columns equal these
+  # values", so OR, NOT and > would each need code to translate them.
+  # A string with binds is what where takes as is, nested any way the
+  # query is. Only two kinds of thing are ever written into the string:
+  # column names from the allowlist and the fixed operators below. Every
+  # value from the query is a bind.
+  #
+  # Where agrees with Evaluator except in three places:
+  # - Equality uses =, so it's as case-sensitive as the column is (citext
+  #   or a case-insensitive collation make it not). LOWER(col) would
+  #   match Evaluator, but keeps an index on col from being used.
+  # - Columns hold one value. Evaluator's "any label matches" needs a
+  #   join or an EXISTS subquery, which a column name can't express.
+  # - Types aren't checked. comments:>2026-01-01 matches nothing in
+  #   Evaluator; a database compares a number with a date as it sees
+  #   fit, or rejects the query.
+  # Free text is case-insensitive, as in Evaluator: LOWER(col) LIKE works
+  # on every database, where ILIKE is PostgreSQL's alone.
+  class Where
+    OPERATORS = { eq: "=", gt: ">", gte: ">=", lt: "<", lte: "<=" }.freeze
+    COLUMN = /\A\w+(?:\.\w+)?\z/
+
+    # columns: the query's field names and the column each one searches,
+    # { "created" => "issues.created_at" }. Any other name is rejected.
+    # text_columns: the columns free text searches.
+    def initialize(columns:, text_columns:)
+      @columns = columns.to_h { |name, column| [name.to_s, column(column)] }.freeze
+      @text_columns = text_columns.map { column(_1) }.freeze
+      raise ArgumentError, "free text needs at least one text column" if @text_columns.empty?
+    end
+
+    # The condition and its binds, as one Array: [sql, *binds].
+    def call(node)
+      binds = []
+      [condition(node, binds), *binds]
+    end
+
+    private
+
+    def condition(node, binds) # rubocop:disable Metrics
+      case node
+      in Grammar::And(terms)
+        terms.map { group(_1, binds) }.join(" AND ")
+      in Grammar::Or
+        alternatives(node).map { group(_1, binds) }.join(" OR ")
+      in Grammar::Not(expr)
+        # A comparison with NULL is NULL, and NOT NULL is NULL too, so
+        # -label:wontfix would skip rows with no label. Evaluator keeps
+        # them, and so does reading NULL as FALSE before negating.
+        "NOT COALESCE(#{condition(expr, binds)}, FALSE)"
+      in Grammar::Text(value)
+        pattern = "%#{escape_like(value.downcase)}%"
+        @text_columns.map do |column|
+          binds << pattern
+          "LOWER(#{column}) LIKE ? ESCAPE '!'"
+        end.join(" OR ")
+      in Grammar::Field(name, op, value)
+        column = @columns.fetch(name) { raise UnknownField.new(node, @columns.keys) }
+        comparison(column, op, value, binds)
+      end
+    end
+
+    def comparison(column, operator, value, binds)
+      if value.is_a?(Range)
+        binds.push(value.begin, value.end)
+        "#{column} BETWEEN ? AND ?"
+      else
+        binds << value
+        "#{column} #{OPERATORS.fetch(operator)} ?"
+      end
+    end
+
+    # Parentheses around a part with its own AND or OR, so its precedence
+    # never depends on what it's inside.
+    def group(node, binds)
+      sql = condition(node, binds)
+      compound?(node) ? "(#{sql})" : sql
+    end
+
+    def compound?(node)
+      node.is_a?(Grammar::And) || node.is_a?(Grammar::Or) || (node.is_a?(Grammar::Text) && @text_columns.size > 1)
+    end
+
+    # a OR b OR c parses as a OR (b OR c); list it as a, b, c.
+    def alternatives(node)
+      node.is_a?(Grammar::Or) ? [*alternatives(node.left), *alternatives(node.right)] : [node]
+    end
+
+    # % and _ are LIKE's wildcards. They're escaped with !, not with a
+    # backslash, whose meaning in a SQL string differs between databases.
+    def escape_like(text) = text.gsub(/[!%_]/) { "!#{_1}" }
+
+    def column(name)
+      name = name.to_s
+      raise ArgumentError, "not a column name: #{name.inspect}" unless name.match?(COLUMN)
+
+      name
+    end
+  end
+
   # Error messages for a one-line query: the query, then a caret under
   # where it went wrong, with what was expected beside it.
   class ErrorFormatter
@@ -201,16 +316,25 @@ if __FILE__ == $PROGRAM_NAME
     "created:<2026-01-01 OR comments:>=10"
   ]
 
+  # The same issues as a table: Issue.where(*sql) would run each query.
+  where = QueryExample::Where.new(
+    columns: { "status" => "status", "author" => "author", "label" => "label",
+               "created" => "created_at", "comments" => "comments_count" },
+    text_columns: %w[title body]
+  )
+
   queries.each do |query|
     ast = QueryExample::Grammar.parse!(query)
     matches = issues.select(&QueryExample::Evaluator.predicate(ast)).map { _1[:id] }
-    puts query, "  #{ast.inspect}", "  matches issues #{matches}", ""
+    sql, *binds = where.call(ast)
+    puts query, "  #{ast.inspect}", "  matches issues #{matches}", "  where #{sql.inspect}", "        #{binds}", ""
   end
 
   puts "--- Errors ---"
-  ["created:>banana", "created:2026-02-30", "comments:3..", "status: open", "(bug OR crash"].each do |bad|
-    QueryExample::Grammar.parse!(bad, formatter: QueryExample::ErrorFormatter.new)
-  rescue Birman::ParseError => e
+  ["created:>banana", "created:2026-02-30", "comments:3..", "status: open", "(bug OR crash",
+   "milestone:v1"].each do |bad|
+    where.call(QueryExample::Grammar.parse!(bad, formatter: QueryExample::ErrorFormatter.new))
+  rescue Birman::ParseError, QueryExample::UnknownField => e
     puts e.message, ""
   end
 end

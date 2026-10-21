@@ -81,8 +81,8 @@ interpreter, `examples/json.rb` for a full JSON parser (tested against
 `JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
 official toml-test suite), `examples/query.rb` for a GitHub-style
 search query (lookahead, implicit AND, a custom error formatter) with
-an evaluator that filters records, and `Grammar.to_ebnf` to print any
-grammar.
+an evaluator that filters records and a compiler to SQL for
+ActiveRecord's `where`, and `Grammar.to_ebnf` to print any grammar.
 
 ## Why not a regex?
 
