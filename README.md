@@ -377,8 +377,11 @@ with the same fields, `span`, `==` and `inspect`. Values transformed
 with `.map(:sym)`, `.action(:name)` and `.means(v)` compile, as does
 `.check(:name, "label")`: an action's (or check's) method is copied from
 its source, with the grammar methods it calls
-and the constants it reads, so copying needs the `prism` gem (bundled
-from Ruby 3.3). The generator raises `Birman::Compiler::Error`, naming
+and the constants it reads (`Float::INFINITY` and `Float::NAN` too), so
+copying needs the `prism` gem (bundled from Ruby 3.3). So is a node's
+`initialize` that only gives fields defaults (see Nodes): each node the
+generated parser builds gets the default for a field its value leaves
+out, a new one each time, as in Ruby. The generator raises `Birman::Compiler::Error`, naming
 the rule, for what it can't translate faithfully:
 
 - `.map { }` blocks (their source is lost) and custom matcher classes
@@ -389,13 +392,21 @@ the rule, for what it can't translate faithfully:
   lookaround, atomic group, backreference or lazy interval: Spinel's
   regexp engine tries every length on those, exponentially. Making the
   repeat atomic on its own, `(?>[a-z]{1,63})`, is allowed
-- `.to(Node)` on a value that may or may not be a Hash of fields
-- node classes with methods of their own (a `node(...) { }` body), and
+- `.to(Node)` that may leave out a field with no default: named parts
+  that miss one, or one value (or a value that may or may not be a Hash
+  of fields) for a node with a field past its first that has none
+- node classes with methods of their own (a `node(...) { }` body),
+  except an `initialize` that takes exactly the fields as keywords,
+  gives some literal defaults (nil, true, false, numbers, strings,
+  symbols, and arrays and hashes of them) and only calls `super`, as
+  `def initialize(name:, args: []) = super` does; and
   names that would clash in the generated code (a node called `Success`,
   a copied constant called `FAIL`, two copied constants of one name,
   rules `:a?` and `:a_3f`, which are both `a_3f` there)
 - actions that call `super`, Birman's own API (`keywords`, rules), or
-  classes the generated parser won't have
+  classes the generated parser won't have, or that read a constant path
+  other than `Float::INFINITY` and `Float::NAN` (`Math::PI`; copy it
+  into a constant of the grammar)
 - actions that call `Integer(...)`, `.hex`, `.oct` or `.to_i` (on
   anything but an Integer literal, since a receiver's type can't be
   told), or name them (`map(&:to_i)`): past 63 bits, in a Spinel

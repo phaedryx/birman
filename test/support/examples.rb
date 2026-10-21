@@ -196,6 +196,45 @@ module Examples
     TOKENS = ["[", "]", ",", " ", "1979-05-27", "T07:32", "Z", "-07:00", "+05:30", "ab", "é", "!", "1979", "x"].freeze
   end
 
+  # A node whose initialize gives a field a default, built from every
+  # shape of value (named parts, captures, one value, a Hash only known
+  # at parse time), and an action giving Float::INFINITY and NAN.
+  module Defaults
+    # f(a, b), g!, h, AB, ~x&y, ~x?, ~42, -inf
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      Call = node(:name, :args) { def initialize(name:, args: []) = super }
+
+      root :list
+      ignore :spacing
+
+      rule(:list) { sep_by(either(special, with_args, captured, bare, upper, shaped), ",") }
+      rule(:special) { match(/[-+]?(?:inf|nan)(?![a-z])/).action(:non_finite) }
+      rule(:with_args) { seq(name.as(:name), "(", sep_by(name, ",").as(:args), ")").to(Call) }
+      rule(:captured) { match(/(?<name>[a-z]+)!/).captures.to(Call) }
+      rule(:bare) { seq(name.as(:name)).to(Call) }
+      rule(:upper) { match(/[A-Z]+/).to(Call) }
+      rule(:shaped) { seq("~", only(shapes)).to(Call) }
+      rule(:shapes) { either(seq(name.as(:name), "&", sep_by1(name, "&").as(:args)), seq(name.as(:name), "?"), word) }
+      rule(:name) { match(/[a-z]+/) }
+      lexeme(:word) { match(/\d+/) }
+
+      private
+
+      def non_finite(text)
+        case text.delete_prefix("+")
+        when "inf" then Float::INFINITY
+        when "-inf" then -Float::INFINITY
+        else Float::NAN
+        end
+      end
+    end
+
+    TOKENS = ["f", "g", "(", ")", ",", " ", "!", "~", "&", "?", "AB", "42", "inf", "-", "nan", "x"].freeze
+  end
+
   # Grammars whose large_integer calls only ever see one type: in a
   # Spinel binary, each must compile and agree on its own.
   module OneType
@@ -267,7 +306,7 @@ module Examples
 
   def all(count)
     [let(count), calc(count), json(count), email(count), toml(count), numbers(count), cycles(count), dates(count),
-     moments(count), *one_type(count)]
+     moments(count), defaults(count), *one_type(count)]
   end
 
   def let(count)
@@ -330,6 +369,13 @@ module Examples
     entries = Array.new(count / 2) { Array.new(rng.rand(1..4)) { Dates::TOKENS.sample(random: rng) }.join(", ") }
     inputs = fixed + Differential.fuzz(Dates::TOKENS, rng, count, 8) + entries
     Example.new("dates", Dates::Grammar, "DatesCompiled", inputs)
+  end
+
+  def defaults(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    fixed = ["f(a, b), g!, h, AB, ~x&y&z, ~x?, ~42, -inf, +inf, nan", "f()", "f(a,", "~", "~x", "g !", "infx", ""]
+    inputs = fixed + Differential.fuzz(Defaults::TOKENS, rng, count, 8)
+    Example.new("defaults", Defaults::Grammar, "DefaultsCompiled", inputs)
   end
 
   def moments(count)

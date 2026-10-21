@@ -40,10 +40,10 @@ module TOMLExample
     Table       = node(:key)
     ArrayTable  = node(:key)
     InlineTable = node(:pairs)
-    # Date, time (nil for a date alone) and offset (nil for local time)
-    # as written, or a time of day alone; Document checks and converts them.
-    Moment      = node(:date, :time, :offset)
-    Clock       = node(:time)
+    # Date, time and offset as written, each nil when left out: a local
+    # date has no time, a local time no date, and only an offset
+    # date-time has an offset. Document checks and converts them.
+    Moment      = node(:date, :time, :offset) { def initialize(time:, date: nil, offset: nil) = super }
 
     root :document
 
@@ -154,7 +154,7 @@ module TOMLExample
       either(
         match(/(?<date>\d{4}-\d\d-\d\d)(?:[Tt ](?<time>\d\d:\d\d:\d\d(?:\.\d+)?)(?<offset>[Zz]|[+-]\d\d:\d\d)?)?/)
           .captures.to(Moment),
-        match(/\d\d:\d\d:\d\d(?:\.\d+)?/).to(Clock)
+        match(/(?<time>\d\d:\d\d:\d\d(?:\.\d+)?)/).captures.to(Moment)
       )
     end
 
@@ -169,9 +169,9 @@ module TOMLExample
 
     def float_value(text)
       case text.delete_prefix("+")
-      when "inf" then 1.0 / 0
-      when "-inf" then -1.0 / 0
-      when "nan", "-nan" then 0.0 / 0
+      when "inf" then Float::INFINITY
+      when "-inf" then -Float::INFINITY
+      when "nan", "-nan" then Float::NAN
       else Float(text.delete("_"))
       end
     end
@@ -283,7 +283,7 @@ module TOMLExample
     def value(value)
       case value
       in Grammar::InlineTable(pairs) then made({}, :inline).tap { |table| pairs.each { assign(table, _1) } }
-      in Grammar::Moment | Grammar::Clock then Moments.convert(value)
+      in Grammar::Moment then Moments.convert(value)
       in Array then made(value.map { value(_1) }, :static)
       else value
       end
@@ -299,13 +299,12 @@ module TOMLExample
     def dotted(key) = key.map { _1.match?(/\A[A-Za-z0-9_-]+\z/) ? _1 : _1.inspect }.join(".")
   end
 
-  # Checks a Grammar::Moment or Clock and makes it a Time, Date or
-  # LocalTime.
+  # Checks a Grammar::Moment and makes it a Time, Date or LocalTime.
   module Moments
     module_function
 
     def convert(moment)
-      return LocalTime.new(**time(moment)) if moment.is_a?(Grammar::Clock)
+      return LocalTime.new(**time(moment)) unless moment.date
 
       date = date(moment)
       return date unless moment.time
