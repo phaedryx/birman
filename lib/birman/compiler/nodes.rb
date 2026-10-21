@@ -48,7 +48,7 @@ module Birman
       def source(name, fields)
         <<~RUBY
           class #{name} < BirmanRT::Node
-            attr_reader #{fields.map(&:inspect).join(", ")}
+            #{"attr_reader #{fields.map(&:inspect).join(", ")}" unless fields.empty?}
 
             def initialize(#{[*fields, :span].join(", ")})
           #{[*fields, :span].map { "    @#{_1} = #{_1}" }.join("\n")}
