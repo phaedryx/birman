@@ -25,6 +25,9 @@ module BirmanRT
   # lookahead caught the commit). Written instead of deleting the key:
   # Hash#delete on Spinel's Integer-keyed Hash is O(size).
   ABSENT = -3
+  # A cycle's leader growing at a position, in its @gp_ table: the
+  # cycle's other rules skip the memo there.
+  GROWING = 1
 
   # Bignum literals: see BirmanRT.to_i and based_to_i.
   TEN19 = 10_000_000_000_000_000_000

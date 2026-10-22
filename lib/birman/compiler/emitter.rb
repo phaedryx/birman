@@ -760,6 +760,7 @@ module Birman
         lines = @rules.keys.flat_map do |name|
           (@valued.include?(name) ? %w[mp mv mf me] : %w[mp mf me]).map { "@#{_1}_#{ident(name)} = {}\n" }
         end
+        lines += @rules.keys.select { leads_others?(_1) }.map { "@gp_#{ident(_1)} = {}\n" }
         "def init_memos\n#{indent(lines.join)}end\n"
       end
 
@@ -772,13 +773,14 @@ module Birman
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
       # tried again there.
       def ref_method(name, call)
-        return growing_ref_method(name, call) if @grammar.left_recursion.cycle(name) == [name]
+        leader = @grammar.left_recursion.leader(name)
+        return growing_ref_method(name, call) if leader == name
 
         valued = @valued.include?(name)
         id = ident(name)
         <<~RUBY
           #{POSITION.chomp}
-          def ref_#{id}(p)
+          def ref_#{id}(p)#{"\n#{indent(bypass(name, leader, call)).chomp}" if leader}
             q = @mp_#{id}[p]
             unless q.nil? || q == ABSENT
               left_recursion(#{name.to_s.inspect}) if q == IN_PROGRESS
@@ -811,17 +813,50 @@ module Birman
         RUBY
       end
 
-      # Ref for a rule that calls itself before consuming input: seed-
-      # growing, as Birman::Context#grow. The memo entry starts as a
-      # failing seed, so the rule's own call is an ordinary memo hit, and
-      # each match that gets further replaces it. Each attempt starts with
-      # fresh failure tracking, so a commit failure reports only its own
-      # attempt's, and is then merged into the rule's, so every attempt's
-      # expectations are kept. A lookahead that catches a commit failure
-      # mid-growth abandons the entry (ABSENT), seed and all.
+      # The start of Ref for a rule in a cycle led by another rule, as
+      # Birman::Context#memoize: while the leader grows at p (its @gp_
+      # entry is GROWING), the rule is matched there afresh, without the
+      # memo, with fresh failure tracking merged into the caller's.
+      def bypass(name, leader, call)
+        id = ident(name)
+        <<~RUBY
+          if @gp_#{ident(leader)}[p] == GROWING
+            @position = p
+            of = @furthest
+            oe = @expected
+            @furthest = p
+            @expected = NONE
+            q = #{call.name}(p)
+          #{"  @v_ref_#{id} = #{call.value || "nil"} if q != FAIL" if @valued.include?(name)}
+            f = @furthest
+            ex = @expected
+            @furthest = of
+            @expected = oe
+            merge(f, ex)
+            return q
+          end
+        RUBY
+      end
+
+      # Does name lead a cycle through other rules too?
+      def leads_others?(name)
+        analysis = @grammar.left_recursion
+        analysis.leader(name) == name && !analysis.cycle(name).one?
+      end
+
+      # Ref for a cycle's leader: seed-growing, as Birman::Context#grow.
+      # The memo entry starts as a failing seed, so the rule's own call is
+      # an ordinary memo hit, and each match that gets further replaces
+      # it. Each attempt starts with fresh failure tracking, so a commit
+      # failure reports only its own attempt's, and is then merged into
+      # the rule's, so every attempt's expectations are kept. A leader of
+      # other rules marks p GROWING in its @gp_ table meanwhile. A
+      # lookahead that catches a commit failure mid-growth abandons the
+      # entry (ABSENT), seed, mark and all.
       def growing_ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
+        marks = leads_others?(name)
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
@@ -840,7 +875,7 @@ module Birman
             @furthest = p
             @expected = NONE
             @in_progress << @mp_#{id}
-            @in_progress_at << p
+            @in_progress_at << p#{"\n  @gp_#{id}[p] = GROWING\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}
             while true
               af = @furthest
               ae = @expected
@@ -858,7 +893,7 @@ module Birman
           #{"    @mv_#{id}[p] = #{call.value || "nil"}" if valued}
             end
             @in_progress.pop
-            @in_progress_at.pop
+            @in_progress_at.pop#{"\n  @gp_#{id}[p] = 0\n  @in_progress.pop\n  @in_progress_at.pop" if marks}
             q = @mp_#{id}[p]
           #{"  @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
             f = @furthest
