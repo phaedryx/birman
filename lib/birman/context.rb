@@ -27,7 +27,7 @@ module Birman
       @grammar = grammar
       @ignore_ref = ignore_rule && Ref.new(ignore_rule) # built once per parse, not per token
       @memo = {}
-      @growing = grammar.left_recursion.direct.then { _1 unless _1.empty? } # nil: nothing to look up
+      @growing = grammar.left_recursion.leaders.then { _1 unless _1.empty? } # nil: nothing to look up
       @seeds = {}
       @furthest = 0
       @expected = NOTHING_EXPECTED
@@ -119,21 +119,29 @@ module Birman
     # Rule name's memo entry at pos, computed by the block the first
     # time. The block returns [result, furthest, expected].
     #
-    # A rule that calls itself before consuming input (direct left
-    # recursion, see LeftRecursion#direct) is grown from a seed: see
-    # grow. Meeting any other rule again at the same position while it
-    # is still being matched means it reaches itself without consuming
-    # input in a way the grammar's ASTs don't show (through a custom
-    # matcher): that would never terminate, and it's a bug in the
-    # grammar, not the input, so it raises.
-    def memoize(name, pos, &)
+    # A cycle of rules that call each other before consuming input (left
+    # recursion) is grown from a seed at its leader (see
+    # LeftRecursion#leaders and grow). While the leader grows at pos, the
+    # cycle's other rules are matched there without the memo, and leave
+    # nothing in it: what they match there depends on the seed, which
+    # changes every round. Every way back to a rule of the
+    # cycle at pos passes through the leader's seed, so meeting any rule
+    # again at the same position while it is still being matched means
+    # it reaches itself without consuming input in a way the grammar's
+    # ASTs don't show (through a custom matcher): that would never
+    # terminate, and it's a bug in the grammar, not the input, so it
+    # raises.
+    def memoize(name, pos, &) # rubocop:disable Metrics
+      leader = @growing&.[](name) # nil without left recursion: no further lookups
+      return bypass(pos, &) if leader && bypass?(name, leader, pos)
+
       table = @memo[name] ||= {}
       entry = table[pos]
       return entry if entry && !entry.equal?(IN_PROGRESS)
       return seed(name, pos) if entry
 
       @position = pos
-      return grow(name, table, pos, &) if @growing&.include?(name)
+      return grow(name, table, pos, &) if leader.equal?(name)
 
       compute(table, pos, &)
     end
@@ -159,13 +167,22 @@ module Birman
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
     end
 
-    # Seed-growing (Warth et al. 2008). The rule is matched with its call
-    # to itself here failing, then again with that call returning the
-    # last match (the seed), for as long as the match gets further. It's
-    # a loop, so a longer chain uses no more stack. The memo entry stays
-    # IN_PROGRESS until the end; only the rule itself can meet it, since
-    # any other rule that could would be in an indirect cycle, which
-    # LeftRecursion#check! rejects.
+    def bypass?(name, leader, pos) = !leader.equal?(name) && @seeds[leader]&.key?(pos)
+
+    # A rule of a cycle whose leader grows at pos, matched there afresh
+    # each time. Rematching in one round repeats work only up to the
+    # cycle's own rules: everything else they call is memoized as usual.
+    def bypass(pos)
+      @position = pos
+      yield
+    end
+
+    # Seed-growing (Warth et al. 2008), at a cycle's leader only, as pegen
+    # does. The rule is matched with its call to itself here failing,
+    # then again with that call returning the last match (the seed), for
+    # as long as the match gets further. It's a loop, so a longer chain
+    # uses no more stack. The memo entry stays IN_PROGRESS until the end;
+    # every way back to it passes through its seed.
     #
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows

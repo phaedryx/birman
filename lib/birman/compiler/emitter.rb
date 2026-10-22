@@ -772,7 +772,7 @@ module Birman
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
       # tried again there.
       def ref_method(name, call)
-        return growing_ref_method(name, call) if @grammar.left_recursion.direct.include?(name)
+        return growing_ref_method(name, call) if @grammar.left_recursion.cycle(name) == [name]
 
         valued = @valued.include?(name)
         id = ident(name)

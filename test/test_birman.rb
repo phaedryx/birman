@@ -616,17 +616,18 @@ class BirmanTest < Minitest::Test
 
   def test_left_recursion_is_reported_by_rule_name
     g = grammar do
-      rule(:top) { either(seq(sum, "+", "1"), "1") }
-      rule(:sum) { top }
+      rule(:top) { either(seq(top, "+"), seq(sum, "-"), "1") }
+      rule(:sum) { either(seq(sum, "*"), seq(top, "/"), "1") }
     end
     error = assert_raises(ArgumentError) { g.parse("1+1") }
-    assert_match(/left recursion.*:top -> :sum/, error.message)
+    assert_match(/left recursion.*:top -> :top; :sum -> :sum/, error.message)
 
     g = grammar do
       rule(:top) { seq(other, "!") }
-      rule(:other) { either(top, "x") }
+      rule(:other) { top }
     end
-    assert_raises(ArgumentError) { g.parse("x!") }
+    error = assert_raises(ArgumentError) { g.parse("x!") }
+    assert_match(/rules :top -> :other -> :top have no alternative/, error.message)
   end
 
   def test_a_rule_retried_after_a_contained_commit_is_not_left_recursion

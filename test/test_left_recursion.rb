@@ -9,9 +9,9 @@ require_relative "../examples/email"
 require_relative "support/examples"
 
 # Left recursion is found from the grammar itself, on the first parse,
-# not only when some input happens to reach it. A rule that calls itself
-# is grown from a seed (see test_left_recursion_growth.rb); a cycle
-# through other rules raises.
+# not only when some input happens to reach it. Each cycle is grown from
+# a seed at its leader, a rule every way round it passes through (see
+# test_left_recursion_growth.rb); cycles with no such rule raise.
 class TestLeftRecursion < Minitest::Test
   def grammar(root = :top, &rules)
     Class.new do
@@ -23,9 +23,9 @@ class TestLeftRecursion < Minitest::Test
     end
   end
 
-  def assert_left_recursion(message, klass, input = "x")
+  def assert_unsupported(message, klass, input = "x")
     error = assert_raises(ArgumentError) { klass.parse(input) }
-    assert_equal "indirect left recursion isn't supported yet: #{message} " \
+    assert_equal "left recursion through cycles with no rule in common isn't supported: #{message} " \
                  "(each rule can call the next without consuming input)", error.message
   end
 
@@ -33,7 +33,14 @@ class TestLeftRecursion < Minitest::Test
   def assert_direct(klass, rules = %i[top])
     analysis = klass.new.left_recursion
     assert_equal rules.map { [_1] }, analysis.cycles
-    assert_equal rules.to_set, analysis.direct
+    assert_equal rules.to_h { [_1, _1] }, analysis.leaders
+  end
+
+  # The cycles found, and the leader each member's cycle grows at.
+  def assert_leaders(klass, leaders)
+    analysis = klass.new.left_recursion
+    assert_equal leaders.keys.group_by { leaders[_1] }.values.map(&:sort), analysis.cycles.map(&:sort)
+    assert_equal leaders, analysis.leaders
   end
 
   def refute_left_recursion(klass, input = "x")
@@ -65,44 +72,70 @@ class TestLeftRecursion < Minitest::Test
     assert_match(/the alternative `num` comes before `expr "\+" num`/, error.message)
   end
 
-  def test_indirect_left_recursion_names_the_cycle
+  def test_indirect_left_recursion_parses
     g = grammar(:a) do
-      rule(:a) { either("x", seq(b, "!")) }
-      rule(:b) { either("y", seq(a, "?")) }
+      rule(:a) { either(seq(b, "!"), "x") }
+      rule(:b) { either(seq(a, "?"), "y") }
     end
-    assert_left_recursion ":a -> :b -> :a", g
+    assert_leaders g, { a: :a, b: :a }
+    assert_equal [["x", "?"], "!"], g.parse!("x?!")
+    assert_equal [[["y", "!"], "?"], "!"], g.parse!("y!?!")
+    assert_equal [["y", "!"], "?"], Class.new(g) { root :b }.parse!("y!?")
   end
 
-  def test_the_cycle_starts_at_the_rule_reached_first
+  # Of the rules every way round the cycle passes through, the leader is
+  # the one the grammar uses first.
+  def test_the_leader_is_the_first_rule_every_cycle_passes_through
     g = grammar do
       rule(:top) { seq("(", b) }
-      rule(:b) { either("x", c) }
-      rule(:c) { seq(d, "!") }
-      rule(:d) { seq(b, "?") }
+      rule(:b) { either(seq(c, "!"), "x") }
+      rule(:c) { seq(d, "?") }
+      rule(:d) { b }
     end
-    assert_left_recursion ":b -> :c -> :d -> :b", g
-  end
+    assert_leaders g, { b: :b, c: :b, d: :b }
 
-  def test_every_indirect_cycle_is_named
-    g = grammar do
-      rule(:top) { either(seq(a, "!"), seq(b, "?"), seq(d, "#")) }
-      rule(:a) { either(seq(a, "1"), "x") }
-      rule(:b) { either("y", seq(c, "2")) }
-      rule(:c) { seq(b, "3") }
-      rule(:d) { either("z", seq(e, "4")) }
-      rule(:e) { seq(d, "5") }
+    # :b calls itself too, so every cycle passes through it, not :a.
+    g = grammar(:a) do
+      rule(:a) { either(seq(b, "1"), "x") }
+      rule(:b) { either(seq(b, "2"), seq(a, "3"), "y") }
     end
-    assert_left_recursion ":b -> :c -> :b; :d -> :e -> :d", g
-  end
+    assert_leaders g, { a: :b, b: :b }
 
-  # A rule that calls itself and is in a cycle with others is indirect.
-  def test_a_rule_calling_itself_inside_a_bigger_cycle_raises
     g = grammar do
       rule(:top) { either(seq(top, "1"), seq(b, "2"), "x") }
       rule(:b) { seq(top, "3") }
     end
-    assert_left_recursion ":top -> :b -> :top", g
-    assert_empty Birman::LeftRecursion.new(g.to_ast).direct
+    assert_leaders g, { top: :top, b: :top }
+  end
+
+  def test_every_cycle_gets_a_leader
+    g = grammar do
+      rule(:top) { either(seq(a, "!"), seq(b, "?"), seq(d, "#")) }
+      rule(:a) { either(seq(a, "1"), "x") }
+      rule(:b) { either(seq(c, "2"), "y") }
+      rule(:c) { seq(b, "3") }
+      rule(:d) { either(seq(e, "4"), "z") }
+      rule(:e) { seq(d, "5") }
+    end
+    assert_leaders g, { a: :a, b: :b, c: :b, d: :d, e: :d }
+  end
+
+  # No one rule is in both :a -> :b -> :a and :c -> :d -> :c, so there is
+  # nowhere to grow both from.
+  def test_cycles_with_no_rule_in_common_raise
+    g = grammar(:a) do
+      rule(:a) { seq(b, "1") }
+      rule(:b) { either(seq(a, "2"), seq(c, "3")) }
+      rule(:c) { seq(d, "4") }
+      rule(:d) { either(seq(c, "5"), seq(a, "6"), "x") }
+    end
+    assert_unsupported ":a -> :b -> :a; :c -> :d -> :c", g
+
+    g = grammar(:a) do
+      rule(:a) { either(seq(a, "1"), seq(b, "2"), "x") }
+      rule(:b) { either(seq(b, "3"), seq(a, "4"), "y") }
+    end
+    assert_unsupported ":a -> :a; :b -> :b", g
   end
 
   def test_left_recursion_hidden_behind_a_nullable_prefix
@@ -219,7 +252,8 @@ class TestLeftRecursion < Minitest::Test
       rule(:top) { seq("", "x") }
       rule(:sp) { either(seq(top, "!"), match(/ */)) }
     end
-    assert_left_recursion ":top -> :sp -> :top", g
+    assert_leaders g, { top: :top, sp: :top }
+    assert g.parse(" x").success?
 
     g = grammar do
       ignore :sp
@@ -227,7 +261,8 @@ class TestLeftRecursion < Minitest::Test
       lexeme(:sign) { match(/-?/) }
       rule(:sp) { either(seq(top, "!"), match(/ */)) }
     end
-    assert_left_recursion ":top -> :sign -> :sp -> :top", g
+    assert_leaders g, { top: :top, sign: :top, sp: :top }
+    assert g.parse("- x").success?
   end
 
   def test_tokens_that_consume_run_the_ignore_rule_after_input
@@ -376,6 +411,51 @@ class TestLeftRecursion < Minitest::Test
       rule(:num) { match(/\d/) }
     end
     assert_direct g
+  end
+
+  def test_a_cycle_with_no_base_case
+    message = "left-recursive rules :x -> :expr -> :x have no alternative that doesn't start with one of " \
+              "them, so they can never match; add one that doesn't, as a base case"
+    [
+      grammar(:x) do
+        rule(:x) { expr }
+        rule(:expr) { seq(x, "-", match(/\d/)) }
+      end,
+      grammar(:x) do
+        rule(:x) { either(seq(x, "+"), expr) }
+        rule(:expr) { either(seq(x, "-"), seq(x, "*").label("product")) }
+      end
+    ].each { assert_left_recursion_error message, _1 }
+
+    # One base case anywhere round the cycle is enough.
+    g = grammar(:x) do
+      rule(:x) { expr }
+      rule(:expr) { either(seq(x, "-", term), term) }
+      rule(:term) { match(/\d/) }
+    end
+    assert_leaders g, { x: :x, expr: :x }
+  end
+
+  # Any rule of the cycle counts as the rule itself: an alternative that
+  # starts with none of them can't come before one that does.
+  def test_an_alternative_before_one_that_calls_the_cycle_shadows_it
+    g = grammar(:x) do
+      rule(:x) { expr }
+      rule(:expr) { either(num, seq(x, "-", num)) }
+      rule(:num) { match(/\d/) }
+    end
+    assert_left_recursion_error "in left-recursive rule :expr, the alternative `num` comes before " \
+                                "`x \"-\" num`, so the rule can never grow past it; put the alternatives that " \
+                                "start with :x or :expr first", g
+
+    g = grammar(:x) do
+      rule(:x) { either(num, seq(x, "+", num), seq(expr, "*", num)).quiet }
+      rule(:expr) { either(seq(x, "-", num), num) }
+      rule(:num) { match(/\d/) }
+    end
+    assert_left_recursion_error "in left-recursive rule :x, the alternative `num` comes before " \
+                                "`x \"+\" num`, so the rule can never grow past it; put the alternatives that " \
+                                "start with :x or :expr first", g
   end
 
   # --- Not left recursion ---
@@ -564,6 +644,7 @@ class TestLeftRecursion < Minitest::Test
     assert_equal :expr, a.leader(:term)
     assert_equal :expr, a.leader(:expr)
     assert_nil a.leader(:top)
+    assert_equal({ expr: :expr, term: :expr, self_ref: :self_ref }, a.leaders)
     assert_equal %i[expr term], a.cycle(:term)
   end
 end
