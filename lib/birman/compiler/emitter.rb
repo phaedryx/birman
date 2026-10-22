@@ -760,8 +760,19 @@ module Birman
         lines = @rules.keys.flat_map do |name|
           (@valued.include?(name) ? %w[mp mv mf me] : %w[mp mf me]).map { "@#{_1}_#{ident(name)} = {}\n" }
         end
-        lines += @rules.keys.select { leads_others?(_1) }.map { "@gp_#{ident(_1)} = {}\n" }
+        lines += @rules.keys.flat_map { round_memos(_1) }
         "def init_memos\n#{indent(lines.join)}end\n"
+      end
+
+      # A cycle's leader numbers its rounds in @gp_; the cycle's other
+      # rules keep a memo for the round (see in_round).
+      def round_memos(name)
+        leader = @grammar.left_recursion.leader(name)
+        tables = if leader.nil? then []
+                 elsif leader == name then leads_others?(name) ? %w[gp] : []
+                 else @valued.include?(name) ? %w[rr rp rv rf re] : %w[rr rp rf re]
+                 end
+        tables.map { "@#{_1}_#{ident(name)} = {}\n" }
       end
 
       # Ref: the rule's memo entry at p, computed the first time with
@@ -778,16 +789,17 @@ module Birman
 
         valued = @valued.include?(name)
         id = ident(name)
+        hit = leader ? "unless q.nil? || q == ABSENT || q == IN_PROGRESS" : "unless q.nil? || q == ABSENT"
         <<~RUBY
           #{POSITION.chomp}
-          def ref_#{id}(p)#{"\n#{indent(bypass(name, leader, call)).chomp}" if leader}
+          def ref_#{id}(p)
             q = @mp_#{id}[p]
-            unless q.nil? || q == ABSENT
+            #{hit}
               left_recursion(#{name.to_s.inspect}) if q == IN_PROGRESS
           #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
               merge(@mf_#{id}[p], @me_#{id}[p])
               return q
-            end
+            end#{"\n#{indent(in_round(name, leader, call)).chomp}" if leader}
             @mp_#{id}[p] = IN_PROGRESS
             @position = p
             of = @furthest
@@ -813,25 +825,40 @@ module Birman
         RUBY
       end
 
-      # The start of Ref for a rule in a cycle led by another rule, as
-      # Birman::Context#memoize: while the leader grows at p (its @gp_
-      # entry is GROWING), the rule is matched there afresh, without the
-      # memo, with fresh failure tracking merged into the caller's.
-      def bypass(name, leader, call)
+      # The middle of Ref for a rule in a cycle led by another rule, as
+      # Birman::Context#memoize, after a final memo hit: while the leader
+      # grows at p (its @gp_ entry is the round's number, above 0), the
+      # rule is memoized there for the round only, in its @rr_ (the round
+      # each entry is for), @rp_, @rv_, @rf_ and @re_ tables, with fresh
+      # failure tracking merged into the caller's.
+      def in_round(name, leader, call)
+        valued = @valued.include?(name)
         id = ident(name)
         <<~RUBY
-          if @gp_#{ident(leader)}[p] == GROWING
+          g = @gp_#{ident(leader)}[p]
+          unless g.nil? || g <= 0
+            r = @rr_#{id}[p]
+            unless r.nil? || r != g
+              q = @rp_#{id}[p]
+          #{"    @v_ref_#{id} = @rv_#{id}[p] if q != FAIL" if valued}
+              merge(@rf_#{id}[p], @re_#{id}[p])
+              return q
+            end
             @position = p
             of = @furthest
             oe = @expected
             @furthest = p
             @expected = NONE
             q = #{call.name}(p)
-          #{"  @v_ref_#{id} = #{call.value || "nil"} if q != FAIL" if @valued.include?(name)}
+          #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @rv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
             f = @furthest
             ex = @expected
             @furthest = of
             @expected = oe
+            @rr_#{id}[p] = g
+            @rp_#{id}[p] = q
+            @rf_#{id}[p] = f
+            @re_#{id}[p] = ex
             merge(f, ex)
             return q
           end
@@ -850,9 +877,10 @@ module Birman
       # it. Each attempt starts with fresh failure tracking, so a commit
       # failure reports only its own attempt's, and is then merged into
       # the rule's, so every attempt's expectations are kept. A leader of
-      # other rules marks p GROWING in its @gp_ table meanwhile. A
+      # other rules numbers each round (@round counts them across the
+      # parse) in its @gp_ table at p, and sets it to 0 when done. A
       # lookahead that catches a commit failure mid-growth abandons the
-      # entry (ABSENT), seed, mark and all.
+      # entry (ABSENT), seed, round number and all.
       def growing_ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
@@ -875,8 +903,8 @@ module Birman
             @furthest = p
             @expected = NONE
             @in_progress << @mp_#{id}
-            @in_progress_at << p#{"\n  @gp_#{id}[p] = GROWING\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}
-            while true
+            @in_progress_at << p#{"\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}
+            while true#{"\n    @round += 1\n    @gp_#{id}[p] = @round" if marks}
               af = @furthest
               ae = @expected
               @furthest = p

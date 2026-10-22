@@ -29,6 +29,9 @@ module Birman
       @memo = {}
       @growing = grammar.left_recursion.leaders.then { _1 unless _1.empty? } # nil: nothing to look up
       @seeds = {}
+      # { leader of other rules => { pos it grows at => this round's memo
+      # for the other rules } }
+      @rounds = grammar.left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
       @furthest = 0
       @expected = NOTHING_EXPECTED
       @token_ends = {}
@@ -122,9 +125,11 @@ module Birman
     # A cycle of rules that call each other before consuming input (left
     # recursion) is grown from a seed at its leader (see
     # LeftRecursion#leaders and grow). While the leader grows at pos, the
-    # cycle's other rules are matched there without the memo, and leave
-    # nothing in it: what they match there depends on the seed, which
-    # changes every round. Every way back to a rule of the
+    # cycle's other rules are memoized there in a table of the round's
+    # own, not the memo: what they match there depends on the seed, which
+    # changes every round. (A match of theirs already in the memo there is
+    # final: it was made after the leader finished, or without it.)
+    # Every way back to a rule of the
     # cycle at pos passes through the leader's seed, so meeting any rule
     # again at the same position while it is still being matched means
     # it reaches itself without consuming input in a way the grammar's
@@ -132,12 +137,13 @@ module Birman
     # terminate, and it's a bug in the grammar, not the input, so it
     # raises.
     def memoize(name, pos, &) # rubocop:disable Metrics
-      leader = @growing&.[](name) # nil without left recursion: no further lookups
-      return bypass(pos, &) if leader && bypass?(name, leader, pos)
-
       table = @memo[name] ||= {}
       entry = table[pos]
       return entry if entry && !entry.equal?(IN_PROGRESS)
+
+      leader = @growing&.[](name) # nil without left recursion: no further lookups
+      round = @rounds[leader]&.[](pos) if leader
+      return in_round(round, name, pos, &) if round && !leader.equal?(name)
       return seed(name, pos) if entry
 
       @position = pos
@@ -158,23 +164,28 @@ module Birman
     private
 
     # The memo is a Hash per rule, keyed by position, so no key arrays.
-    def compute(table, pos)
-      table[pos] = IN_PROGRESS
-      table[pos] = yield
+    # (A round's table is keyed by rule instead.)
+    def compute(table, key)
+      table[key] = IN_PROGRESS
+      table[key] = yield
     ensure
       # A commit failure caught by a lookahead unwinds through here; the
       # rule may be tried again at this position afterwards.
-      table.delete(pos) if table[pos].equal?(IN_PROGRESS)
+      table.delete(key) if table[key].equal?(IN_PROGRESS)
     end
 
-    def bypass?(name, leader, pos) = !leader.equal?(name) && @seeds[leader]&.key?(pos)
+    # A rule of a cycle whose leader grows at pos, memoized in the round's
+    # table (keyed by rule): once a round, however many alternatives call
+    # it, or a cycle of n rules with k alternatives each would take
+    # k**(n - 1) matches a round. Back at itself without the leader's seed
+    # between, it raises as memoize does.
+    def in_round(round, name, pos, &)
+      entry = round[name]
+      return entry if entry && !entry.equal?(IN_PROGRESS)
+      return seed(name, pos) if entry
 
-    # A rule of a cycle whose leader grows at pos, matched there afresh
-    # each time. Rematching in one round repeats work only up to the
-    # cycle's own rules: everything else they call is memoized as usual.
-    def bypass(pos)
       @position = pos
-      yield
+      compute(round, name, &)
     end
 
     # Seed-growing (Warth et al. 2008), at a cycle's leader only, as pegen
@@ -182,7 +193,8 @@ module Birman
     # then again with that call returning the last match (the seed), for
     # as long as the match gets further. It's a loop, so a longer chain
     # uses no more stack. The memo entry stays IN_PROGRESS until the end;
-    # every way back to it passes through its seed.
+    # every way back to it passes through its seed. A leader of other
+    # rules starts each round with an empty table for them at pos.
     #
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows
@@ -191,9 +203,11 @@ module Birman
       seeds = @seeds[name] ||= {}
       seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
       table[pos] = IN_PROGRESS
+      rounds = @rounds[name]
       diagnostics = [pos, NOTHING_EXPECTED]
       # Not loop: its block adds frames to every level of nesting.
       while true # rubocop:disable Style/InfiniteLoop
+        rounds[pos] = {} if rounds
         result, furthest, expected = yield
         diagnostics = further(diagnostics, furthest, expected)
         break unless result && result.pos > (best[0]&.pos || -1)
@@ -203,6 +217,7 @@ module Birman
       table[pos] = [best[0], *diagnostics]
     ensure
       seeds&.delete(pos) # nil if the stack ran out before it was set
+      rounds&.delete(pos)
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
     end
 

@@ -272,6 +272,31 @@ class TestIndirectLeftRecursion < Minitest::Test
     assert_same_results g, ["1 - 2 ?", "1 - 2", "1 - x", "1 - 2 - x", "1 ?", "x"]
   end
 
+  # Each rule of a cycle is matched once per round at the growing
+  # position, however many of the previous rule's alternatives call it:
+  # without that, a cycle of n rules with k alternatives each takes
+  # k**(n - 1) matches a round.
+  def test_a_long_cycle_matches_each_rule_once_a_round
+    matches = Hash.new(0)
+    assert long_cycle(matches).parse("1*********").success? # each rule tries + and - before *, round the cycle twice
+    assert_operator matches.values.max, :<=, 3 # once in each of the three rounds
+    assert_same_results long_cycle, ["1*********", "1++-+*", "1****", "1***", "1", ""]
+  end
+
+  # r0 -> r1 -> r2 -> r3 -> r4 -> r0, each through three alternatives;
+  # r4 ends in a digit. Counted in matches, if given, per rule.
+  def long_cycle(matches = nil)
+    grammar(:r0) do
+      5.times do |i|
+        succ = :"r#{(i + 1) % 5}"
+        rule(:"r#{i}") do
+          body = either(*%w[+ - * /].first(3).map { seq(public_send(succ), _1) }, *(match(/\d/) if i == 4))
+          matches ? body.map { (matches[i] += 1) && _1 } : body
+        end
+      end
+    end
+  end
+
   # --- Depth ---
 
   def test_a_long_chain_uses_no_extra_stack
