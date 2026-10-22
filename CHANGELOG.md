@@ -11,15 +11,21 @@
   itself (it could never match), or with one before an alternative that
   does (it would never grow), raises `ArgumentError` on the first parse
   and in `to_ruby`, saying how to fix it.
-- **Changed:** indirect left recursion is found from the grammar, not
-  the input. A grammar with a cycle of rules that can each call the next
-  without consuming input raises `ArgumentError` on its first parse,
-  whatever the input, and so does `to_ruby`, naming each cycle:
-  `indirect left recursion isn't supported yet: :expr -> :term -> :expr
-  (each rule can call the next without consuming input)`. Before, any
-  left recursion raised, and only when some input reached it, naming
-  one rule. Through a custom matcher with no `to_ast` it's still found
-  only then, with the old message.
+- **Added:** indirect left recursion, through a cycle of rules
+  (`sum -> terms -> sum`). Each cycle grows from a seed at its leader,
+  as pegen does: the first rule that every way round it passes through.
+  The checks above cover the whole cycle. A parse that enters a cycle
+  at another rule gets a shorter match than growing from there would:
+  see the README's Left recursion section.
+- **Changed:** left recursion is found from the grammar, not the input.
+  A grammar with cycles that have no rule in common raises
+  `ArgumentError` on its first parse, whatever the input, and so does
+  `to_ruby`, naming them: `left recursion through cycles with no rule
+  in common isn't supported: :a -> :a; :b -> :b (each rule can call the
+  next without consuming input)`. Before, any left recursion raised,
+  and only when some input reached it, naming one rule. Through a
+  custom matcher with no `to_ast` it's still found only then, with the
+  old message.
 - **Changed:** the first parse builds every rule reachable from the
   root and the ignore rule, so a rule whose matcher can't be built
   (`.captures` on a pattern with no named groups, say) raises then,
