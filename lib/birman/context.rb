@@ -170,12 +170,13 @@ module Birman
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows
     # what was missing ("1 +" expected a number after the "+").
-    def grow(name, table, pos) # rubocop:disable Metrics/MethodLength
+    def grow(name, table, pos) # rubocop:disable Metrics
       seeds = @seeds[name] ||= {}
       seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
       table[pos] = IN_PROGRESS
       diagnostics = [pos, NOTHING_EXPECTED]
-      loop do
+      # Not loop: its block adds frames to every level of nesting.
+      while true # rubocop:disable Style/InfiniteLoop
         result, furthest, expected = yield
         diagnostics = further(diagnostics, furthest, expected)
         break unless result && result.pos > (best[0]&.pos || -1)

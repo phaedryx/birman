@@ -337,10 +337,17 @@ module Examples
     Example.new("calc", Calc::Grammar, "CalcCompiled", inputs)
   end
 
-  def left_calc(count) = calc(count).with(name: "leftcalc", grammar: LeftCalc::Grammar, namespace: "LeftCalcCompiled")
+  def left_calc(count) = left_calc_like(count, "leftcalc", LeftCalc::Grammar, "LeftCalcCompiled")
 
-  def left_calc_commit(count)
-    calc(count).with(name: "leftcalccommit", grammar: LeftCalc::Committed, namespace: "LeftCalcCommitCompiled")
+  def left_calc_commit(count) = left_calc_like(count, "leftcalccommit", LeftCalc::Committed, "LeftCalcCommitCompiled")
+
+  # calc's inputs, nested 100 deep rather than 200. Growing uses more
+  # stack per level than infix, and on Ruby 3.2 the interpreter runs out
+  # just short of 200, where the generated parser doesn't: a difference
+  # in stack, not in parsing. 100 still passes Spinel's 64 begin blocks.
+  def left_calc_like(count, name, grammar, namespace)
+    inputs = calc(count).inputs.map { _1.gsub("(" * 200, "(" * 100).gsub(")" * 199, ")" * 99) }
+    Example.new(name, grammar, namespace, inputs)
   end
 
   def json(count)
