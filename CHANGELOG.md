@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+- **Changed:** left recursion is found from the grammar, not the input.
+  A left-recursive grammar raises `ArgumentError` on its first parse,
+  whatever the input, and so does `to_ruby`, naming each cycle:
+  `left recursion: :expr -> :term -> :expr (each rule can call the next
+  without consuming input)`. Before, it raised only when some input
+  reached the recursion, naming one rule. Through a custom matcher
+  with no `to_ast` it's still found only then, with the old message.
+- **Changed:** the first parse builds every rule reachable from the
+  root and the ignore rule, so a rule whose matcher can't be built
+  (`.captures` on a pattern with no named groups, say) raises then,
+  even if the input never reaches it. An undefined rule still raises
+  only when reached.
+- **Changed:** `to_ast` has a `[:lexeme, inner]` node: inner, then the
+  ignore rule. Lexeme rules show as one (`lexeme(:num) { match(/\d+/) }`
+  was `[:pat, "/\\d+/"]`), and so does an empty literal
+  (`[:lexeme, [:str, ""]]`). Literals with text are still
+  `[:str, text]`. `to_ebnf` is unchanged.
+- **Changed:** `left_recursion` can't be a rule name: it's a method of
+  every grammar now.
+
 - **Added:** matchers without a grammar class. The combinators are
   available on `Birman` (`Birman.seq`, `Birman.str`, `Birman.match`...),
   and `Birman.parse(matcher, input, ignore: nil)` and `Birman.parse!`

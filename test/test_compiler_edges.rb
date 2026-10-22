@@ -422,15 +422,16 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!"]
   end
 
-  # A rule that only recurses gives nothing; what reads it is refused
-  # rather than overflowing the stack.
+  # A rule whose value only comes from itself gives nothing; what reads
+  # it is refused rather than overflowing the stack. (The "(" keeps it
+  # from being left recursion, which to_ruby would reject first.)
   def test_map_to_i_on_a_rule_that_only_recurses
     g = grammar do
       rule(:top) { a.map(:to_i) }
-      rule(:a) { b.label("x") }
+      rule(:a) { seq("(", only(b.label("x")), ")") }
       rule(:b) { a }
     end
-    assert_raises(ArgumentError) { g.parse("1") }
+    assert g.parse("(1)").failure?
     assert_refused g, /\.map\(:to_i\)/
   end
 

@@ -472,8 +472,18 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["x", "x.", "x!?", ""]
   end
 
-  def test_left_recursion_raises_like_the_interpreter
+  def test_left_recursion_is_rejected_before_generating
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
+    error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
+    assert_equal "left recursion: :top -> :top (each rule can call the next without consuming input)", error.message
+  end
+
+  # The generated parser keeps its own check, for left recursion the
+  # static one misses. Nothing known slips past that one, so it's
+  # switched off here to reach the generated check.
+  def test_left_recursion_the_static_check_misses_raises_like_the_interpreter
+    g = grammar { rule(:top) { (top >> "x") | str("y") } }
+    g.define_method(:left_recursion) { nil }
     parser = Differential.load(g, "CompilerTestParser")
     error = assert_raises(ArgumentError) { parser.new("yx").parse }
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message

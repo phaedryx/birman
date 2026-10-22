@@ -1,0 +1,458 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require_relative "../examples/calc"
+require_relative "../examples/json"
+require_relative "../examples/query"
+require_relative "../examples/toml"
+require_relative "../examples/email"
+
+# Left recursion is found from the grammar itself, on the first parse,
+# not only when some input happens to reach it.
+class TestLeftRecursion < Minitest::Test
+  def grammar(root = :top, &rules)
+    Class.new do
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      self.root(root)
+      class_eval(&rules)
+    end
+  end
+
+  def assert_left_recursion(message, klass, input = "x")
+    error = assert_raises(ArgumentError) { klass.parse(input) }
+    assert_equal "left recursion: #{message} (each rule can call the next without consuming input)", error.message
+  end
+
+  def refute_left_recursion(klass, input = "x")
+    klass.parse(input) # raises if the grammar is left-recursive
+    pass
+  end
+
+  def analysis(rules) = Birman::LeftRecursion.new(rules)
+
+  # --- Found before any input reaches it ---
+
+  def test_direct_left_recursion_raises_on_input_that_never_reaches_it
+    g = grammar(:expr) do
+      rule(:expr) { either(num, seq(expr, "+", num)) }
+      rule(:num) { match(/\d+/) }
+    end
+    assert_left_recursion ":expr -> :expr", g, "1"
+  end
+
+  def test_indirect_left_recursion_names_the_cycle
+    g = grammar(:a) do
+      rule(:a) { either("x", seq(b, "!")) }
+      rule(:b) { either("y", seq(a, "?")) }
+    end
+    assert_left_recursion ":a -> :b -> :a", g
+  end
+
+  def test_the_cycle_starts_at_the_rule_reached_first
+    g = grammar do
+      rule(:top) { seq("(", b) }
+      rule(:b) { either("x", c) }
+      rule(:c) { seq(d, "!") }
+      rule(:d) { seq(b, "?") }
+    end
+    assert_left_recursion ":b -> :c -> :d -> :b", g
+  end
+
+  def test_every_cycle_is_named
+    g = grammar do
+      rule(:top) { either(seq(a, "!"), seq(b, "?")) }
+      rule(:a) { either("x", seq(a, "1")) }
+      rule(:b) { either("y", seq(c, "2")) }
+      rule(:c) { seq(b, "3") }
+    end
+    assert_left_recursion ":a -> :a; :b -> :c -> :b", g
+  end
+
+  def test_left_recursion_hidden_behind_a_nullable_prefix
+    g = grammar do
+      rule(:top) { either("x", seq(str("-").maybe, top, "!")) }
+    end
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar do
+      rule(:top) { either("x", seq(str("-").rep, top, "!")) }
+    end
+    assert_left_recursion ":top -> :top", g
+  end
+
+  def test_left_recursion_behind_nullable_rules
+    g = grammar do
+      rule(:top) { either("x", seq(sign, top)) }
+      rule(:sign) { either(str("-"), str("+"), seq(blank, blank)) }
+      rule(:blank) { str("") }
+    end
+    assert_left_recursion ":top -> :top", g
+  end
+
+  def test_left_recursion_behind_patterns_that_match_nothing
+    g = grammar { rule(:top) { either("x", seq(match(/ */), top)) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", seq(match(/ +/), top)) } }
+    refute_left_recursion g
+  end
+
+  def test_a_pattern_that_never_matches_hides_no_left_recursion
+    g = grammar { rule(:top) { either("x", seq(match(/(?=y)(?!y)/), top, "!")) } }
+    refute_left_recursion g
+
+    # never is a hook for subclasses to override.
+    g = grammar do
+      rule(:prefix) { never }
+      rule(:top) { either(seq(prefix, top), "x") }
+    end
+    refute_left_recursion g
+  end
+
+  def test_a_rep_of_at_most_none_never_calls_its_inner
+    g = grammar { rule(:top) { either(seq(top.rep(0, 0), "x"), "y") } }
+    refute_left_recursion g, "x"
+  end
+
+  def test_left_recursion_behind_patterns_that_only_look
+    [/(?=y)/, /(?!y)/, /(?<=y)/, /(?<!y)z?/, /\b/, /\B/, /\G/, /\Z/, /^/, /$/].each do |re|
+      g = grammar { rule(:top) { either("x", seq(match(re), top, "!")) } }
+      error = assert_raises(ArgumentError, re.inspect) { g.parse("x") }
+      assert_match(/left recursion: :top -> :top/, error.message, re.inspect)
+    end
+  end
+
+  def test_left_recursion_behind_lookaheads
+    g = grammar { rule(:top) { either("x", seq(match(/y/).absent, top, "!")) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", seq(match(/y/).present, top, "!")) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", match(/y/) & top) } }
+    assert_left_recursion ":top -> :top", g
+  end
+
+  def test_a_lookahead_that_reenters_its_rule_loops_too
+    g = grammar { rule(:top) { either(top.absent >> str("x"), str("y")) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { top.present & str("x") } }
+    assert_left_recursion ":top -> :top", g
+  end
+
+  def test_left_recursion_through_wrappers
+    node = Birman.node(:value)
+    wrappers = {
+      label: ->(m) { m.label("thing") },
+      quiet: lambda(&:quiet),
+      map: ->(m) { m.map(&:to_s) },
+      send: ->(m) { m.map(:to_s) },
+      means: ->(m) { m.means(1) },
+      action: ->(m) { m.action(:itself) },
+      check: ->(m) { m.check(:itself, "thing") },
+      as: ->(m) { m.as(:x) },
+      to: ->(m) { m.to(node) }
+    }
+    wrappers.each do |name, wrap|
+      g = grammar { rule(:top) { either("x", seq(wrap.call(top), "!")) } }
+      error = assert_raises(ArgumentError, "through #{name}") { g.parse("x") }
+      assert_match(/left recursion: :top -> :top/, error.message, "through #{name}")
+    end
+  end
+
+  def test_left_recursion_through_combinators
+    node = Birman.node(:op, :left, :right)
+    g = grammar { rule(:top) { infix(top, "+", node:) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", sep_by(top, ",")) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", seq(top, commit, "!")) } }
+    assert_left_recursion ":top -> :top", g
+
+    g = grammar { rule(:top) { either("x", top > "!") } }
+    assert_left_recursion ":top -> :top", g
+  end
+
+  # A lexeme runs the ignore rule where its token ends: where it began,
+  # if the token was empty.
+  def test_left_recursion_through_the_ignore_rule_after_an_empty_token
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq("", "x") }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    assert_left_recursion ":top -> :sp -> :top", g
+
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq(sign, "x") }
+      lexeme(:sign) { match(/-?/) }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    assert_left_recursion ":top -> :sign -> :sp -> :top", g
+  end
+
+  def test_tokens_that_consume_run_the_ignore_rule_after_input
+    g = grammar do
+      ignore :sp
+      rule(:top) { seq("x", num) }
+      lexeme(:num) { match(/\d+/) }
+      rule(:sp) { either(seq(top, "!"), match(/ */)) }
+    end
+    refute_left_recursion g, "x1"
+  end
+
+  def test_the_ignore_rule_is_checked
+    g = grammar do
+      ignore :spacing
+      rule(:top) { "x" }
+      rule(:spacing) { either(match(/\s+/), seq(spacing, "#")) }
+    end
+    assert_left_recursion ":spacing -> :spacing", g
+  end
+
+  def test_rules_nothing_reaches_are_not_checked
+    g = grammar do
+      rule(:top) { "x" }
+      rule(:unused) { seq(unused, "x") }
+    end
+    refute_left_recursion g
+  end
+
+  def test_fixing_the_rule_lets_the_grammar_parse
+    g = grammar { rule(:top) { either("x", seq(top, "!")) } }
+    assert_raises(ArgumentError) { g.parse("x") }
+    assert_raises(ArgumentError, "the check isn't skipped on a later parse") { g.parse("x") }
+
+    g.rule(:top) { either(seq("x", "!", top), "x") }
+    assert g.parse("x!x").success?
+  end
+
+  def test_each_instance_is_checked
+    g = grammar { rule(:top) { either("x", seq(top, "!")) } }
+    assert_raises(ArgumentError) { g.new.parse("x") }
+    assert_raises(ArgumentError) { g.new.parse("x") }
+  end
+
+  def test_the_analysis_runs_once_per_instance
+    g = grammar { rule(:top) { either(seq("x", "!", top), "x") } }.new
+    g.parse("x")
+    analysis = g.instance_variable_get(:@left_recursion)
+    g.parse("x!x")
+    assert_same analysis, g.instance_variable_get(:@left_recursion)
+  end
+
+  # The check's helpers are named so they don't take common rule names.
+  def test_rules_can_be_named_like_what_a_check_would_do
+    g = grammar do
+      rule(:top) { seq(match_all, analyzable_asts, reachable_asts) }
+      rule(:match_all) { str("a") }
+      rule(:analyzable_asts) { str("b") }
+      rule(:reachable_asts) { str("c") }
+    end
+    assert_equal %w[a b c], g.parse!("abc")
+
+    error = assert_raises(ArgumentError) { grammar { rule(:left_recursion) { str("x") } } }
+    assert_match(/would replace Birman::Grammar#left_recursion/, error.message)
+  end
+
+  def test_no_root_rule_is_still_reported
+    g = Class.new { include Birman::Grammar }
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_match(/has no root rule/, error.message)
+  end
+
+  # --- Not left recursion ---
+
+  def test_right_recursion_and_recursion_after_input_are_fine
+    g = grammar { rule(:top) { either(seq("x", top), "x") } }
+    refute_left_recursion g, "xxx"
+
+    g = grammar(:expr) do
+      rule(:expr) { either(parens(expr), match(/\d+/)) }
+    end
+    refute_left_recursion g, "((1))"
+  end
+
+  def test_a_literal_is_not_nullable_even_with_ignore_after_it
+    g = grammar do
+      ignore :spacing
+      rule(:top) { either(seq("x", top), "y") }
+    end
+    refute_left_recursion g, "x x y"
+  end
+
+  def test_infix_on_another_rule_is_fine
+    node = Birman.node(:op, :left, :right)
+    g = grammar do
+      rule(:top) { infix(atom, "+", node:) }
+      rule(:atom) { either(match(/\d+/), parens(top)) }
+    end
+    refute_left_recursion g, "1+(2+3)"
+  end
+
+  def test_the_example_grammars_are_not_left_recursive
+    examples = {
+      Calc::Grammar => "1 + 2 * (3 - 4)", JSONExample::Grammar => '{"a": [1, true]}',
+      QueryExample::Grammar => "title:cat dog", TOMLExample::Grammar => "a = 1\n[t]\nb = 'x'\n",
+      EmailExample::Grammar => "a@example.com"
+    }
+    examples.each do |g, input|
+      assert g.new.parse(input).success?, g.name
+      assert_empty Birman::LeftRecursion.new(g.to_ast).cycles, g.name
+    end
+  end
+
+  def test_matchers_without_an_ast_are_skipped
+    custom = Data.define(:x) do
+      include Birman::Matcher
+
+      def match(_ctx, pos) = Birman::Match.new(pos + 1, x)
+    end
+    g = grammar { rule(:top) { seq(custom.new(1), "!") } }
+    assert_equal [1, "!"], g.parse!("x!")
+  end
+
+  def test_left_recursion_hidden_by_a_custom_matcher_is_still_caught_while_parsing
+    nothing = Data.define do
+      include Birman::Matcher
+
+      def match(_ctx, pos) = Birman::Match.new(pos, nil)
+    end
+    g = grammar { rule(:top) { either(seq(nothing.new, top, "!"), "x") } }
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message
+  end
+
+  def test_every_reachable_rule_is_built_on_the_first_parse
+    g = grammar do
+      rule(:top) { either("x", bad) }
+      rule(:bad) { match(/x/).captures }
+    end
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_match(/captures needs groups named/, error.message)
+  end
+
+  def test_an_undefined_rule_is_still_reported_only_when_reached
+    g = grammar { rule(:top) { either("x", Birman::Ref.new(:missing)) } }
+    assert g.parse("x").success?
+    error = assert_raises(ArgumentError) { g.parse("y") }
+    assert_equal "undefined rule :missing", error.message
+  end
+
+  # --- The analysis ---
+
+  def test_nullability_of_each_node_type
+    nullable = [
+      [:str, ""], [:pat, "/ */"], [:pat, "/a?/i"], [:pat, "/\\A/"], [:pat, "/(?=a)/"],
+      [:pat, "/(?<!a)b?/"], [:pat, "/(?=(?:a|[)]))\\b/"], [:pat, "/(?!a)*/"], [:pat, "/(?=a) # x\n/x"],
+      [:seq, nil, []], [:seq, 1, [[:str, ""], [:rep, 0, nil, [:str, "a"]]]],
+      [:choice, [[:str, "a"], [:str, ""]]],
+      [:rep, 0, nil, [:str, "a"]], [:rep, 0, 1, [:str, "a"]], [:rep, 2, nil, [:pat, "/a*/"]],
+      [:not, [:str, "a"]], [:and, [:str, "a"]], [:both, [:str, "a"], [:str, ""]],
+      [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]],
+      [:lexeme, [:str, ""]]
+    ]
+    non_nullable = [
+      [:str, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
+      [:pat, "/(?=a)a/"], [:pat, "/a(?!b)/"], [:pat, "/[(?=]/"], [:pat, "/\\(?=a/"], [:pat, "/[\\]^]/"],
+      [:pat, "/\\\\b/"], [:pat, "/a # (?=b) [\n/x"], [:pat, "/(?#(?=)a/"], [:pat, "/(?=(a))\\1/"],
+      [:seq, nil, [[:str, ""], [:str, "a"]]], [:choice, [[:str, "a"], [:str, "b"]]], [:choice, []],
+      [:rep, 1, nil, [:str, "a"]], [:both, [:str, ""], [:str, "a"]],
+      [:action, [:str, "a"]], [:label, "x", [:str, "a"]], [:check, "x", [:str, "a"]], [:quiet, [:str, "a"]],
+      [:lexeme, [:str, "a"]]
+    ]
+    a = analysis({ top: [:str, "a"] })
+    nullable.each { assert a.nullable_node?(_1), "#{_1.inspect} is nullable" }
+    non_nullable.each { refute a.nullable_node?(_1), "#{_1.inspect} isn't nullable" }
+  end
+
+  def test_nullability_reaches_a_fixpoint_over_rules
+    a = analysis({
+                   top: [:seq, nil, [%i[ref b], [:str, "x"]]],
+                   b: [:choice, [[:seq, nil, [%i[ref c], [:str, "y"]]], %i[ref d]]],
+                   c: [:seq, nil, [%i[ref b], [:str, "z"]]],
+                   d: [:rep, 0, nil, [:str, "w"]],
+                   loop: [:seq, nil, [%i[ref loop]]]
+                 })
+    assert a.nullable?(:b)
+    assert a.nullable?(:d)
+    refute a.nullable?(:c)
+    refute a.nullable?(:top)
+    refute a.nullable?(:loop), "a rule that only calls itself never matches, so isn't nullable"
+    refute a.nullable?(:undefined)
+  end
+
+  def test_an_empty_lexeme_calls_the_ignore_rule_if_there_is_one
+    rules = { top: [:seq, nil, [[:lexeme, [:str, ""]], [:lexeme, [:str, "a"]], [:lexeme, %i[ref b]]]], b: [:str, "b"] }
+    assert_equal [], analysis(rules).left_calls(:top)
+    assert_equal %i[sp], Birman::LeftRecursion.new(rules, ignore: :sp).left_calls(:top)
+
+    rules = { top: [:lexeme, %i[ref b]], b: [:pat, "/b?/"] }
+    assert_equal %i[b sp], Birman::LeftRecursion.new(rules, ignore: :sp).left_calls(:top)
+  end
+
+  # Assertions side by side hold at one position, so a pair that
+  # contradicts there never matches; anything between them, or a
+  # quantifier on one, and they may hold apart.
+  def test_patterns_whose_assertions_contradict_never_match_empty
+    a = analysis({ top: [:str, "a"] })
+    never = ["/(?=a)(?!a)/", "/(?!a)(?=a)/", "/(?<=a)(?<!a)/", "/\\b\\B/", "/x|(?=a)^(?!a)/",
+             "/(?=[ab])(?!(?=[ab]))(?![ab])/"]
+    never.each do |source|
+      refute a.nullable_node?([:pat, source]), source
+      refute Regexp.new(source[1...-1]).match?("aa a"), "#{source} never matches anything"
+    end
+
+    maybe = ["/(?=a)(?=a)/", "/(?=a)|(?!a)/", "/(?=a)(?:)(?!a)/", "/(?=a)(?!a)?/", "/(?=a)(?!b)/",
+             "/(?=a)(?<!a)/", "/(?=a)(?!(?:a))/"]
+    maybe.each { assert a.nullable_node?([:pat, _1]), _1 }
+  end
+
+  # A negative lookaround of what always matches empty never holds.
+  def test_negative_lookarounds_of_the_empty_match_never_hold
+    a = analysis({ top: [:str, "a"] })
+    ["/(?!)/", "/(?<!)/", "/(?!a*)/", "/(?!(?:))/", "/x?(?!a?)/"].each do |source|
+      refute a.nullable_node?([:pat, source]), source
+    end
+    ["/(?!$)/", "/(?!(?=a))/", "/(?!a)/", "/(?=)/", "/(?<=)/"].each { assert a.nullable_node?([:pat, _1]), _1 }
+  end
+
+  # Taking out (?=(\w)) would make \2 name (y?), which can be empty.
+  def test_backreferences_keep_naming_the_groups_they_named
+    a = analysis({ top: [:str, "a"] })
+    refute a.nullable_node?([:pat, "/(?=(\\w))(x)?(y?)\\2/"])
+  end
+
+  def test_left_calls_stop_after_the_first_part_that_consumes
+    a = analysis({
+                   top: [:seq, nil, [[:rep, 0, 1, %i[ref a]], [:not, %i[ref b]], %i[ref c], %i[ref d]]],
+                   a: [:str, "a"], b: [:str, "b"], c: [:str, "c"], d: [:str, "d"]
+                 })
+    assert_equal %i[a b c], a.left_calls(:top)
+  end
+
+  def test_sccs_and_leaders_for_left_recursion_support
+    a = analysis({
+                   top: [:seq, nil, [%i[ref expr], [:str, ";"]]],
+                   expr: [:choice, [[:seq, nil, [%i[ref term], [:str, "+"]]], %i[ref term]]],
+                   term: [:choice, [[:seq, nil, [%i[ref expr], [:str, "-"]]], %i[ref num]]],
+                   num: [:pat, "/\\d+/"],
+                   self_ref: [:seq, nil, [%i[ref self_ref], [:str, "x"]]]
+                 })
+    assert_equal [%i[expr term], %i[self_ref]], a.cycles
+    assert a.left_recursive?(:expr)
+    assert a.left_recursive?(:self_ref)
+    refute a.left_recursive?(:top)
+    refute a.left_recursive?(:num)
+    assert_equal :expr, a.leader(:term)
+    assert_equal :expr, a.leader(:expr)
+    assert_nil a.leader(:top)
+    assert_equal %i[expr term], a.cycle(:term)
+  end
+end

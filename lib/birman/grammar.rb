@@ -97,6 +97,7 @@ module Birman
       # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = [
+      #   "ArgumentError for left recursion (naming the cycle), as parse",
       #   "Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)",
       #   "Birman::Compiler::Error for actions calling Integer() or to_i: use large_integer"
       # ]
@@ -124,23 +125,19 @@ module Birman
     # [method.parse]
     # params = ["input: String"]
     # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
-    # raises = ["ArgumentError for grammar mistakes (no root, undefined rule, left recursion)"]
+    # raises = [
+    #   "ArgumentError on the first parse, whatever the input, for no root rule or left recursion (naming the cycle)",
+    #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",
+    #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
+    # ]
     # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
     def parse(input)
+      left_recursion
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      ctx = Context.new(input, self, ignore_rule)
-      result = Ref.new(root_rule).match(ctx, ctx.start)
-      return Success.new(result.value) if result && result.pos == input.bytesize
-
-      ctx.fail_at(result.pos, "end of input") if result
-      build_failure(input, ctx.furthest, ctx.expected)
-    rescue Committed => e
-      build_failure(input, e.pos, e.expected, committed: true)
-    rescue SystemStackError
-      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
+      __match_all(input)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
@@ -161,19 +158,56 @@ module Birman
 
     # { rule_name => ast } for every rule reachable from the root (and
     # the ignore rule), in first-use order.
-    def to_ast
+    def to_ast = __reachable_asts { matcher_for(_1).to_ast }
+
+    # The grammar's left-call analysis (see LeftRecursion), built on the
+    # first parse or to_ruby. It raises then, and every time after, if
+    # the grammar is left-recursive; later parses only read the ivar.
+    def left_recursion = @left_recursion ||= LeftRecursion.new(__analyzable_asts, ignore: ignore_rule).check!
+
+    private
+
+    def __match_all(input)
+      ctx = Context.new(input, self, ignore_rule)
+      result = Ref.new(root_rule).match(ctx, ctx.start)
+      return Success.new(result.value) if result && result.pos == input.bytesize
+
+      ctx.fail_at(result.pos, "end of input") if result
+      build_failure(input, ctx.furthest, ctx.expected)
+    rescue Committed => e
+      build_failure(input, e.pos, e.expected, committed: true)
+    rescue SystemStackError
+      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
+    end
+
+    # As to_ast, leaving out what it can't describe: undefined rules
+    # (the parse reports them if it gets there) and rules using a
+    # matcher with no to_ast. The analysis takes those to consume input
+    # and to call nothing, so a cycle through one is left to
+    # Context#memoize, and rules only it refers to aren't analyzed.
+    def __analyzable_asts
+      __reachable_asts do |name|
+        next unless respond_to?(:"__rule_#{name}", true)
+
+        matcher_for(name).to_ast
+      rescue NoMethodError => e
+        raise unless e.name == :to_ast && e.receiver.is_a?(Matcher)
+      end
+    end
+
+    # { rule_name => yield(rule_name) } for every rule reachable from the
+    # root and the ignore rule, in first-use order, skipping nil results.
+    def __reachable_asts
       rules = {}
       queue = [root_rule, ignore_rule].compact
       while (name = queue.shift)
         next if rules.key?(name)
 
-        rules[name] = matcher_for(name).to_ast
+        rules[name] = yield(name)
         queue.concat(AST.refs(rules[name]))
       end
-      rules
+      rules.compact
     end
-
-    private
 
     # Kernel#Integer(value, base), for actions: use it instead of Integer
     # or String#to_i in a grammar you'll generate a parser from (see

@@ -173,7 +173,8 @@ module Birman
     include Matcher
 
     def match(ctx, pos) = ctx.grammar.literal_matcher(text).match(ctx, pos)
-    def to_ast = [:str, text]
+    # Its spacing comes after the text, so it's a lexeme only when empty.
+    def to_ast = text.empty? ? [:lexeme, [:str, text]] : [:str, text]
   end
 
   # Exact string, nothing skipped (see Combinators#str).
@@ -615,7 +616,8 @@ module Birman
       Match.new(s.pos, r.value)
     end
 
-    def to_ast = source ? [:str, source] : inner.to_ast
+    # Shown as a lexeme unless it's a literal with text (see Lit#to_ast).
+    def to_ast = source.to_s.empty? ? [:lexeme, inner.to_ast] : [:str, source]
     def capture_key = inner.capture_key
   end
 
