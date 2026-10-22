@@ -102,6 +102,18 @@ class TestLeftRecursion < Minitest::Test
   def test_a_pattern_that_never_matches_hides_no_left_recursion
     g = grammar { rule(:top) { either("x", seq(match(/(?=y)(?!y)/), top, "!")) } }
     refute_left_recursion g
+
+    # never is a hook for subclasses to override.
+    g = grammar do
+      rule(:prefix) { never }
+      rule(:top) { either(seq(prefix, top), "x") }
+    end
+    refute_left_recursion g
+  end
+
+  def test_a_rep_of_at_most_none_never_calls_its_inner
+    g = grammar { rule(:top) { either(seq(top.rep(0, 0), "x"), "y") } }
+    refute_left_recursion g, "x"
   end
 
   def test_left_recursion_behind_patterns_that_only_look
@@ -244,6 +256,9 @@ class TestLeftRecursion < Minitest::Test
       rule(:reachable_asts) { str("c") }
     end
     assert_equal %w[a b c], g.parse!("abc")
+
+    error = assert_raises(ArgumentError) { grammar { rule(:left_recursion) { str("x") } } }
+    assert_match(/would replace Birman::Grammar#left_recursion/, error.message)
   end
 
   def test_no_root_rule_is_still_reported
@@ -312,6 +327,15 @@ class TestLeftRecursion < Minitest::Test
     g = grammar { rule(:top) { either(seq(nothing.new, top, "!"), "x") } }
     error = assert_raises(ArgumentError) { g.parse("x") }
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message
+  end
+
+  def test_every_reachable_rule_is_built_on_the_first_parse
+    g = grammar do
+      rule(:top) { either("x", bad) }
+      rule(:bad) { match(/x/).captures }
+    end
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_match(/captures needs groups named/, error.message)
   end
 
   def test_an_undefined_rule_is_still_reported_only_when_reached
@@ -388,6 +412,21 @@ class TestLeftRecursion < Minitest::Test
     maybe = ["/(?=a)(?=a)/", "/(?=a)|(?!a)/", "/(?=a)(?:)(?!a)/", "/(?=a)(?!a)?/", "/(?=a)(?!b)/",
              "/(?=a)(?<!a)/", "/(?=a)(?!(?:a))/"]
     maybe.each { assert a.nullable_node?([:pat, _1]), _1 }
+  end
+
+  # A negative lookaround of what always matches empty never holds.
+  def test_negative_lookarounds_of_the_empty_match_never_hold
+    a = analysis({ top: [:str, "a"] })
+    ["/(?!)/", "/(?<!)/", "/(?!a*)/", "/(?!(?:))/", "/x?(?!a?)/"].each do |source|
+      refute a.nullable_node?([:pat, source]), source
+    end
+    ["/(?!$)/", "/(?!(?=a))/", "/(?!a)/", "/(?=)/", "/(?<=)/"].each { assert a.nullable_node?([:pat, _1]), _1 }
+  end
+
+  # Taking out (?=(\w)) would make \2 name (y?), which can be empty.
+  def test_backreferences_keep_naming_the_groups_they_named
+    a = analysis({ top: [:str, "a"] })
+    refute a.nullable_node?([:pat, "/(?=(\\w))(x)?(y?)\\2/"])
   end
 
   def test_left_calls_stop_after_the_first_part_that_consumes

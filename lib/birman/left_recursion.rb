@@ -5,10 +5,10 @@ module Birman
   # as Grammar#to_ast returns), without parsing anything: a rule that
   # can call itself, directly or through other rules, before consuming
   # input would loop forever on some input. Grammar#left_recursion runs
-  # it once per grammar instance, on the first parse or to_ruby. Internal: the answers (which rules are
-  # nullable, which rules a rule calls first, the cycles and the rule
-  # each is reached through first) are also what left-recursion support
-  # would need.
+  # it on the first parse or to_ruby, and keeps it once it passes.
+  # Internal: the answers (which rules are nullable, which rules a rule
+  # calls first, the cycles and the rule each is reached through first)
+  # are also what left-recursion support would need.
   class LeftRecursion
     FLAGS = { "i" => Regexp::IGNORECASE, "x" => Regexp::EXTENDED, "m" => Regexp::MULTILINE,
               "n" => Regexp::NOENCODING }.freeze
@@ -94,6 +94,7 @@ module Birman
       in [:seq, _, parts]      then leading(parts).flat_map { calls(_1) }
       in [:choice, alts]       then alts.flat_map { calls(_1) }
       in [:both, left, right]  then calls(left) + calls(right)
+      in [:rep, _, 0, _]       then [] # at most none: inner never runs
       in [:rep, _, _, inner]   then calls(inner)
       in [:not, inner]         then calls(inner)
       in [:and, inner]         then calls(inner)
@@ -123,9 +124,12 @@ module Birman
     end
 
     # Falls back to the regexp as written when taking out its assertions
-    # breaks it (a \1 naming a group inside a lookahead).
+    # breaks it, or could make a backreference name another group: taking
+    # out (?=(a)) renumbers the groups after it.
     def empty_match?(body, options)
-      [Assertions.strip(body, options.anybits?(Regexp::EXTENDED)), body].each do |source|
+      stripped = Assertions.strip(body, options.anybits?(Regexp::EXTENDED))
+      stripped = body if stripped != body && body.match?(/\\(?:[1-9]|k[<'])/)
+      [stripped, body].each do |source|
         return Regexp.new(source, options).match?("")
       rescue RegexpError
         next
@@ -193,7 +197,8 @@ module Birman
     # side by side hold at one position, so a pair there that can't both
     # hold, (?=X) with (?!X), (?<=X) with (?<!X), or \b with \B, becomes
     # (?!), which matches nowhere. Only that shape: (?=a)(?=b) can't hold
-    # either, but stays (?:)(?:).
+    # either, but stays (?:)(?:). So does a negative lookaround of what
+    # always matches empty, as never's (?!) or (?!a*).
     # Escapes, character classes and comments are copied as they are.
     # Only /x makes # start a comment; an inline (?x) doesn't, so a "[" or
     # "(" in such a comment can hide an assertion after it (it's then
@@ -214,20 +219,31 @@ module Birman
           item = piece(scanner, extended)
           next run << item if item.is_a?(Assertion)
 
-          flush(run, out, quantified: item.match?(/\A[?*+{]/))
+          flush(run, out, extended, quantified: item.match?(/\A[?*+{]/))
           out << item
         end
-        flush(run, out, quantified: false)
+        flush(run, out, extended, quantified: false)
         out
       end
 
       # Writes out a run of assertions side by side. A quantifier after the
-      # last one may skip it, so then it can't contradict the rest.
-      def flush(run, out, quantified:)
+      # last one may skip it, so then it can't fail the rest.
+      def flush(run, out, extended, quantified:)
         held = quantified ? run[0...-1] : run
-        out << "(?!)" if held.any? { |a| held.include?(Assertion.new(OPPOSITE[a.kind], a.body)) }
+        never = held.any? { |a| held.include?(Assertion.new(OPPOSITE[a.kind], a.body)) || never?(a, extended) }
+        out << "(?!)" if never
         out << ("(?:)" * run.size)
         run.clear
+      end
+
+      # A negative lookaround of something with no assertions of its own
+      # that matches "" never holds: that matches empty everywhere.
+      def never?(assertion, extended)
+        return false unless %w[! <!].include?(assertion.kind) && strip(assertion.body, extended) == assertion.body
+
+        Regexp.new(assertion.body, extended ? Regexp::EXTENDED : 0).match?("")
+      rescue RegexpError
+        false
       end
 
       # The next piece of the source: an Assertion, or text to copy.
