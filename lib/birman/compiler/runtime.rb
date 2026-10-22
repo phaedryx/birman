@@ -739,13 +739,14 @@ module BirmanRT
 
     # A lookahead caught a commit failure: every rule entered since it
     # began (depth entries ago) was unwound mid-match. Their memo entries
-    # still say IN_PROGRESS; mark them ABSENT so they can be tried again.
+    # still say IN_PROGRESS, or hold a left-recursive rule's seed; mark
+    # them ABSENT so they can be tried again.
     #: (Integer) -> void
     def abandon(depth)
       while @in_progress_at.size > depth
         memo = @in_progress.pop
         p = @in_progress_at.pop
-        memo[p] = ABSENT if memo[p] == IN_PROGRESS
+        memo[p] = ABSENT
       end
     end
 

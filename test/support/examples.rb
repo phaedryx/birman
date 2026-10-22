@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 # The grammars generated parsers are checked against (the README's,
-# examples/calc.rb, json.rb, email.rb and toml.rb, and the small ones
-# below), each with the inputs to check: fixed edge cases, random token
-# soup, and valid documents built from the grammar or, for toml, taken
-# from test/toml-test (plus, for calc, json, email and toml,
-# one-character mutations of them).
+# examples/calc.rb and a left-recursive version of it, json.rb, email.rb
+# and toml.rb, and the small ones below), each with the inputs to check:
+# fixed edge cases, random token soup, and valid documents built from
+# the grammar or, for toml, taken from test/toml-test (plus, for calc,
+# json, email and toml, one-character mutations of them).
 require "json"
 require_relative "differential"
 require_relative "../../examples/calc"
@@ -100,6 +100,16 @@ module Examples
     end
 
     TOKENS = ["!", "(", ")", "x", "1", "7", "9" * 25, "0"].freeze
+  end
+
+  # examples/calc.rb with its arithmetic left-recursive instead of
+  # infix: the same trees, grown from a seed.
+  module LeftCalc
+    # print 1 - 2 - 3
+    class Grammar < Calc::Grammar
+      rule(:sum)     { either(seq(sum.as(:left), either("+", "-").as(:op), product.as(:right)).to(BinOp), product) }
+      rule(:product) { either(seq(product.as(:left), either("*", "/").as(:op), atom.as(:right)).to(BinOp), atom) }
+    end
   end
 
   # Entries each checked by a grammar method (.check): dates that
@@ -305,8 +315,8 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), json(count), email(count), toml(count), numbers(count), cycles(count), dates(count),
-     moments(count), defaults(count), *one_type(count)]
+    [let(count), calc(count), left_calc(count), json(count), email(count), toml(count), numbers(count),
+     cycles(count), dates(count), moments(count), defaults(count), *one_type(count)]
   end
 
   def let(count)
@@ -321,6 +331,8 @@ module Examples
     inputs = CALC_FIXED + Differential.fuzz(CALC_TOKENS, rng, count, 12) + programs + mutants
     Example.new("calc", Calc::Grammar, "CalcCompiled", inputs)
   end
+
+  def left_calc(count) = calc(count).with(name: "leftcalc", grammar: LeftCalc::Grammar, namespace: "LeftCalcCompiled")
 
   def json(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))

@@ -67,11 +67,7 @@ module Birman
     #   "Compiler::Error for what can't be compiled (named by rule)"
     # ]
     def to_ruby
-      direct = @grammar.left_recursion.direct
-      unless direct.empty?
-        raise ArgumentError, "direct left recursion isn't supported by to_ruby yet: #{direct.map(&:inspect).join(", ")}"
-      end
-
+      @grammar.left_recursion
       emitter = emit
       check_namespace(emitter.node_names)
       body = [*emitter.node_classes, parser_class(emitter)].join("\n")

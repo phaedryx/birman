@@ -482,10 +482,65 @@ class CompilerTest < Minitest::Test
                  "(each rule can call the next without consuming input)", error.message
   end
 
-  def test_direct_left_recursion_is_rejected_before_generating
-    g = grammar { rule(:top) { (top >> "x") | str("y") } }
-    error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
-    assert_equal "direct left recursion isn't supported by to_ruby yet: :top", error.message
+  # --- Direct left recursion, grown from a seed ---
+
+  def test_direct_left_recursion
+    g = grammar(:expr, ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(expr, "-", integer).action(:subtract), integer) }
+      def subtract(parts) = parts[0] - parts[2] # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["3-4-5", " 3 - 4 - 5 ", "3", "1 - ", "1 - 2 -", "1 - 2 - x - 3", "1 - 2 3", "", "-"]
+  end
+
+  def test_left_recursion_on_two_levels_with_nodes
+    g = grammar(:expr, ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(expr.as(:left), either("+", "-").as(:op), term.as(:right)).to(Bin), term) }
+      rule(:term) { either(seq(term.as(:left), either("*", "/").as(:op), fact.as(:right)).to(Bin), fact) }
+      rule(:fact) { either(integer.to(Wrap), parens(expr)).label("expression") }
+    end
+    assert_same_results g, ["5*4*2-5*9*2", "1 - 2 - 3 ", "(1 - 2) - (3 - 4) * 5", "1 + ", "1 + 2 * ", "(1 - 2",
+                            "1 + * 2", "1 + 2 )"]
+  end
+
+  def test_left_recursion_with_a_commit_and_a_lookahead
+    g = grammar(ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:top) { either(seq(expr.present, "?"), expr) }
+      rule(:expr) { either(seq(expr, "-", commit, integer), integer) }
+    end
+    assert_same_results g, ["1 - 2 ?", "1 - 2", "1 - x", "1 - 2 - x", "1 ?", "x"]
+  end
+
+  def test_left_recursion_behind_a_nullable_prefix_and_in_the_ignore_rule
+    g = grammar(:expr, ignore: :blank) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(sign, expr, "-", integer).action(:subtract), integer) }
+      def subtract(parts) = parts[1] - parts[3] # rubocop:disable Lint/NestedMethodDefinition
+      rule(:sign) { either("+", "") }
+      rule(:blank) { either(seq(blank, str("#")), match(/ */)).quiet }
+    end
+    assert_same_results g, [" ##3 -#4  ##- 5", "3 - # x", "+3-4", "3-4-", ""]
+  end
+
+  def test_the_odd_shapes_of_left_recursion_match_the_interpreter
+    g = grammar do
+      rule(:top) { either(seq(top, "-", top), top.absent >> str("x"), str("y")) }
+    end
+    assert_same_results g, ["x", "y", "y-y-y", "x-y", "xx", ""]
+
+    g = grammar { rule(:top) { either(match(/\d/), seq(top, "+", match(/\d/))) } }
+    assert_same_results g, ["1", "1+2"]
+  end
+
+  def test_a_long_left_recursive_chain
+    g = grammar { rule(:top) { either(seq(top, "-", str("1")).means(0), str("1")) } }
+    assert_same_results g, [Array.new(10_000, "1").join("-"), "#{Array.new(10_000, "1").join("-")}-"]
   end
 
   # The generated parser keeps its own check, for left recursion the
