@@ -616,10 +616,11 @@ class BirmanTest < Minitest::Test
 
   def test_left_recursion_is_reported_by_rule_name
     g = grammar do
-      rule(:top) { either(seq(top, "+", "1"), "1") }
+      rule(:top) { either(seq(sum, "+", "1"), "1") }
+      rule(:sum) { top }
     end
     error = assert_raises(ArgumentError) { g.parse("1+1") }
-    assert_match(/left recursion.*:top/, error.message)
+    assert_match(/left recursion.*:top -> :sum/, error.message)
 
     g = grammar do
       rule(:top) { seq(other, "!") }

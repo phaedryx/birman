@@ -473,9 +473,19 @@ class CompilerTest < Minitest::Test
   end
 
   def test_left_recursion_is_rejected_before_generating
+    g = grammar do
+      rule(:top) { (other >> "x") | str("y") }
+      rule(:other) { top }
+    end
+    error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
+    assert_equal "indirect left recursion isn't supported yet: :top -> :other -> :top " \
+                 "(each rule can call the next without consuming input)", error.message
+  end
+
+  def test_direct_left_recursion_is_rejected_before_generating
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
     error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
-    assert_equal "left recursion: :top -> :top (each rule can call the next without consuming input)", error.message
+    assert_equal "direct left recursion isn't supported by to_ruby yet: :top", error.message
   end
 
   # The generated parser keeps its own check, for left recursion the
@@ -483,7 +493,7 @@ class CompilerTest < Minitest::Test
   # switched off here to reach the generated check.
   def test_left_recursion_the_static_check_misses_raises_like_the_interpreter
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
-    g.define_method(:left_recursion) { nil }
+    g.define_method(:left_recursion) { Birman::LeftRecursion.new({}) }
     parser = Differential.load(g, "CompilerTestParser")
     error = assert_raises(ArgumentError) { parser.new("yx").parse }
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message

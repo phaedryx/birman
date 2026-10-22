@@ -6,9 +6,12 @@ module Birman
   # can call itself, directly or through other rules, before consuming
   # input would loop forever on some input. Grammar#left_recursion runs
   # it on the first parse or to_ruby, and keeps it once it passes.
+  # A rule that calls only itself that way (direct left recursion) is
+  # supported: Context#memoize grows its match from a seed. A cycle
+  # through two or more rules (indirect) isn't yet, so check! raises.
   # Internal: the answers (which rules are nullable, which rules a rule
   # calls first, the cycles and the rule each is reached through first)
-  # are also what left-recursion support would need.
+  # are also what indirect left-recursion support would need.
   class LeftRecursion
     FLAGS = { "i" => Regexp::IGNORECASE, "x" => Regexp::EXTENDED, "m" => Regexp::MULTILINE,
               "n" => Regexp::NOENCODING }.freeze
@@ -30,13 +33,21 @@ module Birman
       @cycle_of = @cycles.each_with_object({}) { |cycle, h| cycle.each { h[_1] = cycle } }
     end
 
-    # Raises ArgumentError naming every cycle; returns self if there are none.
+    # Raises ArgumentError naming every cycle through two or more rules;
+    # returns self if there are none. A rule that calls itself, and
+    # nothing that calls it back, is fine.
     def check!
-      return self if cycles.empty?
+      indirect = cycles.reject(&:one?)
+      return self if indirect.empty?
 
-      names = cycles.map { path(_1).map(&:inspect).join(" -> ") }.join("; ")
-      raise ArgumentError, "left recursion: #{names} (each rule can call the next without consuming input)"
+      names = indirect.map { path(_1).map(&:inspect).join(" -> ") }.join("; ")
+      raise ArgumentError, "indirect left recursion isn't supported yet: #{names} " \
+                           "(each rule can call the next without consuming input)"
     end
+
+    # The rules that call themselves before consuming input, each in a
+    # cycle of its own: the ones Context#memoize grows from a seed.
+    def direct = @direct ||= cycles.select(&:one?).flatten.to_set.freeze
 
     # Can the rule match without consuming input? Undefined rules can't.
     def nullable?(name) = @nullable.key?(name)
@@ -169,14 +180,20 @@ module Birman
       component
     end
 
-    # The shortest way round a cycle, from its leader back to it.
-    def path(cycle)
+    # The shortest way round a cycle, from its leader back to it, through
+    # another rule if there are others: an indirect cycle's leader may
+    # also call itself.
+    def path(cycle) # rubocop:disable Metrics/MethodLength
       leader = cycle.first
       from = {}
       queue = [leader]
       while (name = queue.shift)
         left_calls(name).each do |callee|
-          return [*trail(from, name), leader] if callee == leader
+          if callee == leader
+            next if name == leader && !cycle.one?
+
+            return [*trail(from, name), leader]
+          end
           next if !cycle.include?(callee) || from.key?(callee)
 
           from[callee] = name
