@@ -136,7 +136,7 @@ module Birman
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      match_all(input)
+      __match_all(input)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
@@ -157,16 +157,16 @@ module Birman
 
     # { rule_name => ast } for every rule reachable from the root (and
     # the ignore rule), in first-use order.
-    def to_ast = reachable_asts { matcher_for(_1).to_ast }
+    def to_ast = __reachable_asts { matcher_for(_1).to_ast }
 
     # The grammar's left-call analysis (see LeftRecursion), built on the
     # first parse or to_ruby. It raises then, and every time after, if
     # the grammar is left-recursive; later parses only read the ivar.
-    def left_recursion = @left_recursion ||= LeftRecursion.new(analyzable_asts, ignore: ignore_rule).check!
+    def left_recursion = @left_recursion ||= LeftRecursion.new(__analyzable_asts, ignore: ignore_rule).check!
 
     private
 
-    def match_all(input)
+    def __match_all(input)
       ctx = Context.new(input, self, ignore_rule)
       result = Ref.new(root_rule).match(ctx, ctx.start)
       return Success.new(result.value) if result && result.pos == input.bytesize
@@ -184,8 +184,8 @@ module Birman
     # matcher with no to_ast. The analysis takes those to consume input
     # and to call nothing, so a cycle through one is left to
     # Context#memoize, and rules only it refers to aren't analyzed.
-    def analyzable_asts
-      reachable_asts do |name|
+    def __analyzable_asts
+      __reachable_asts do |name|
         next unless respond_to?(:"__rule_#{name}", true)
 
         matcher_for(name).to_ast
@@ -196,7 +196,7 @@ module Birman
 
     # { rule_name => yield(rule_name) } for every rule reachable from the
     # root and the ignore rule, in first-use order, skipping nil results.
-    def reachable_asts
+    def __reachable_asts
       rules = {}
       queue = [root_rule, ignore_rule].compact
       while (name = queue.shift)

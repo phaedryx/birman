@@ -235,6 +235,17 @@ class TestLeftRecursion < Minitest::Test
     assert_same analysis, g.instance_variable_get(:@left_recursion)
   end
 
+  # The check's helpers are named so they don't take common rule names.
+  def test_rules_can_be_named_like_what_a_check_would_do
+    g = grammar do
+      rule(:top) { seq(match_all, analyzable_asts, reachable_asts) }
+      rule(:match_all) { str("a") }
+      rule(:analyzable_asts) { str("b") }
+      rule(:reachable_asts) { str("c") }
+    end
+    assert_equal %w[a b c], g.parse!("abc")
+  end
+
   def test_no_root_rule_is_still_reported
     g = Class.new { include Birman::Grammar }
     error = assert_raises(ArgumentError) { g.parse("x") }
