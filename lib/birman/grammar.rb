@@ -127,7 +127,8 @@ module Birman
     # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
     # raises = [
     #   "ArgumentError on the first parse, whatever the input, for no root rule or left recursion (naming the cycle)",
-    #   "ArgumentError for an undefined rule, when the parse reaches it"
+    #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",
+    #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
     # ]
     # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
     def parse(input)

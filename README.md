@@ -484,8 +484,10 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 
 - Left recursion. A grammar with a rule that can reach itself without
   consuming input raises `ArgumentError` on its first parse (or
-  `to_ruby`), whatever the input, naming the cycle (`left recursion: :expr -> :term -> :expr`);
-  use `infix`, or `term (op term)*` with a fold, instead.
+  `to_ruby`), whatever the input, naming the cycle
+  (`left recursion: :expr -> :term -> :expr`); use `infix`, or
+  `term (op term)*` with a fold, instead. Through a custom matcher,
+  which Birman can't see into, it's caught when the parse gets there.
 - Railroad diagrams from `to_ast`
 
 ## Development
