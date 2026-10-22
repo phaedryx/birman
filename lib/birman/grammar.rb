@@ -97,7 +97,7 @@ module Birman
       # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = [
-      #   "ArgumentError for left recursion (naming the cycle), as parse",
+      #   "ArgumentError for indirect left recursion (naming the cycle), as parse",
       #   "Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)",
       #   "Birman::Compiler::Error for actions calling Integer() or to_i: use large_integer"
       # ]
@@ -126,7 +126,7 @@ module Birman
     # params = ["input: String"]
     # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
     # raises = [
-    #   "ArgumentError on the first parse, whatever the input, for no root rule or left recursion (naming the cycle)",
+    #   "ArgumentError on the first parse, whatever the input, for no root rule or indirect left recursion",
     #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",
     #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
     # ]
@@ -162,7 +162,8 @@ module Birman
 
     # The grammar's left-call analysis (see LeftRecursion), built on the
     # first parse or to_ruby. It raises then, and every time after, if
-    # the grammar is left-recursive; later parses only read the ivar.
+    # the grammar is indirectly left-recursive; later parses only read
+    # the ivar. Context reads its direct rules, to grow them.
     def left_recursion = @left_recursion ||= LeftRecursion.new(__analyzable_asts, ignore: ignore_rule).check!
 
     private

@@ -1,12 +1,22 @@
 ## [Unreleased]
 
-- **Changed:** left recursion is found from the grammar, not the input.
-  A left-recursive grammar raises `ArgumentError` on its first parse,
+- **Added:** direct left recursion. A rule that calls itself before
+  consuming input, `rule(:expr) { either(seq(expr, "-", term), term) }`,
+  is grown from a seed (Warth et al., 2008), so `3-4-5` parses as
+  `(3-4)-5`, with a node per level whose span covers it. Errors say what
+  the last attempt needed (`1-` expects a term after the `-`), and
+  `to_ruby` generates parsers that do the same. The recursive
+  alternative has to come first, and `expr op expr` groups to the right
+  (`3-(4-5)`): see the README's Left recursion section.
+- **Changed:** indirect left recursion is found from the grammar, not
+  the input. A grammar with a cycle of rules that can each call the next
+  without consuming input raises `ArgumentError` on its first parse,
   whatever the input, and so does `to_ruby`, naming each cycle:
-  `left recursion: :expr -> :term -> :expr (each rule can call the next
-  without consuming input)`. Before, it raised only when some input
-  reached the recursion, naming one rule. Through a custom matcher
-  with no `to_ast` it's still found only then, with the old message.
+  `indirect left recursion isn't supported yet: :expr -> :term -> :expr
+  (each rule can call the next without consuming input)`. Before, any
+  left recursion raised, and only when some input reached it, naming
+  one rule. Through a custom matcher with no `to_ast` it's still found
+  only then, with the old message.
 - **Changed:** the first parse builds every rule reachable from the
   root and the ignore rule, so a rule whose matcher can't be built
   (`.captures` on a pattern with no named groups, say) raises then,
