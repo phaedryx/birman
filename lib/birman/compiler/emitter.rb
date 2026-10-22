@@ -814,10 +814,11 @@ module Birman
       # Ref for a rule that calls itself before consuming input: seed-
       # growing, as Birman::Context#grow. The memo entry starts as a
       # failing seed, so the rule's own call is an ordinary memo hit, and
-      # each match that gets further replaces it. Failure tracking isn't
-      # reset between attempts, so every attempt's expectations are kept.
-      # A lookahead that catches a commit failure mid-growth abandons the
-      # entry (ABSENT), seed and all.
+      # each match that gets further replaces it. Each attempt starts with
+      # fresh failure tracking, so a commit failure reports only its own
+      # attempt's, and is then merged into the rule's, so every attempt's
+      # expectations are kept. A lookahead that catches a commit failure
+      # mid-growth abandons the entry (ABSENT), seed and all.
       def growing_ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
@@ -841,7 +842,16 @@ module Birman
             @in_progress << @mp_#{id}
             @in_progress_at << p
             while true
+              af = @furthest
+              ae = @expected
+              @furthest = p
+              @expected = NONE
               q = #{call.name}(p)
+              f = @furthest
+              ex = @expected
+              @furthest = af
+              @expected = ae
+              merge(f, ex)
               break if q <= @mp_#{id}[p]
 
               @mp_#{id}[p] = q

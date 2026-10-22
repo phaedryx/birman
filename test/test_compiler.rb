@@ -516,6 +516,20 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["1 - 2 ?", "1 - 2", "1 - x", "1 - 2 - x", "1 ?", "x"]
   end
 
+  # A commit failure reports what its own attempt expected, not what
+  # an earlier attempt failed on.
+  def test_a_commit_failure_mid_growth_ignores_earlier_attempts
+    g = grammar(:expr) { rule(:expr) { either(seq(expr, "+", commit, "x"), seq("1", "+", match(/y/), "w"), "1") } }
+    assert_same_results g, ["1+yz", "1+z", "1+x+yz", "1+x"]
+
+    g = grammar(:stmt) do
+      rule(:stmt) { seq(expr, ";") }
+      rule(:expr) { either(seq(expr, "-", commit, atom), seq(atom, "-", "-"), atom) }
+      rule(:atom) { match(/[a-z0-9]/) }
+    end
+    assert_same_results g, ["a-1;", "a--;", "a-b;", "a-;", "a--1;"]
+  end
+
   def test_left_recursion_behind_a_nullable_prefix_and_in_the_ignore_rule
     g = grammar(:expr, ignore: :blank) do
       include Birman::Rules::Numbers

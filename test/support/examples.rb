@@ -110,6 +110,11 @@ module Examples
       rule(:sum)     { either(seq(sum.as(:left), either("+", "-").as(:op), product.as(:right)).to(BinOp), product) }
       rule(:product) { either(seq(product.as(:left), either("*", "/").as(:op), atom.as(:right)).to(BinOp), atom) }
     end
+
+    # Committed after each operator, so commit failures happen mid-growth.
+    class Committed < Grammar
+      rule(:sum) { either(seq(sum.as(:left), either("+", "-").as(:op), commit, product.as(:right)).to(BinOp), product) }
+    end
   end
 
   # Entries each checked by a grammar method (.check): dates that
@@ -315,8 +320,8 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), left_calc(count), json(count), email(count), toml(count), numbers(count),
-     cycles(count), dates(count), moments(count), defaults(count), *one_type(count)]
+    [let(count), calc(count), left_calc(count), left_calc_commit(count), json(count), email(count), toml(count),
+     numbers(count), cycles(count), dates(count), moments(count), defaults(count), *one_type(count)]
   end
 
   def let(count)
@@ -333,6 +338,10 @@ module Examples
   end
 
   def left_calc(count) = calc(count).with(name: "leftcalc", grammar: LeftCalc::Grammar, namespace: "LeftCalcCompiled")
+
+  def left_calc_commit(count)
+    calc(count).with(name: "leftcalccommit", grammar: LeftCalc::Committed, namespace: "LeftCalcCommitCompiled")
+  end
 
   def json(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
