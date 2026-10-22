@@ -473,9 +473,85 @@ class CompilerTest < Minitest::Test
   end
 
   def test_left_recursion_is_rejected_before_generating
-    g = grammar { rule(:top) { (top >> "x") | str("y") } }
+    g = grammar do
+      rule(:top) { (other >> "x") | str("y") }
+      rule(:other) { top }
+    end
     error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
-    assert_equal "left recursion: :top -> :top (each rule can call the next without consuming input)", error.message
+    assert_equal "indirect left recursion isn't supported yet: :top -> :other -> :top " \
+                 "(each rule can call the next without consuming input)", error.message
+  end
+
+  # --- Direct left recursion, grown from a seed ---
+
+  def test_direct_left_recursion
+    g = grammar(:expr, ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(expr, "-", integer).action(:subtract), integer) }
+      def subtract(parts) = parts[0] - parts[2] # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["3-4-5", " 3 - 4 - 5 ", "3", "1 - ", "1 - 2 -", "1 - 2 - x - 3", "1 - 2 3", "", "-"]
+  end
+
+  def test_left_recursion_on_two_levels_with_nodes
+    g = grammar(:expr, ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(expr.as(:left), either("+", "-").as(:op), term.as(:right)).to(Bin), term) }
+      rule(:term) { either(seq(term.as(:left), either("*", "/").as(:op), fact.as(:right)).to(Bin), fact) }
+      rule(:fact) { either(integer.to(Wrap), parens(expr)).label("expression") }
+    end
+    assert_same_results g, ["5*4*2-5*9*2", "1 - 2 - 3 ", "(1 - 2) - (3 - 4) * 5", "1 + ", "1 + 2 * ", "(1 - 2",
+                            "1 + * 2", "1 + 2 )"]
+  end
+
+  def test_left_recursion_with_a_commit_and_a_lookahead
+    g = grammar(ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:top) { either(seq(expr.present, "?"), expr) }
+      rule(:expr) { either(seq(expr, "-", commit, integer), integer) }
+    end
+    assert_same_results g, ["1 - 2 ?", "1 - 2", "1 - x", "1 - 2 - x", "1 ?", "x"]
+  end
+
+  # A commit failure reports what its own attempt expected, not what
+  # an earlier attempt failed on.
+  def test_a_commit_failure_mid_growth_ignores_earlier_attempts
+    g = grammar(:expr) { rule(:expr) { either(seq(expr, "+", commit, "x"), seq("1", "+", match(/y/), "w"), "1") } }
+    assert_same_results g, ["1+yz", "1+z", "1+x+yz", "1+x"]
+
+    g = grammar(:stmt) do
+      rule(:stmt) { seq(expr, ";") }
+      rule(:expr) { either(seq(expr, "-", commit, atom), seq(atom, "-", "-"), atom) }
+      rule(:atom) { match(/[a-z0-9]/) }
+    end
+    assert_same_results g, ["a-1;", "a--;", "a-b;", "a-;", "a--1;"]
+  end
+
+  def test_left_recursion_behind_a_nullable_prefix_and_in_the_ignore_rule
+    g = grammar(:expr, ignore: :blank) do
+      include Birman::Rules::Numbers
+
+      rule(:expr) { either(seq(sign, expr, "-", integer).action(:subtract), integer) }
+      def subtract(parts) = parts[1] - parts[3] # rubocop:disable Lint/NestedMethodDefinition
+      rule(:sign) { either("+", "") }
+      rule(:blank) { either(seq(blank, str("#")), match(/ */)).quiet }
+    end
+    assert_same_results g, [" ##3 -#4  ##- 5", "3 - # x", "+3-4", "3-4-", ""]
+  end
+
+  def test_the_odd_shapes_of_left_recursion_match_the_interpreter
+    g = grammar do
+      rule(:top) { either(seq(top, "-", top), top.absent >> str("x"), str("y")) }
+    end
+    assert_same_results g, ["x", "y", "y-y-y", "x-y", "xx", ""]
+  end
+
+  def test_a_long_left_recursive_chain
+    g = grammar { rule(:top) { either(seq(top, "-", str("1")).means(0), str("1")) } }
+    assert_same_results g, [Array.new(10_000, "1").join("-"), "#{Array.new(10_000, "1").join("-")}-"]
   end
 
   # The generated parser keeps its own check, for left recursion the
@@ -483,7 +559,7 @@ class CompilerTest < Minitest::Test
   # switched off here to reach the generated check.
   def test_left_recursion_the_static_check_misses_raises_like_the_interpreter
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
-    g.define_method(:left_recursion) { nil }
+    g.define_method(:left_recursion) { Birman::LeftRecursion.new({}) }
     parser = Differential.load(g, "CompilerTestParser")
     error = assert_raises(ArgumentError) { parser.new("yx").parse }
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message

@@ -198,6 +198,43 @@ of at whatever a looser alternative accepted.
 This is Parsec-style commitment, not the choice-local "cut" from the
 PEG literature.
 
+## Left recursion
+
+A rule can call itself before consuming anything, as grammars usually
+write left-associative operators:
+
+```ruby
+rule(:expr) { either(seq(expr, "-", term).map { |l, _, r| l - r }, term) }
+rule(:term) { either(seq(term, "*", integer).map { |l, _, r| l * r }, integer) }
+
+parse!("5*4*2-5*9*2") # => -50, as ((5*4)*2) - ((5*9)*2)
+```
+
+`expr op term` is the left-associative form, the same shape `infix`
+builds. Birman grows the match from a seed (Warth et al., 2008): it
+tries the rule with its own call failing, then again with that call
+returning the last match, for as long as the match gets further. So
+each level is a value or node of its own, `((3-4)-5)`, and a node's
+span covers its whole subexpression. A long chain uses no more stack
+than a short one, and errors say what the last attempt needed
+(`1-` expects an integer after the `-`). `to_ruby` generates parsers
+that do the same.
+
+- The rule needs an alternative that doesn't start with itself, its
+  base case (`term` above), and the alternatives that do start with it
+  come first. Tried first, `term` would win every round, so
+  `either(term, seq(expr, "-", term))` could never grow past `3`. Either
+  mistake in the rule's own `either` (not one nested inside a `seq`)
+  raises `ArgumentError` on the first parse, or `to_ruby`, saying which: ``in left-recursive rule :expr, the alternative `term`
+  comes before `expr "-" term`, so the rule can never grow past it``.
+- `expr op expr`, with the rule on both sides, comes out
+  right-associative: `3-4-5` is `3-(4-5)`. The call on the right grows
+  to the end of the input before the left one can. Write `expr op term`.
+- Only a rule that calls itself is supported. A cycle through other
+  rules (`expr` calls `term` first, which calls `expr` first) raises
+  `ArgumentError` on the first parse, or `to_ruby`, naming the cycle:
+  `indirect left recursion isn't supported yet: :expr -> :term -> :expr`.
+
 ## Checks
 
 An action can only return a value, and raising escapes `parse`, so an
@@ -473,6 +510,9 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
   That took the same grammar to about 12,000 levels on a thread. The
   main thread gets less (about 2,000), because its machine stack comes
   from the operating system (`ulimit -s`).
+- **Left recursion on both sides.** `expr op expr` groups to the right
+  (see [Left recursion](#left-recursion)); write `expr op term` for
+  left-associative operators.
 - **Changing rules after parsing.** `Grammar.parse` reuses one
   instance per class, so each rule is built once. Defining a rule or
   changing a setting on a class resets that class's instance, but a
@@ -482,12 +522,13 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 
 ## Not yet
 
-- Left recursion. A grammar with a rule that can reach itself without
-  consuming input raises `ArgumentError` on its first parse (or
-  `to_ruby`), whatever the input, naming the cycle
-  (`left recursion: :expr -> :term -> :expr`); use `infix`, or
-  `term (op term)*` with a fold, instead. Through a custom matcher,
-  which Birman can't see into, it's caught when the parse gets there.
+- Indirect left recursion. A cycle of rules that can each call the next
+  without consuming input raises `ArgumentError` on the first parse (or
+  `to_ruby`), whatever the input, naming the cycle (`indirect left
+  recursion isn't supported yet: :expr -> :term -> :expr`); make one
+  rule call itself instead, or use `infix`. Left recursion through a
+  custom matcher, which Birman can't see into, is caught when the parse
+  gets there.
 - Railroad diagrams from `to_ast`
 
 ## Development

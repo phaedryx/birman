@@ -8,7 +8,7 @@ module Birman
   # non-ASCII string by character offset costs time proportional to
   # the offset, which made parsing quadratic. Failure and Span convert
   # back to characters for anything public.
-  class Context
+  class Context # rubocop:disable Metrics/ClassLength
     # Marks a memo entry whose rule is still being matched.
     IN_PROGRESS = Object.new.freeze
 
@@ -27,6 +27,8 @@ module Birman
       @grammar = grammar
       @ignore_ref = ignore_rule && Ref.new(ignore_rule) # built once per parse, not per token
       @memo = {}
+      @growing = grammar.left_recursion.direct.then { _1 unless _1.empty? } # nil: nothing to look up
+      @seeds = {}
       @furthest = 0
       @expected = NOTHING_EXPECTED
       @token_ends = {}
@@ -115,19 +117,24 @@ module Birman
     end
 
     # Rule name's memo entry at pos, computed by the block the first
-    # time. Meeting the rule again at the same position while it is
-    # still being matched means it reaches itself without consuming
-    # input: left recursion, which would never terminate. That's a bug
-    # in the grammar, not the input, so it raises. Grammar#parse already
-    # rejects the left recursion it can see in the grammar's ASTs (see
-    # LeftRecursion); this catches the rest, as through a custom matcher.
+    # time. The block returns [result, furthest, expected].
+    #
+    # A rule that calls itself before consuming input (direct left
+    # recursion, see LeftRecursion#direct) is grown from a seed: see
+    # grow. Meeting any other rule again at the same position while it
+    # is still being matched means it reaches itself without consuming
+    # input in a way the grammar's ASTs don't show (through a custom
+    # matcher): that would never terminate, and it's a bug in the
+    # grammar, not the input, so it raises.
     def memoize(name, pos, &)
       table = @memo[name] ||= {}
       entry = table[pos]
       return entry if entry && !entry.equal?(IN_PROGRESS)
-      raise ArgumentError, "left recursion in rule :#{name}: it can reach itself without consuming input" if entry
+      return seed(name, pos) if entry
 
       @position = pos
+      return grow(name, table, pos, &) if @growing&.include?(name)
+
       compute(table, pos, &)
     end
 
@@ -150,6 +157,52 @@ module Birman
       # A commit failure caught by a lookahead unwinds through here; the
       # rule may be tried again at this position afterwards.
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
+    end
+
+    # Seed-growing (Warth et al. 2008). The rule is matched with its call
+    # to itself here failing, then again with that call returning the
+    # last match (the seed), for as long as the match gets further. It's
+    # a loop, so a longer chain uses no more stack. The memo entry stays
+    # IN_PROGRESS until the end; only the rule itself can meet it, since
+    # any other rule that could would be in an indirect cycle, which
+    # LeftRecursion#check! rejects.
+    #
+    # Each attempt's diagnostics are kept, not just the best one's: the
+    # last attempt, which got no further, is usually the one that knows
+    # what was missing ("1 +" expected a number after the "+").
+    def grow(name, table, pos) # rubocop:disable Metrics
+      seeds = @seeds[name] ||= {}
+      seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
+      table[pos] = IN_PROGRESS
+      diagnostics = [pos, NOTHING_EXPECTED]
+      # Not loop: its block adds frames to every level of nesting.
+      while true # rubocop:disable Style/InfiniteLoop
+        result, furthest, expected = yield
+        diagnostics = further(diagnostics, furthest, expected)
+        break unless result && result.pos > (best[0]&.pos || -1)
+
+        seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
+      end
+      table[pos] = [best[0], *diagnostics]
+    ensure
+      seeds&.delete(pos) # nil if the stack ran out before it was set
+      table.delete(pos) if table[pos].equal?(IN_PROGRESS)
+    end
+
+    # Two frames' diagnostics as one, as fail_at would: the further
+    # position wins, and at the same one the expectations are merged.
+    def further(diagnostics, furthest, expected)
+      return [furthest, expected] if furthest > diagnostics[0]
+      return diagnostics if furthest < diagnostics[0] || expected.empty?
+
+      [furthest, diagnostics[1] | expected]
+    end
+
+    # The rule's match so far at pos, while it grows there. Its
+    # diagnostics are grow's to keep, so it carries none.
+    def seed(name, pos)
+      @seeds[name]&.[](pos) || raise(ArgumentError,
+                                     "left recursion in rule :#{name}: it can reach itself without consuming input")
     end
   end
 end

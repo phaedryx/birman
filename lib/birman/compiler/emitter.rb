@@ -772,6 +772,8 @@ module Birman
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
       # tried again there.
       def ref_method(name, call)
+        return growing_ref_method(name, call) if @grammar.left_recursion.direct.include?(name)
+
         valued = @valued.include?(name)
         id = ident(name)
         <<~RUBY
@@ -801,6 +803,68 @@ module Birman
             @expected = oe
             @mp_#{id}[p] = q
           #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @mv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
+            @mf_#{id}[p] = f
+            @me_#{id}[p] = ex
+            merge(f, ex)
+            q
+          end
+        RUBY
+      end
+
+      # Ref for a rule that calls itself before consuming input: seed-
+      # growing, as Birman::Context#grow. The memo entry starts as a
+      # failing seed, so the rule's own call is an ordinary memo hit, and
+      # each match that gets further replaces it. Each attempt starts with
+      # fresh failure tracking, so a commit failure reports only its own
+      # attempt's, and is then merged into the rule's, so every attempt's
+      # expectations are kept. A lookahead that catches a commit failure
+      # mid-growth abandons the entry (ABSENT), seed and all.
+      def growing_ref_method(name, call)
+        valued = @valued.include?(name)
+        id = ident(name)
+        <<~RUBY
+          #{POSITION.chomp}
+          def ref_#{id}(p)
+            q = @mp_#{id}[p]
+            unless q.nil? || q == ABSENT
+          #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
+              merge(@mf_#{id}[p], @me_#{id}[p])
+              return q
+            end
+            @mp_#{id}[p] = FAIL
+            @mf_#{id}[p] = p
+            @me_#{id}[p] = NONE
+            @position = p
+            of = @furthest
+            oe = @expected
+            @furthest = p
+            @expected = NONE
+            @in_progress << @mp_#{id}
+            @in_progress_at << p
+            while true
+              af = @furthest
+              ae = @expected
+              @furthest = p
+              @expected = NONE
+              q = #{call.name}(p)
+              f = @furthest
+              ex = @expected
+              @furthest = af
+              @expected = ae
+              merge(f, ex)
+              break if q <= @mp_#{id}[p]
+
+              @mp_#{id}[p] = q
+          #{"    @mv_#{id}[p] = #{call.value || "nil"}" if valued}
+            end
+            @in_progress.pop
+            @in_progress_at.pop
+            q = @mp_#{id}[p]
+          #{"  @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
+            f = @furthest
+            ex = @expected
+            @furthest = of
+            @expected = oe
             @mf_#{id}[p] = f
             @me_#{id}[p] = ex
             merge(f, ex)
