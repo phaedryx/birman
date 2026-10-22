@@ -6,6 +6,7 @@ require_relative "../examples/json"
 require_relative "../examples/query"
 require_relative "../examples/toml"
 require_relative "../examples/email"
+require_relative "support/examples"
 
 # Left recursion is found from the grammar itself, on the first parse,
 # not only when some input happens to reach it. A rule that calls itself
@@ -53,17 +54,15 @@ class TestLeftRecursion < Minitest::Test
     assert_equal [["1", "+", "2"], "+", "3"], g.parse!("1+2+3")
   end
 
-  # Each attempt is tried in order, and one that gets no further ends
-  # the growth: with the rule's own call second, the first alternative
-  # wins every time.
+  # With the rule's own call second, the first alternative would win
+  # every round and the rule would never grow.
   def test_the_recursive_alternative_has_to_come_first
     g = grammar(:expr) do
       rule(:expr) { either(num, seq(expr, "+", num)) }
       rule(:num) { match(/\d+/) }
     end
-    assert_direct g, %i[expr]
-    assert_equal "1", g.parse!("1")
-    assert_pattern { g.parse("1+2") => Birman::Failure(pos: 1, expected: ["end of input"]) }
+    error = assert_raises(ArgumentError) { g.parse("1") }
+    assert_match(/the alternative `num` comes before `expr "\+" num`/, error.message)
   end
 
   def test_indirect_left_recursion_names_the_cycle
@@ -108,19 +107,19 @@ class TestLeftRecursion < Minitest::Test
 
   def test_left_recursion_hidden_behind_a_nullable_prefix
     g = grammar do
-      rule(:top) { either("x", seq(str("-").maybe, top, "!")) }
+      rule(:top) { either(seq(str("-").maybe, top, "!"), "x") }
     end
     assert_direct g
 
     g = grammar do
-      rule(:top) { either("x", seq(str("-").rep, top, "!")) }
+      rule(:top) { either(seq(str("-").rep, top, "!"), "x") }
     end
     assert_direct g
   end
 
   def test_left_recursion_behind_nullable_rules
     g = grammar do
-      rule(:top) { either("x", seq(sign, top)) }
+      rule(:top) { either(seq(sign, top), "x") }
       rule(:sign) { either(str("-"), str("+"), seq(blank, blank)) }
       rule(:blank) { str("") }
     end
@@ -154,35 +153,31 @@ class TestLeftRecursion < Minitest::Test
 
   def test_left_recursion_behind_patterns_that_only_look
     [/(?=y)/, /(?!y)/, /(?<=y)/, /(?<!y)z?/, /\b/, /\B/, /\G/, /\Z/, /^/, /$/].each do |re|
-      g = grammar { rule(:top) { either("x", seq(match(re), top, "!")) } }
+      g = grammar { rule(:top) { either(seq(match(re), top, "!"), "x") } }
       assert_equal [[:top]], g.new.left_recursion.cycles, re.inspect
     end
   end
 
   def test_left_recursion_behind_lookaheads
-    g = grammar { rule(:top) { either("x", seq(match(/y/).absent, top, "!")) } }
+    g = grammar { rule(:top) { either(seq(match(/y/).absent, top, "!"), "x") } }
     assert_direct g
 
-    g = grammar { rule(:top) { either("x", seq(match(/y/).present, top, "!")) } }
+    g = grammar { rule(:top) { either(seq(match(/y/).present, top, "!"), "x") } }
     assert_direct g
 
-    g = grammar { rule(:top) { either("x", match(/y/) & top) } }
+    g = grammar { rule(:top) { either(match(/y/) & top, "x") } }
     assert_direct g
   end
 
   # Inside a lookahead the rule's own call sees the seed too: a failure
-  # first, then each match so far. These are odd grammars; the results
-  # are pinned, not designed.
+  # first, then each match so far. An odd grammar; the results are
+  # pinned, not designed.
   def test_a_lookahead_that_reenters_its_rule
     g = grammar { rule(:top) { either(top.absent >> str("x"), str("y")) } }
     assert_direct g
     assert_equal [nil, "x"], g.parse!("x")
     assert_equal "y", g.parse!("y")
     assert g.parse("xx").failure?
-
-    g = grammar { rule(:top) { top.present & str("x") } }
-    assert_direct g
-    assert g.parse("x").failure?
   end
 
   def test_left_recursion_through_wrappers
@@ -206,18 +201,13 @@ class TestLeftRecursion < Minitest::Test
   end
 
   def test_left_recursion_through_combinators
-    node = Birman.node(:op, :left, :right)
-    g = grammar { rule(:top) { infix(top, "+", node:) } }
-    assert_direct g
-    assert_pattern { g.parse("x") => Birman::Failure(pos: 0, expected: []) } # it can never start
-
-    g = grammar { rule(:top) { either("x", sep_by(top, ",")) } }
+    g = grammar { rule(:top) { either(sep_by(top, ","), "x") } }
     assert_direct g
 
-    g = grammar { rule(:top) { either("x", seq(top, commit, "!")) } }
+    g = grammar { rule(:top) { either(seq(top, commit, "!"), "x") } }
     assert_direct g
 
-    g = grammar { rule(:top) { either("x", top > "!") } }
+    g = grammar { rule(:top) { either(top > "!", "x") } }
     assert_direct g
   end
 
@@ -315,6 +305,77 @@ class TestLeftRecursion < Minitest::Test
     g = Class.new { include Birman::Grammar }
     error = assert_raises(ArgumentError) { g.parse("x") }
     assert_match(/has no root rule/, error.message)
+  end
+
+  # --- Left-recursive rules that could never grow ---
+
+  def assert_left_recursion_error(message, klass)
+    ["x", "1", ""].each do |input|
+      error = assert_raises(ArgumentError, input.inspect) { klass.parse(input) }
+      assert_equal message, error.message
+    end
+    error = assert_raises(ArgumentError) { klass.to_ruby(namespace: "X") }
+    assert_equal message, error.message
+  end
+
+  def test_a_left_recursive_rule_with_no_base_case
+    message = "left-recursive rule :top has no alternative that doesn't start with :top, so it can never " \
+              "match; add one that doesn't, as a base case"
+    node = Birman.node(:op, :left, :right)
+    [
+      grammar { rule(:top) { seq(top, "-", match(/\d/)) } },
+      grammar { rule(:top) { infix(top, "+", node:) } },
+      grammar { rule(:top) { either(seq(top, "-"), seq(top, "+").label("sum")) } },
+      grammar { rule(:top) { top.present & str("x") } },
+      grammar { rule(:top) { seq(str("~").maybe, top, "!").to(Birman.node(:value)) } }
+    ].each { assert_left_recursion_error message, _1 }
+  end
+
+  # A base case can start with something that matches nothing, or call
+  # the rule after consuming input.
+  def test_base_cases_that_do_not_start_with_the_rule
+    [
+      grammar { rule(:top) { either(seq(top, "-"), seq(str("~").maybe, "x")) } },
+      grammar { rule(:top) { either(seq(top, "-"), seq("(", top, ")")) } },
+      grammar { rule(:top) { either(seq(top, "-"), top.rep(0, 1) >> "x") } },
+      grammar { rule(:top) { either(top.absent >> str("x"), str("y")) } }
+    ].each { assert_direct _1 }
+  end
+
+  def test_an_alternative_before_the_recursive_one_shadows_it
+    g = grammar do
+      rule(:top) { either(parens(top), seq(top, "-", num), num) }
+      rule(:num) { match(/\d/) }
+    end
+    assert_left_recursion_error "in left-recursive rule :top, the alternative `\"(\" top \")\"` comes before " \
+                                "`top \"-\" num`, so the rule can never grow past it; put the alternatives that " \
+                                "start with :top first", g
+
+    g = grammar do
+      rule(:top) { either(num, seq(top, "+", num)).to(Birman.node(:value)).quiet }
+      rule(:num) { match(/\d/) }
+    end
+    assert_left_recursion_error "in left-recursive rule :top, the alternative `num` comes before " \
+                                "`top \"+\" num`, so the rule can never grow past it; put the alternatives that " \
+                                "start with :top first", g
+  end
+
+  def test_the_recursive_alternatives_first_is_fine
+    g = grammar do
+      rule(:top) { either(seq(top, "-", num), seq(top, "+", num), parens(top), num) }
+      rule(:num) { match(/\d/) }
+    end
+    assert_direct g
+    assert_equal [["1", "-", "2"], "+", "3"], g.parse!("(1)-2+3")
+
+    assert_direct Examples::LeftCalc::Grammar, %i[sum product]
+
+    # Only the rule's own choice: one nested inside a seq isn't checked.
+    g = grammar do
+      rule(:top) { either(seq(top, either("-", seq("x", top)), num), num) }
+      rule(:num) { match(/\d/) }
+    end
+    assert_direct g
   end
 
   # --- Not left recursion ---

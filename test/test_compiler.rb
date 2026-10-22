@@ -533,9 +533,6 @@ class CompilerTest < Minitest::Test
       rule(:top) { either(seq(top, "-", top), top.absent >> str("x"), str("y")) }
     end
     assert_same_results g, ["x", "y", "y-y-y", "x-y", "xx", ""]
-
-    g = grammar { rule(:top) { either(match(/\d/), seq(top, "+", match(/\d/))) } }
-    assert_same_results g, ["1", "1+2"]
   end
 
   def test_a_long_left_recursive_chain

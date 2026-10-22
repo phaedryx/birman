@@ -38,16 +38,18 @@ module Birman
       @direct = @cycles.select(&:one?).flatten.to_set.freeze
     end
 
-    # Raises ArgumentError naming every cycle through two or more rules;
-    # returns self if there are none. A rule that calls itself, and
-    # nothing that calls it back, is fine.
+    # Raises ArgumentError naming every cycle through two or more rules,
+    # or for the first rule that calls itself but could never grow (see
+    # check_growth!); returns self otherwise.
     def check!
       indirect = cycles.reject(&:one?)
-      return self if indirect.empty?
-
-      names = indirect.map { path(_1).map(&:inspect).join(" -> ") }.join("; ")
-      raise ArgumentError, "indirect left recursion isn't supported yet: #{names} " \
-                           "(each rule can call the next without consuming input)"
+      unless indirect.empty?
+        names = indirect.map { path(_1).map(&:inspect).join(" -> ") }.join("; ")
+        raise ArgumentError, "indirect left recursion isn't supported yet: #{names} " \
+                             "(each rule can call the next without consuming input)"
+      end
+      direct.each { check_growth!(_1) }
+      self
     end
 
     # Can the rule match without consuming input? Undefined rules can't.
@@ -116,6 +118,51 @@ module Birman
       in [:check, _, inner]    then calls(inner)
       in [:lexeme, inner]      then calls(inner) + (@ignore && nullable_node?(inner) ? [@ignore] : [])
       else []
+      end
+    end
+
+    # A rule that calls itself grows from a first match that didn't (its
+    # seed), so it needs an alternative that doesn't start with itself:
+    # without one it never matches. And that alternative has to come
+    # after the ones that do: tried first, it wins every round, so they
+    # never grow. Only the rule's own choice is checked, through the
+    # wrappers around it, not choices nested inside its parts.
+    def check_growth!(name)
+      unless seedable?(@rules[name], name)
+        raise ArgumentError, "left-recursive rule :#{name} has no alternative that doesn't start with :#{name}, " \
+                             "so it can never match; add one that doesn't, as a base case"
+      end
+
+      alts = alternatives(@rules[name])
+      base = alts.index { !calls(_1).include?(name) } or return
+      grows = alts.drop(base).find { calls(_1).include?(name) } or return
+      first, later = [alts[base], grows].map { EBNF.expr(_1, EBNF::CHOICE) }
+      raise ArgumentError, "in left-recursive rule :#{name}, the alternative `#{first}` comes before `#{later}`, " \
+                           "so the rule can never grow past it; " \
+                           "put the alternatives that start with :#{name} first"
+    end
+
+    # Can node match while its calls to rule name at its start fail?
+    def seedable?(node, name) # rubocop:disable Metrics
+      case node
+      in [:ref, ^name] then false
+      in [:choice, alts] then alts.any? { seedable?(_1, name) }
+      in [:seq, _, parts] then leading(parts).all? { seedable?(_1, name) }
+      in [:rep, 0, _, _] | [:rep, _, 0, _] | [:not, _] then true
+      in [:rep | :label | :check, *] | [:and | :action | :quiet | :lexeme, _]
+        seedable?(node.last, name) # a wrapper: its inner node is its last element
+      in [:both, left, right] then seedable?(left, name) && seedable?(right, name)
+      else true
+      end
+    end
+
+    # The alternatives of node's choice, looking through wrappers; node
+    # itself if it isn't one.
+    def alternatives(node)
+      case node
+      in [:choice, alts] then alts
+      in [:action | :quiet, _] | [:label | :check, _, _] then alternatives(node.last)
+      else [node]
       end
     end
 
