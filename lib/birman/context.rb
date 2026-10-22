@@ -184,7 +184,7 @@ module Birman
       end
       table[pos] = [seed[0], *diagnostics]
     ensure
-      seeds.delete(pos)
+      seeds&.delete(pos) # nil if the stack ran out before it was set
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
     end
 

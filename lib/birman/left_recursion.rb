@@ -21,6 +21,10 @@ module Birman
     # first: its leader.
     attr_reader :cycles
 
+    # The rules that call themselves before consuming input, each in a
+    # cycle of its own: the ones Context#memoize grows from a seed.
+    attr_reader :direct
+
     # ignore: the grammar's ignore rule, which a lexeme calls after its
     # token; at its start, if the token was empty.
     def initialize(rules, ignore: nil)
@@ -31,6 +35,7 @@ module Birman
       @calls = rules.to_h { |name, ast| [name, calls(ast).uniq] }
       @cycles = strongly_connected.select { cyclic?(_1) }
       @cycle_of = @cycles.each_with_object({}) { |cycle, h| cycle.each { h[_1] = cycle } }
+      @direct = @cycles.select(&:one?).flatten.to_set.freeze
     end
 
     # Raises ArgumentError naming every cycle through two or more rules;
@@ -44,10 +49,6 @@ module Birman
       raise ArgumentError, "indirect left recursion isn't supported yet: #{names} " \
                            "(each rule can call the next without consuming input)"
     end
-
-    # The rules that call themselves before consuming input, each in a
-    # cycle of its own: the ones Context#memoize grows from a seed.
-    def direct = @direct ||= cycles.select(&:one?).flatten.to_set.freeze
 
     # Can the rule match without consuming input? Undefined rules can't.
     def nullable?(name) = @nullable.key?(name)

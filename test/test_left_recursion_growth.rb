@@ -194,4 +194,18 @@ class TestLeftRecursionGrowth < Minitest::Test
     assert_equal(-9998, g.new.parse!(Array.new(10_000, "1").join("-")))
     assert_equal short, depths.max
   end
+
+  # Nesting still uses stack, and too much of it is a Failure, wherever
+  # in the growth it runs out: starting each parse a frame deeper moves
+  # where that is.
+  def test_nesting_too_deeply_is_a_failure
+    g = calc.new
+    input = "#{"(" * 20_000}1#{")" * 20_000}"
+    100.times do |frames|
+      failure = deeper(frames) { g.parse(input) }
+      assert_equal "input is nested too deeply", failure.reason, "#{frames} frames deeper"
+    end
+  end
+
+  def deeper(frames, &) = frames.zero? ? yield : deeper(frames - 1, &)
 end
