@@ -2,7 +2,7 @@
 
 require "test_helper"
 require_relative "support/compiler_helpers"
-require_relative "support/differential"
+require_relative "support/examples"
 
 # Indirect left recursion, grown from a seed at each cycle's leader (as
 # pegen does): only the leader grows, and while it grows at a position
@@ -68,6 +68,15 @@ class TestIndirectLeftRecursion < Minitest::Test
     assert_same_results big_ilr, ["3-4-5", "5*4*2-5*9*2", "1 + 2 * 6 / 3 * 3", "5*", "5*4-", "5 5", ""]
   end
 
+  # examples/calc.rb's arithmetic through two cycles (see
+  # Examples::LeftCalc::Indirect) gives the same trees as its infix.
+  def test_the_same_trees_as_the_calculators_infix
+    inputs = ["1 + 2 * 3", "1 - 2 - 3", "8 / 4 / 2", "(1 - 2) - (3 - 4) * 5 * 6", "2 * (3 + 4) - 5 + 6 / 7", "42"]
+    inputs.each do |input|
+      assert_equal Calc::Grammar.parse!(input), Examples::LeftCalc::Indirect.parse!(input), input
+    end
+  end
+
   # In BigILR, fact first matches just a number at 0, then f * num once
   # f's seed has grown: a match of fact kept from the first round would
   # stop f at "5".
@@ -129,7 +138,8 @@ class TestIndirectLeftRecursion < Minitest::Test
     end
     assert_pattern { g.parse("x(n)(n).x(n).x") => Birman::Failure(pos: 14, expected: ['"(n)"', '".x"']) }
     assert_equal "x", g.parse!("x")
-    assert_same_results g, ["x(n)(n).x(n).x", "x(n).x", "x", ""]
+    assert_pattern { g.parse("x.x") => Birman::Failure(pos: 3) }
+    assert_same_results g, ["x(n)(n).x(n).x", "x(n).x", "x.x", "x", ""]
   end
 
   # --- Shapes ---
