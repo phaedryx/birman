@@ -48,7 +48,8 @@ module Birman
     def check!
       leaderless = cycles.reject { @leaders.key?(_1.first) }
       unless leaderless.empty?
-        names = leaderless.flat_map { disjoint_cycles(_1) }.map { _1.map(&:inspect).join(" -> ") }.join("; ")
+        loops = leaderless.flat_map { cycles_with_no_rule_in_common(_1) }
+        names = loops.map { _1.map(&:inspect).join(" -> ") }.join("; ")
         raise ArgumentError, "left recursion through cycles with no rule in common isn't supported: #{names} " \
                              "(each rule can call the next without consuming input)"
       end
@@ -142,7 +143,7 @@ module Birman
         first, later = [alts[base], grows].map { EBNF.expr(_1, EBNF::CHOICE) }
         raise ArgumentError, "in left-recursive rule :#{name}, the alternative `#{first}` comes before `#{later}`, " \
                              "so the rule can never grow past it; " \
-                             "put the alternatives that start with #{either(cycle)} first"
+                             "put the alternatives that start with #{names(cycle, "or")} first"
       end
     end
 
@@ -152,14 +153,18 @@ module Birman
         "left-recursive rule :#{name} has no alternative that doesn't start with :#{name}, " \
           "so it can never match; add one that doesn't, as a base case"
       else
-        "left-recursive rules #{path(@leaders[cycle.first], cycle).map(&:inspect).join(" -> ")} have no " \
-          "alternative that doesn't start with one of them, so they can never match; " \
+        "left-recursive rules #{names(cycle, "and")}, which can each reach the others without consuming " \
+          "input, have no alternative that doesn't start with one of them, so they can never match; " \
           "add one that doesn't, as a base case"
       end
     end
 
     def enters?(node, cycle) = calls(node).intersect?(cycle)
-    def either(names) = [names[0...-1].map(&:inspect).join(", "), names.last.inspect].reject(&:empty?).join(" or ")
+
+    # ":a, :b and :c"
+    def names(rules, conjunction)
+      [rules[0...-1].map(&:inspect).join(", "), rules.last.inspect].reject(&:empty?).join(" #{conjunction} ")
+    end
 
     # Can node match while its calls to the cycle's rules at its start
     # fail?
@@ -264,16 +269,16 @@ module Birman
       on_path.delete(name)
     end
 
-    # For a component with no leader, cycles no one rule is in all of:
-    # for each rule, the first cycle through the others that leaves it
-    # out.
-    def disjoint_cycles(component)
+    # For a component with no leader, cycles no one rule is in all of
+    # (though two of them may share one): for each rule, the first cycle
+    # through the others that leaves it out.
+    def cycles_with_no_rule_in_common(component)
       order = @rules.keys.each_with_index.to_h
       cycles = component.filter_map do |left_out|
         rest = component - [left_out]
         rest.lazy.filter_map { path(_1, rest) }.first
       end
-      cycles.uniq(&:to_set).sort_by { order[_1.first] }
+      cycles.uniq(&:to_set).each_with_index.sort_by { |cycle, i| [order[cycle.first], i] }.map(&:first)
     end
 
     # The shortest way round from start back to it through names, through

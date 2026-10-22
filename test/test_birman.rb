@@ -627,7 +627,7 @@ class BirmanTest < Minitest::Test
       rule(:other) { top }
     end
     error = assert_raises(ArgumentError) { g.parse("x!") }
-    assert_match(/rules :top -> :other -> :top have no alternative/, error.message)
+    assert_match(/rules :top and :other, which/, error.message)
   end
 
   def test_a_rule_retried_after_a_contained_commit_is_not_left_recursion

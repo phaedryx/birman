@@ -414,8 +414,9 @@ class TestLeftRecursion < Minitest::Test
   end
 
   def test_a_cycle_with_no_base_case
-    message = "left-recursive rules :x -> :expr -> :x have no alternative that doesn't start with one of " \
-              "them, so they can never match; add one that doesn't, as a base case"
+    message = "left-recursive rules :x and :expr, which can each reach the others without consuming input, " \
+              "have no alternative that doesn't start with one of them, so they can never match; add one that " \
+              "doesn't, as a base case"
     [
       grammar(:x) do
         rule(:x) { expr }
@@ -426,6 +427,16 @@ class TestLeftRecursion < Minitest::Test
         rule(:expr) { either(seq(x, "-"), seq(x, "*").label("product")) }
       end
     ].each { assert_left_recursion_error message, _1 }
+
+    # Every rule of the cycle is named, not just those on its shortest
+    # way round.
+    g = grammar(:a) do
+      rule(:a) { seq(b, "1") }
+      rule(:b) { seq(c, "2") }
+      rule(:c) { either(seq(a, "3"), seq(b, "4")) }
+    end
+    error = assert_raises(ArgumentError) { g.parse("x") }
+    assert_match(/rules :a, :b and :c, which/, error.message)
 
     # One base case anywhere round the cycle is enough.
     g = grammar(:x) do
