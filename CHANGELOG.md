@@ -5,9 +5,12 @@
   is grown from a seed (Warth et al., 2008), so `3-4-5` parses as
   `(3-4)-5`, with a node per level whose span covers it. Errors say what
   the last attempt needed (`1-` expects a term after the `-`), and
-  `to_ruby` generates parsers that do the same. The recursive
-  alternative has to come first, and `expr op expr` groups to the right
-  (`3-(4-5)`): see the README's Left recursion section.
+  `to_ruby` generates parsers that do the same. `expr op expr` groups
+  to the right (`3-(4-5)`): see the README's Left recursion section.
+  A left-recursive rule with no alternative that doesn't start with
+  itself (it could never match), or with one before an alternative that
+  does (it would never grow), raises `ArgumentError` on the first parse
+  and in `to_ruby`, saying how to fix it.
 - **Changed:** indirect left recursion is found from the grammar, not
   the input. A grammar with a cycle of rules that can each call the next
   without consuming input raises `ArgumentError` on its first parse,

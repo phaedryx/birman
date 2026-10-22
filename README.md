@@ -220,9 +220,13 @@ than a short one, and errors say what the last attempt needed
 (`1-` expects an integer after the `-`). `to_ruby` generates parsers
 that do the same.
 
-- Put the recursive alternative first. `either(term, seq(expr, "-", term))`
-  matches a `term`, and growing it again gets no further, so it stops
-  at `3`.
+- The rule needs an alternative that doesn't start with itself, its
+  base case (`term` above), and the alternatives that do start with it
+  come first. Tried first, `term` would win every round, so
+  `either(term, seq(expr, "-", term))` could never grow past `3`. Either
+  mistake raises `ArgumentError` on the first parse, or `to_ruby`,
+  saying which: ``in left-recursive rule :expr, the alternative `term`
+  comes before `expr "-" term`, so the rule can never grow past it``.
 - `expr op expr`, with the rule on both sides, comes out
   right-associative: `3-4-5` is `3-(4-5)`. The call on the right grows
   to the end of the input before the left one can. Write `expr op term`.
