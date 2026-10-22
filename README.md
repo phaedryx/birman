@@ -224,8 +224,8 @@ that do the same.
   base case (`term` above), and the alternatives that do start with it
   come first. Tried first, `term` would win every round, so
   `either(term, seq(expr, "-", term))` could never grow past `3`. Either
-  mistake raises `ArgumentError` on the first parse, or `to_ruby`,
-  saying which: ``in left-recursive rule :expr, the alternative `term`
+  mistake in the rule's own `either` (not one nested inside a `seq`)
+  raises `ArgumentError` on the first parse, or `to_ruby`, saying which: ``in left-recursive rule :expr, the alternative `term`
   comes before `expr "-" term`, so the rule can never grow past it``.
 - `expr op expr`, with the rule on both sides, comes out
   right-associative: `3-4-5` is `3-(4-5)`. The call on the right grows

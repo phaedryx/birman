@@ -63,7 +63,7 @@ module Birman
     # [method."Compiler#to_ruby"]
     # returns = "String: Ruby source defining <namespace>::Parser, its node classes and BirmanRT"
     # raises = [
-    #   "ArgumentError for indirect left recursion, as Grammar#parse",
+    #   "ArgumentError for indirect left recursion, or a left-recursive rule that can't grow, as Grammar#parse",
     #   "Compiler::Error for what can't be compiled (named by rule)"
     # ]
     def to_ruby

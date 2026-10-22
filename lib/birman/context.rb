@@ -172,17 +172,17 @@ module Birman
     # what was missing ("1 +" expected a number after the "+").
     def grow(name, table, pos) # rubocop:disable Metrics/MethodLength
       seeds = @seeds[name] ||= {}
-      seeds[pos] = seed = [nil, pos, NOTHING_EXPECTED]
+      seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
       table[pos] = IN_PROGRESS
       diagnostics = [pos, NOTHING_EXPECTED]
       loop do
         result, furthest, expected = yield
         diagnostics = further(diagnostics, furthest, expected)
-        break unless result && result.pos > (seed[0]&.pos || -1)
+        break unless result && result.pos > (best[0]&.pos || -1)
 
-        seeds[pos] = seed = [result, pos, NOTHING_EXPECTED]
+        seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
       end
-      table[pos] = [seed[0], *diagnostics]
+      table[pos] = [best[0], *diagnostics]
     ensure
       seeds&.delete(pos) # nil if the stack ran out before it was set
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
