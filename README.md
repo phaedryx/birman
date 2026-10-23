@@ -20,7 +20,7 @@ bundle add birman
 or in your Gemfile:
 
 ```ruby
-gem "birman", "~> 0.2.2"
+gem "birman", "~> 0.3.0"
 ```
 
 ```ruby
