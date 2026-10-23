@@ -266,10 +266,10 @@ far it has got.
   starts at `l`; then `x.x` matches only `x`, since `p` has grown over
   the `.x`. Starting at `p` parses it. Usually this doesn't come up: of
   the rules that could lead, the one the grammar uses first does.
-  `parse(root:)` doesn't change that: a cycle the grammar's root
-  reaches keeps its leader whatever rule the parse starts at (so a
-  generated parser agrees), and only a cycle the root never reaches
-  takes its leader from the order the `root:` rule uses them in.
+  `parse(root:)` doesn't change which rule leads, so a generated
+  parser agrees whatever rule it starts at. A cycle the grammar's root
+  never reaches, only a `root:` rule does, takes the first rule that
+  could lead by name.
 - Cycles with no rule in common (`a` and `b` each call themselves and
   each other) have nowhere to grow both from, so they raise
   `ArgumentError` on the first parse, or `to_ruby`, naming them:
@@ -431,10 +431,11 @@ has one.
   Failure never expects "end of input"). `Success#pos` says where the
   match ended, in characters: where its last token ended, before any
   spacing the grammar ignored after it, so the rest of the input is
-  `input[result.pos..]`. Read a header, then stop:
+  `input[result.pos..]`. Read a header, then stop (with a grammar of
+  your own whose `:headers` rule reads them):
 
   ```ruby
-  result = Headers::Grammar.parse(email, root: :headers, consume: false)
+  result = MailGrammar.parse(email, root: :headers, consume: false)
   body = email[result.pos..].sub(/\A\r?\n/, "")
   ```
 

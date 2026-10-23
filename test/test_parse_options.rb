@@ -264,4 +264,61 @@ class TestParseOptions < Minitest::Test
     error = assert_raises(ArgumentError) { expressions.to_ruby(namespace: "Nope", roots: [:no_base]) }
     assert_match(/left-recursive rule :no_base has no alternative/, error.message)
   end
+
+  # --- Leaders don't depend on where a parse starts ---
+
+  # A cycle (aa, bb) either rule could lead, below the root, and entries
+  # reaching it at each rule.
+  def shifting
+    Class.new do
+      include Birman::Grammar
+
+      root :top
+      rule(:top) { ma }
+      rule(:ma) { aa }
+      rule(:aa) { either(seq(bb, "+"), "1") }
+      rule(:bb) { either(seq(aa, "-"), aa) }
+      rule(:xx) { bb }
+      rule(:yy) { aa }
+    end
+  end
+
+  def test_an_entry_doesnt_change_the_leaders_of_cycles_the_root_reaches
+    g = shifting.new
+    assert_equal({ aa: :aa, bb: :aa }, g.left_recursion.leaders)
+    assert_equal g.left_recursion.leaders, g.left_recursion(:xx).leaders
+    assert_equal g.left_recursion.leaders, g.left_recursion(%i[xx yy]).leaders
+  end
+
+  def test_leaders_of_cycles_only_entries_reach_dont_depend_on_the_entries
+    g = Class.new(shifting) { root :zz }.tap { _1.rule(:zz) { "z" } }.new
+    leaders = g.left_recursion(:yy).leaders
+    assert_equal leaders, g.left_recursion(:xx).leaders
+    assert_equal leaders, g.left_recursion(%i[xx yy]).leaders
+    assert_equal leaders, g.left_recursion(%i[yy xx]).leaders
+  end
+
+  def test_a_parser_generated_with_roots_parses_as_the_interpreter_does
+    g = shifting
+    inputs = ["1+", "1-+", "1+-", "1", "1-", "1+-+"]
+    parser = generated(g, roots: %i[xx yy])
+    [{}, { root: :xx }, { root: :yy }, { root: :xx, consume: false }].each do |options|
+      inputs.each do |input|
+        assert_equal Differential.interpreted(g, input, **options), Differential.generated(parser, input, **options),
+                     "#{input.inspect} #{options}"
+      end
+    end
+    other = Class.new(g) { root :zz }.tap { _1.rule(:zz) { "z" } }
+    parser = generated(other, roots: %i[xx yy])
+    inputs.each do |input|
+      assert_equal Differential.interpreted(other, input, root: :yy), Differential.generated(parser, input, root: :yy)
+    end
+  end
+
+  def test_a_success_from_a_parse_survives_marshal
+    result = pairs.parse("a = 1 b", consume: false)
+    copy = Marshal.load(Marshal.dump(result))
+    assert_equal result, copy
+    assert_equal 5, copy.pos
+  end
 end

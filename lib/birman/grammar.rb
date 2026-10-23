@@ -190,12 +190,12 @@ module Birman
     #
     # entry: a rule parse's root: starts at (or, for to_ruby's roots:,
     # an Array of them). Its analysis is of the rules reachable from the
-    # grammar's root and ignore rule, as without one, and then from the
-    # entry, in that order: built (and checked) once per entry, and
-    # read from a Hash after that. Leaders are chosen in that order, so
-    # a cycle the grammar's root reaches has the same leader whatever
-    # the entry, and a generated parser's one set of leaders agrees
-    # with every parse's.
+    # grammar's root and ignore rule, in first-use order as without one,
+    # then of the rest the entry reaches, by name: built (and checked)
+    # once per entry, and read from a Hash after that. Leaders are
+    # chosen in that order, which no entry changes, so every cycle has
+    # the same leader whatever the entry, and a generated parser's one
+    # set of leaders agrees with every parse's.
     # [method.left_recursion]
     # params = ["entry: Symbol | Array of Symbol | nil = nil (rules a parse may start at, besides the root)"]
     # returns = "LeftRecursion, checked"
@@ -221,7 +221,7 @@ module Birman
       ctx = Context.new(input, self, ignore_rule, analysis)
       result = Ref.new(root).match(ctx, ctx.start)
       if result && (!consume || result.pos == input.bytesize)
-        return Success.ending(result.value, input, ctx.token_end(result.pos))
+        return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos))
       end
 
       ctx.fail_at(result.pos, "end of input") if result
@@ -248,18 +248,29 @@ module Birman
     end
 
     # { rule_name => yield(rule_name) } for every rule reachable from the
-    # root and the ignore rule, then from entries (when given, the root
-    # may be unset), in first-use order, skipping nil results.
-    def __reachable_asts(entries = nil)
-      rules = {}
-      queue = (entries ? [self.class.root, ignore_rule, *entries] : [root_rule, ignore_rule]).compact
+    # root and the ignore rule, in first-use order, then the others
+    # reachable from entries (when given, the root may be unset), by
+    # name, skipping nil results. The order of a rule never depends on
+    # the entries, so neither does a cycle's leader (see left_recursion).
+    def __reachable_asts(entries = nil, &)
+      rules = __closure([entries ? self.class.root : root_rule, ignore_rule].compact, {}, &)
+      if entries
+        more = __closure(entries.dup, rules.dup, &).except(*rules.keys)
+        rules.merge!(more.sort_by { |name, _| name.to_s }.to_h)
+      end
+      rules.compact
+    end
+
+    # rules, with yield(name) for every rule reachable from queue that it
+    # doesn't have yet, in first-use order.
+    def __closure(queue, rules)
       while (name = queue.shift)
         next if rules.key?(name)
 
         rules[name] = yield(name)
         queue.concat(AST.refs(rules[name]))
       end
-      rules.compact
+      rules
     end
 
     # Kernel#Integer(value, base), for actions: use it instead of Integer

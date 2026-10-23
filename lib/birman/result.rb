@@ -31,18 +31,19 @@ module Birman
   # methods = ["pos -> Integer | nil (character offset where the match ended, before trailing ignored spacing)"]
   # usage = "case grammar.parse(input) in Birman::Success(value) then ..."
   Success = Data.define(:value) do
-    # A Success whose match ended at byte_pos of input. The input and
-    # offset are set before initialize, which freezes it; pos converts
-    # to characters only when asked.
-    def self.ending(value, input, byte_pos)
-      success = allocate
-      success.instance_variable_set(:@input, input)
-      success.instance_variable_set(:@byte_pos, byte_pos)
-      success.__send__(:initialize, value:)
-      success
+    # input and byte_pos: where the match ended, for pos, which converts
+    # to characters only when asked. Set before super, which freezes it.
+    def initialize(value:, input: nil, byte_pos: nil)
+      @input = input
+      @byte_pos = byte_pos
+      super(value:)
     end
 
     def pos = @input && Birman.char_offset(@input, @byte_pos)
+
+    # Data's own Marshal support would set the ivars after freezing.
+    def marshal_dump = [value, @input, @byte_pos]
+    def marshal_load(fields) = initialize(value: fields[0], input: fields[1], byte_pos: fields[2])
 
     def success? = true
     def failure? = false
