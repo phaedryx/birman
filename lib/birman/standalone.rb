@@ -14,17 +14,28 @@ module Birman
   # ignore is a matcher (a String, Regexp or Matcher), not a rule name:
   # there is no grammar here for a name to refer to. Literals skip it
   # after themselves, and it's skipped at the start of input.
+  #
+  # consume: false is Grammar#parse's. There is no root: option, since
+  # matcher is the only rule; passing one raises ArgumentError (unknown
+  # keyword).
   # [method."Birman.parse"]
-  # params = ["matcher: String | Regexp | Matcher", "input: String", "ignore: String | Regexp | Matcher | nil"]
-  # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
+  # params = [
+  #   "matcher: String | Regexp | Matcher", "input: String", "ignore: String | Regexp | Matcher | nil",
+  #   "consume: Boolean = true (false: a prefix of input may match)"
+  # ]
+  # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
   # raises = ["ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks"]
-  def self.parse(matcher, input, ignore: nil) = Standalone.grammar(matcher, ignore).parse(input)
+  def self.parse(matcher, input, ignore: nil, consume: true)
+    Standalone.grammar(matcher, ignore).parse(input, consume:)
+  end
 
   # [method."Birman.parse!"]
-  # params = ["matcher, input, ignore: as Birman.parse", "formatter: #call(failure) = ErrorFormatter.new"]
+  # params = ["matcher, input, ignore, consume: as Birman.parse", "formatter: #call(failure) = ErrorFormatter.new"]
   # returns = "The parsed value"
   # raises = ["Birman::ParseError", "ArgumentError, as Birman.parse"]
-  def self.parse!(matcher, input, ignore: nil, **) = Standalone.grammar(matcher, ignore).parse!(input, **)
+  def self.parse!(matcher, input, ignore: nil, consume: true, formatter: ErrorFormatter.new)
+    Standalone.grammar(matcher, ignore).parse!(input, consume:, formatter:)
+  end
 
   # The anonymous grammar classes behind Birman.parse: the matcher is
   # the root rule and ignore the ignore rule. Matchers are immutable

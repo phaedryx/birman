@@ -17,12 +17,33 @@ module Birman
     end
   end
 
-  # Returned by Grammar#parse when the whole input parsed.
+  # Returned by Grammar#parse when the input parsed: all of it, or with
+  # consume: false, a prefix of it.
+  #
+  # pos is where the match ended, as a character offset: where its last
+  # token ended, before any spacing the grammar ignored after it (where
+  # the root node's span ends). Like a node's span, it isn't a member,
+  # so equality, inspect and `in Success(value)` leave it out. A Success
+  # built by hand has none.
   # [class.Success]
-  # purpose = "The whole input parsed"
+  # purpose = "The input parsed (all of it, or a prefix with consume: false)"
   # fields = ["value: whatever the root rule produced"]
+  # methods = ["pos -> Integer | nil (character offset where the match ended, before trailing ignored spacing)"]
   # usage = "case grammar.parse(input) in Birman::Success(value) then ..."
   Success = Data.define(:value) do
+    # A Success whose match ended at byte_pos of input. The input and
+    # offset are set before initialize, which freezes it; pos converts
+    # to characters only when asked.
+    def self.ending(value, input, byte_pos)
+      success = allocate
+      success.instance_variable_set(:@input, input)
+      success.instance_variable_set(:@byte_pos, byte_pos)
+      success.__send__(:initialize, value:)
+      success
+    end
+
+    def pos = @input && Birman.char_offset(@input, @byte_pos)
+
     def success? = true
     def failure? = false
     def value!(_formatter = nil) = value

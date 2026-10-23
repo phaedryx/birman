@@ -69,13 +69,13 @@ module Birman
       # rather than on every parse. Defining a rule or changing a
       # setting starts a fresh one.
       # [method."Grammar.parse"]
-      # params = ["input: String"]
+      # params = ["input: String", "consume: Boolean = true (false: a prefix of input may match)"]
       # returns = "Success(value) or Failure; see Grammar#parse"
       # notes = "Uses one cached instance; defining a rule or changing a setting resets it"
-      def parse(input) = instance.parse(input)
+      def parse(input, **) = instance.parse(input, **)
 
       # [method."Grammar.parse!"]
-      # params = ["input: String", "formatter: #call(failure) = ErrorFormatter.new"]
+      # params = ["input: String", "consume: as parse", "formatter: #call(failure) = ErrorFormatter.new"]
       # returns = "The parsed value"
       # raises = ["Birman::ParseError"]
       def parse!(input, **) = instance.parse!(input, **)
@@ -122,9 +122,13 @@ module Birman
     def keywords = self.class.keywords
 
     # Returns Success(value) or Failure(...). Never raises on bad input.
+    #
+    # consume: false succeeds when a prefix of input matches, rather than
+    # all of it, and fails only if the root rule does: the Failure never
+    # expects "end of input". Success#pos says where the match ended.
     # [method.parse]
-    # params = ["input: String"]
-    # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
+    # params = ["input: String", "consume: Boolean = true (false: a prefix of input may match)"]
+    # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
     # raises = [
     #   "ArgumentError on the first parse, whatever the input, for no root rule",
     #   "ArgumentError on the first parse for left-recursive cycles with no rule in common",
@@ -133,21 +137,21 @@ module Birman
     #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
     # ]
     # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
-    def parse(input)
+    def parse(input, consume: true)
       left_recursion
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      __match_all(input)
+      __match_all(input, consume)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
     # [method."parse!"]
-    # params = ["input: String", "formatter: #call(failure) = ErrorFormatter.new"]
+    # params = ["input: String", "consume: as parse", "formatter: #call(failure) = ErrorFormatter.new"]
     # returns = "The parsed value"
     # raises = ["Birman::ParseError (message from formatter)"]
-    def parse!(input, formatter: ErrorFormatter.new) = parse(input).value!(formatter)
+    def parse!(input, formatter: ErrorFormatter.new, **) = parse(input, **).value!(formatter)
 
     def matcher_for(name)
       (@matchers ||= {})[name] ||= begin
@@ -171,10 +175,12 @@ module Birman
 
     private
 
-    def __match_all(input)
+    def __match_all(input, consume)
       ctx = Context.new(input, self, ignore_rule)
       result = Ref.new(root_rule).match(ctx, ctx.start)
-      return Success.new(result.value) if result && result.pos == input.bytesize
+      if result && (!consume || result.pos == input.bytesize)
+        return Success.ending(result.value, input, ctx.token_end(result.pos))
+      end
 
       ctx.fail_at(result.pos, "end of input") if result
       build_failure(input, ctx.furthest, ctx.expected)
