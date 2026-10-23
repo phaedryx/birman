@@ -154,10 +154,15 @@ module Birman
 
     # Run a lookahead's inner match. A lookahead only asks whether
     # something would match here, so a commit failure inside it is an
-    # ordinary failure (nil) rather than the end of the parse.
+    # ordinary failure (nil) rather than the end of the parse. What it
+    # expected is kept, as generated parsers keep it: the frames it
+    # unwound through restored what they started with, so without this a
+    # failure where the lookahead began would only be named, not said.
     def lookahead
       yield
-    rescue Committed
+    rescue Committed => e
+      @furthest = e.pos
+      @expected = e.expected
       nil
     end
 

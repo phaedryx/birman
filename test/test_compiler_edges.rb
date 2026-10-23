@@ -466,6 +466,13 @@ class CompilerEdgesTest < Minitest::Test
       end
     end
     assert_same_results g, %w[ab ac cd ce x]
+
+    # Failing where the lookahead started, inside a rule and not.
+    g = grammar do
+      rule(:top) { either(seq(inner.present, "a"), seq((str("b").maybe > str("d")).present, "b"), "e") }
+      rule(:inner) { seq(str("a").maybe, commit, str("c")) }
+    end
+    assert_same_results g, ["", "x", "ac", "ab", "bd", "d", "e"]
   end
 
   def test_rule_retried_after_a_commit_failure_in_a_lookahead

@@ -26,6 +26,11 @@
   and only when some input reached it, naming one rule. Through a
   custom matcher with no `to_ast` it's still found only then, with the
   old message.
+- **Fixed:** a commit failure inside a rule, caught by `present` or a
+  guard where the lookahead began, said only that the rule was
+  expected (`expected r1 or "b"`), where the same failure without the
+  commit, and the generated parser, said what the rule expected there
+  (`expected "a", "c" or "b"`). Now it says that too.
 - **Changed:** the first parse builds every rule reachable from the
   root and the ignore rule, so a rule whose matcher can't be built
   (`.captures` on a pattern with no named groups, say) raises then,
