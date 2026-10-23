@@ -22,16 +22,18 @@ module Birman
     # read it here, so the grammar running them decides what they skip.
     attr_reader :input, :grammar, :ignore_ref, :furthest, :expected, :position, :isolated_furthest, :isolated_expected
 
-    def initialize(input, grammar, ignore_rule)
+    # left_recursion: the grammar's analysis for the rule the parse starts
+    # at (see Grammar#left_recursion).
+    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion)
       @input = input
       @grammar = grammar
       @ignore_ref = ignore_rule && Ref.new(ignore_rule) # built once per parse, not per token
       @memo = {}
-      @growing = grammar.left_recursion.leaders.then { _1 unless _1.empty? } # nil: nothing to look up
+      @growing = left_recursion.leaders.then { _1 unless _1.empty? } # nil: nothing to look up
       @seeds = {}
       # { leader of other rules => { pos it grows at => this round's memo
       # for the other rules } }
-      @rounds = grammar.left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
+      @rounds = left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
       @furthest = 0
       @expected = NOTHING_EXPECTED
       @token_ends = {}

@@ -126,4 +126,97 @@ class TestParseOptions < Minitest::Test
     assert_raises(ArgumentError) { Birman.parse("a", "a", root: :a) }
     assert_raises(ArgumentError) { Birman.parse!("a", "a", root: :a) }
   end
+  # --- root: ---
+
+  def expressions
+    grammar do
+      rule(:pair) { seq(identifier, "=", expr) }
+      rule(:expr) { either(seq(expr, "-", integer).map { |l, _, r| l - r }, integer) }
+      lexeme(:word) { match(/[a-z]+/) }
+      # Not reachable from :pair.
+      rule(:product) { either(seq(product, "*", integer).map { |l, _, r| l * r }, integer) }
+      rule(:no_base) { seq(no_base, "!") }
+    end
+  end
+
+  def test_root_starts_at_a_plain_rule
+    assert_equal [["a", "=", 1], ["b", "=", 2]], pairs.parse!("a = 1 b = 2", root: :pairs)
+  end
+
+  def test_root_starts_at_a_lexeme_rule
+    result = expressions.parse(" abc  ", root: :word)
+    assert_equal "abc", result.value
+    assert_equal 4, result.pos
+  end
+
+  def test_root_starts_at_a_left_recursive_rule
+    assert_equal(-4, expressions.parse!("1 - 2 - 3", root: :expr))
+  end
+
+  def test_root_grows_a_left_recursive_rule_the_default_root_never_reaches
+    assert_equal 24, expressions.parse!("2 * 3 * 4", root: :product)
+  end
+
+  def test_root_checks_the_left_recursion_it_reaches
+    g = expressions
+    assert_equal ["a", "=", 1], g.parse!("a = 1")
+    error = assert_raises(ArgumentError) { g.parse("x!", root: :no_base) }
+    assert_match(/left-recursive rule :no_base has no alternative/, error.message)
+    assert_raises(ArgumentError) { g.parse("x!", root: :no_base) }
+  end
+
+  # Starting elsewhere doesn't change which rule leads a cycle the
+  # default root reaches, so a generated parser's one set of leaders is
+  # the interpreter's for every root.
+  def test_root_keeps_the_default_roots_leaders
+    g = Class.new do
+      include Birman::Grammar
+
+      root :top
+      rule(:top) { a }
+      rule(:a) { either(seq(b, "a"), "x") }
+      rule(:b) { either(seq(a, "b"), seq(b, "c"), "y") }
+    end.new
+    assert_equal({ a: :b, b: :b }, g.left_recursion.leaders)
+    assert_equal g.left_recursion.leaders, g.left_recursion(:b).leaders
+    assert_equal g.left_recursion.leaders, g.left_recursion(:a).leaders
+  end
+
+  def test_an_unknown_root_raises_naming_it
+    error = assert_raises(ArgumentError) { pairs.parse("a = 1", root: :nope) }
+    assert_equal "undefined rule :nope", error.message
+    error = assert_raises(ArgumentError) { pairs.parse("a = 1", root: :send) }
+    assert_equal "undefined rule :send", error.message
+    assert_raises(ArgumentError) { pairs.parse!("a = 1", root: :nope) }
+  end
+
+  def test_root_works_without_a_default_root
+    g = Class.new do
+      include Birman::Grammar
+
+      rule(:digits) { match(/\d+/) }
+    end
+    assert_equal "12", g.parse!("12", root: :digits)
+  end
+
+  def test_root_and_consume_together
+    result = pairs.parse("a = 1 b = 2 !", root: :pairs, consume: false)
+    assert_equal [["a", "=", 1], ["b", "=", 2]], result.value
+    assert_equal 11, result.pos
+
+    failure = expressions.parse("1 - x", root: :expr, consume: false)
+    assert_equal Birman::Success.new(1), failure
+    assert_equal 1, failure.pos
+  end
+
+  def test_parse_bang_takes_root
+    assert_equal 3, expressions.parse!("5 - 2", root: :expr)
+    error = assert_raises(Birman::ParseError) { expressions.parse!("5 -", root: :expr) }
+    assert_includes error.failure.expected, "integer"
+  end
+
+  def test_the_instance_methods_take_root
+    assert_equal 3, expressions.new.parse!("5 - 2", root: :expr)
+    assert_equal 3, expressions.new.parse("5 - 2", root: :expr).value
+  end
 end
