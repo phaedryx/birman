@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # The grammars generated parsers are checked against (the README's,
-# examples/calc.rb and a left-recursive version of it, json.rb, email.rb
+# examples/calc.rb and left-recursive versions of it, json.rb, email.rb
 # and toml.rb, and the small ones below), each with the inputs to check:
 # fixed edge cases, random token soup, and valid documents built from
 # the grammar or, for toml, taken from test/toml-test (plus, for calc,
@@ -114,6 +114,18 @@ module Examples
     # Committed after each operator, so commit failures happen mid-growth.
     class Committed < Grammar
       rule(:sum) { either(seq(sum.as(:left), either("+", "-").as(:op), commit, product.as(:right)).to(BinOp), product) }
+    end
+
+    # Indirectly: sum -> terms -> sum and product -> factors -> product,
+    # two cycles led by sum and product. Committed after each + and -, in
+    # terms, so commit failures happen in a rule the cycle's leader isn't.
+    class Indirect < Calc::Grammar
+      rule(:sum)     { terms }
+      rule(:terms) do
+        either(seq(sum.as(:left), either("+", "-").as(:op), commit, product.as(:right)).to(BinOp), product)
+      end
+      rule(:product) { factors }
+      rule(:factors) { either(seq(product.as(:left), either("*", "/").as(:op), atom.as(:right)).to(BinOp), atom) }
     end
   end
 
@@ -320,7 +332,8 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), left_calc(count), left_calc_commit(count), json(count), email(count), toml(count),
+    [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), json(count),
+     email(count), toml(count),
      numbers(count), cycles(count), dates(count), moments(count), defaults(count), *one_type(count)]
   end
 
@@ -340,6 +353,10 @@ module Examples
   def left_calc(count) = left_calc_like(count, "leftcalc", LeftCalc::Grammar, "LeftCalcCompiled")
 
   def left_calc_commit(count) = left_calc_like(count, "leftcalccommit", LeftCalc::Committed, "LeftCalcCommitCompiled")
+
+  def left_calc_indirect(count)
+    left_calc_like(count, "leftcalcindirect", LeftCalc::Indirect, "LeftCalcIndirectCompiled")
+  end
 
   # calc's inputs, nested 100 deep rather than 200. Growing uses more
   # stack per level than infix, and on Ruby 3.2 the interpreter runs out

@@ -6,24 +6,25 @@ module Birman
   # can call itself, directly or through other rules, before consuming
   # input would loop forever on some input. Grammar#left_recursion runs
   # it on the first parse or to_ruby, and keeps it once it passes.
-  # A rule that calls only itself that way (direct left recursion) is
-  # supported: Context#memoize grows its match from a seed. A cycle
-  # through two or more rules (indirect) isn't yet, so check! raises.
-  # Internal: the answers (which rules are nullable, which rules a rule
-  # calls first, the cycles and the rule each is reached through first)
-  # are also what indirect left-recursion support would need.
+  # Left recursion is supported, direct (a rule that calls itself) or
+  # indirect (through other rules), the way pegen does it: each cycle
+  # has a leader, a rule that every way round it passes through, and
+  # Context#memoize grows the leader's match from a seed. A cycle with
+  # no such rule, two cycles that share none, raises in check!.
   class LeftRecursion
     FLAGS = { "i" => Regexp::IGNORECASE, "x" => Regexp::EXTENDED, "m" => Regexp::MULTILINE,
               "n" => Regexp::NOENCODING }.freeze
 
-    # Each cycle's rules, in the order rules has them (first-use order,
-    # from Grammar#to_ast), so the first is the rule the parse reaches
-    # first: its leader.
+    # Each cycle's rules (a strongly connected component of the left-call
+    # graph), in the order rules has them: first-use order, from
+    # Grammar#to_ast.
     attr_reader :cycles
 
-    # The rules that call themselves before consuming input, each in a
-    # cycle of its own: the ones Context#memoize grows from a seed.
-    attr_reader :direct
+    # { rule => its cycle's leader } for every rule in a cycle that has
+    # one. The leader is the first of its cycle's rules that every way
+    # round the cycle passes through: take it out and the rest can't
+    # reach each other in a loop. Only it grows; see Context#memoize.
+    attr_reader :leaders
 
     # ignore: the grammar's ignore rule, which a lexeme calls after its
     # token; at its start, if the token was empty.
@@ -35,20 +36,24 @@ module Birman
       @calls = rules.to_h { |name, ast| [name, calls(ast).uniq] }
       @cycles = strongly_connected.select { cyclic?(_1) }
       @cycle_of = @cycles.each_with_object({}) { |cycle, h| cycle.each { h[_1] = cycle } }
-      @direct = @cycles.select(&:one?).flatten.to_set.freeze
+      @leaders = @cycles.each_with_object({}) do |cycle, h|
+        leader = cycle.find { acyclic?(cycle - [_1]) } or next
+        cycle.each { h[_1] = leader }
+      end.freeze
     end
 
-    # Raises ArgumentError naming every cycle through two or more rules,
-    # or for the first rule that calls itself but could never grow (see
+    # Raises ArgumentError naming the cycles of every component with no
+    # leader, or for the first cycle that could never grow (see
     # check_growth!); returns self otherwise.
     def check!
-      indirect = cycles.reject(&:one?)
-      unless indirect.empty?
-        names = indirect.map { path(_1).map(&:inspect).join(" -> ") }.join("; ")
-        raise ArgumentError, "indirect left recursion isn't supported yet: #{names} " \
+      leaderless = cycles.reject { @leaders.key?(_1.first) }
+      unless leaderless.empty?
+        loops = leaderless.flat_map { cycles_with_no_rule_in_common(_1) }
+        names = loops.map { _1.map(&:inspect).join(" -> ") }.join("; ")
+        raise ArgumentError, "left recursion through cycles with no rule in common isn't supported: #{names} " \
                              "(each rule can call the next without consuming input)"
       end
-      direct.each { check_growth!(_1) }
+      cycles.each { check_growth!(_1) }
       self
     end
 
@@ -61,7 +66,7 @@ module Birman
 
     def left_recursive?(name) = @cycle_of.key?(name)
     def cycle(name) = @cycle_of[name]
-    def leader(name) = @cycle_of[name]&.first
+    def leader(name) = @leaders[name]
 
     # Can node match without consuming input? Every node type gets an
     # answer; anything else (a custom matcher's own AST) is assumed to
@@ -121,37 +126,57 @@ module Birman
       end
     end
 
-    # A rule that calls itself grows from a first match that didn't (its
-    # seed), so it needs an alternative that doesn't start with itself:
-    # without one it never matches. And that alternative has to come
-    # after the ones that do: tried first, it wins every round, so they
-    # never grow. Only the rule's own choice is checked, through the
-    # wrappers around it, not choices nested inside its parts.
-    def check_growth!(name)
-      unless seedable?(@rules[name], name)
-        raise ArgumentError, "left-recursive rule :#{name} has no alternative that doesn't start with :#{name}, " \
-                             "so it can never match; add one that doesn't, as a base case"
-      end
+    # A cycle grows from a first match that didn't go round it (its
+    # seed), so one of its rules needs an alternative that doesn't start
+    # with any of them: without one it never matches. And in each of its
+    # rules, an alternative like that has to come after the ones that do
+    # start with one: tried first, it wins every round, so they never
+    # grow. Only each rule's own choice is checked, through the wrappers
+    # around it, not choices nested inside its parts.
+    def check_growth!(cycle) # rubocop:disable Metrics
+      raise ArgumentError, no_base_case(cycle) unless cycle.any? { seedable?(@rules[_1], cycle) }
 
-      alts = alternatives(@rules[name])
-      base = alts.index { !calls(_1).include?(name) } or return
-      grows = alts.drop(base).find { calls(_1).include?(name) } or return
-      first, later = [alts[base], grows].map { EBNF.expr(_1, EBNF::CHOICE) }
-      raise ArgumentError, "in left-recursive rule :#{name}, the alternative `#{first}` comes before `#{later}`, " \
-                           "so the rule can never grow past it; " \
-                           "put the alternatives that start with :#{name} first"
+      cycle.each do |name|
+        alts = alternatives(@rules[name])
+        base = alts.index { !enters?(_1, cycle) } or next
+        grows = alts.drop(base).find { enters?(_1, cycle) } or next
+        first, later = [alts[base], grows].map { EBNF.expr(_1, EBNF::CHOICE) }
+        raise ArgumentError, "in left-recursive rule :#{name}, the alternative `#{first}` comes before `#{later}`, " \
+                             "so the rule can never grow past it; " \
+                             "put the alternatives that start with #{names(cycle, "or")} first"
+      end
     end
 
-    # Can node match while its calls to rule name at its start fail?
-    def seedable?(node, name) # rubocop:disable Metrics
+    def no_base_case(cycle)
+      if cycle.one?
+        name = cycle.first
+        "left-recursive rule :#{name} has no alternative that doesn't start with :#{name}, " \
+          "so it can never match; add one that doesn't, as a base case"
+      else
+        "left-recursive rules #{names(cycle, "and")}, which can each reach the others without consuming " \
+          "input, have no alternative that doesn't start with one of them, so they can never match; " \
+          "add one that doesn't, as a base case"
+      end
+    end
+
+    def enters?(node, cycle) = calls(node).intersect?(cycle)
+
+    # ":a, :b and :c"
+    def names(rules, conjunction)
+      [rules[0...-1].map(&:inspect).join(", "), rules.last.inspect].reject(&:empty?).join(" #{conjunction} ")
+    end
+
+    # Can node match while its calls to the cycle's rules at its start
+    # fail?
+    def seedable?(node, cycle) # rubocop:disable Metrics
       case node
-      in [:ref, ^name] then false
-      in [:choice, alts] then alts.any? { seedable?(_1, name) }
-      in [:seq, _, parts] then leading(parts).all? { seedable?(_1, name) }
+      in [:ref, name] then !cycle.include?(name)
+      in [:choice, alts] then alts.any? { seedable?(_1, cycle) }
+      in [:seq, _, parts] then leading(parts).all? { seedable?(_1, cycle) }
       in [:rep, 0, _, _] | [:rep, _, 0, _] | [:not, _] then true
       in [:rep | :label | :check, *] | [:and | :action | :quiet | :lexeme, _]
-        seedable?(node.last, name) # a wrapper: its inner node is its last element
-      in [:both, left, right] then seedable?(left, name) && seedable?(right, name)
+        seedable?(node.last, cycle) # a wrapper: its inner node is its last element
+      in [:both, left, right] then seedable?(left, cycle) && seedable?(right, cycle)
       else true
       end
     end
@@ -228,26 +253,54 @@ module Birman
       component
     end
 
-    # The shortest way round a cycle, from its leader back to it, through
-    # another rule if there are others: an indirect cycle's leader may
-    # also call itself.
-    def path(cycle) # rubocop:disable Metrics/MethodLength
-      leader = cycle.first
+    # Can none of names reach itself through the others' left calls?
+    def acyclic?(names)
+      done = {}
+      names.none? { looping?(_1, names, done, {}) }
+    end
+
+    def looping?(name, names, done, on_path)
+      return true if on_path[name]
+      return false if done[name]
+
+      on_path[name] = done[name] = true
+      left_calls(name).any? { names.include?(_1) && looping?(_1, names, done, on_path) }
+    ensure
+      on_path.delete(name)
+    end
+
+    # For a component with no leader, cycles no one rule is in all of
+    # (though two of them may share one): for each rule, the first cycle
+    # through the others that leaves it out.
+    def cycles_with_no_rule_in_common(component)
+      order = @rules.keys.each_with_index.to_h
+      cycles = component.filter_map do |left_out|
+        rest = component - [left_out]
+        rest.lazy.filter_map { path(_1, rest) }.first
+      end
+      cycles.uniq(&:to_set).each_with_index.sort_by { |cycle, i| [order[cycle.first], i] }.map(&:first)
+    end
+
+    # The shortest way round from start back to it through names, through
+    # another rule if there is one (a leader may also call itself); nil
+    # if there's none.
+    def path(start, names) # rubocop:disable Metrics/MethodLength
       from = {}
-      queue = [leader]
+      queue = [start]
       while (name = queue.shift)
         left_calls(name).each do |callee|
-          if callee == leader
-            next if name == leader && !cycle.one?
+          if callee == start
+            next if name == start
 
-            return [*trail(from, name), leader]
+            return [*trail(from, name), start]
           end
-          next if !cycle.include?(callee) || from.key?(callee)
+          next if !names.include?(callee) || from.key?(callee)
 
           from[callee] = name
           queue << callee
         end
       end
+      [start, start] if left_calls(start).include?(start)
     end
 
     def trail(from, name)

@@ -185,6 +185,23 @@ class BirmanTest < Minitest::Test
     refute g.parse("ax").committed
   end
 
+  # Failing where the lookahead started, a commit failure says what it
+  # expected there, as the same failure without the commit would.
+  def test_a_commit_failure_where_a_lookahead_starts_says_what_it_expected
+    committed = grammar do
+      rule(:top) { either(seq(inner.present, "a"), "b") }
+      rule(:inner) { seq(str("a").maybe, commit, str("c")) }
+    end
+    uncommitted = grammar do
+      rule(:top) { either(seq(inner.present, "a"), "b") }
+      rule(:inner) { seq(str("a").maybe, str("c")) }
+    end
+    ["", "x"].each do |input|
+      assert_pattern { committed.parse(input) => Birman::Failure(pos: 0, expected: ['"a"', '"c"', '"b"'], committed: false) }
+      assert_equal uncommitted.parse(input).expected, committed.parse(input).expected
+    end
+  end
+
   def test_maybe_and_rep_keep_committing
     g = grammar { rule(:top) { (str("a") > str("b")).maybe >> str("ac") } }
     assert_pattern { g.parse("ac") => Birman::Failure(pos: 1, committed: true) }
@@ -616,17 +633,18 @@ class BirmanTest < Minitest::Test
 
   def test_left_recursion_is_reported_by_rule_name
     g = grammar do
-      rule(:top) { either(seq(sum, "+", "1"), "1") }
-      rule(:sum) { top }
+      rule(:top) { either(seq(top, "+"), seq(sum, "-"), "1") }
+      rule(:sum) { either(seq(sum, "*"), seq(top, "/"), "1") }
     end
     error = assert_raises(ArgumentError) { g.parse("1+1") }
-    assert_match(/left recursion.*:top -> :sum/, error.message)
+    assert_match(/left recursion.*:top -> :top; :sum -> :sum/, error.message)
 
     g = grammar do
       rule(:top) { seq(other, "!") }
-      rule(:other) { either(top, "x") }
+      rule(:other) { top }
     end
-    assert_raises(ArgumentError) { g.parse("x!") }
+    error = assert_raises(ArgumentError) { g.parse("x!") }
+    assert_match(/rules :top and :other, which/, error.message)
   end
 
   def test_a_rule_retried_after_a_contained_commit_is_not_left_recursion

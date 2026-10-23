@@ -760,7 +760,19 @@ module Birman
         lines = @rules.keys.flat_map do |name|
           (@valued.include?(name) ? %w[mp mv mf me] : %w[mp mf me]).map { "@#{_1}_#{ident(name)} = {}\n" }
         end
+        lines += @rules.keys.flat_map { round_memos(_1) }
         "def init_memos\n#{indent(lines.join)}end\n"
+      end
+
+      # A cycle's leader numbers its rounds in @gp_; the cycle's other
+      # rules keep a memo for the round (see in_round).
+      def round_memos(name)
+        leader = @grammar.left_recursion.leader(name)
+        tables = if leader.nil? then []
+                 elsif leader == name then leads_others?(name) ? %w[gp] : []
+                 else @valued.include?(name) ? %w[rr rp rv rf re] : %w[rr rp rf re]
+                 end
+        tables.map { "@#{_1}_#{ident(name)} = {}\n" }
       end
 
       # Ref: the rule's memo entry at p, computed the first time with
@@ -772,20 +784,22 @@ module Birman
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
       # tried again there.
       def ref_method(name, call)
-        return growing_ref_method(name, call) if @grammar.left_recursion.direct.include?(name)
+        leader = @grammar.left_recursion.leader(name)
+        return growing_ref_method(name, call) if leader == name
 
         valued = @valued.include?(name)
         id = ident(name)
+        hit = leader ? "unless q.nil? || q == ABSENT || q == IN_PROGRESS" : "unless q.nil? || q == ABSENT"
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
             q = @mp_#{id}[p]
-            unless q.nil? || q == ABSENT
+            #{hit}
               left_recursion(#{name.to_s.inspect}) if q == IN_PROGRESS
           #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
               merge(@mf_#{id}[p], @me_#{id}[p])
               return q
-            end
+            end#{"\n#{indent(in_round(name, leader, call)).chomp}" if leader}
             @mp_#{id}[p] = IN_PROGRESS
             @position = p
             of = @furthest
@@ -811,17 +825,66 @@ module Birman
         RUBY
       end
 
-      # Ref for a rule that calls itself before consuming input: seed-
-      # growing, as Birman::Context#grow. The memo entry starts as a
-      # failing seed, so the rule's own call is an ordinary memo hit, and
-      # each match that gets further replaces it. Each attempt starts with
-      # fresh failure tracking, so a commit failure reports only its own
-      # attempt's, and is then merged into the rule's, so every attempt's
-      # expectations are kept. A lookahead that catches a commit failure
-      # mid-growth abandons the entry (ABSENT), seed and all.
+      # The middle of Ref for a rule in a cycle led by another rule, as
+      # Birman::Context#memoize, after a final memo hit: while the leader
+      # grows at p (its @gp_ entry is the round's number, above 0), the
+      # rule is memoized there for the round only, in its @rr_ (the round
+      # each entry is for), @rp_, @rv_, @rf_ and @re_ tables, with fresh
+      # failure tracking merged into the caller's.
+      def in_round(name, leader, call)
+        valued = @valued.include?(name)
+        id = ident(name)
+        <<~RUBY
+          g = @gp_#{ident(leader)}[p]
+          unless g.nil? || g <= 0
+            r = @rr_#{id}[p]
+            unless r.nil? || r != g
+              q = @rp_#{id}[p]
+          #{"    @v_ref_#{id} = @rv_#{id}[p] if q != FAIL" if valued}
+              merge(@rf_#{id}[p], @re_#{id}[p])
+              return q
+            end
+            @position = p
+            of = @furthest
+            oe = @expected
+            @furthest = p
+            @expected = NONE
+            q = #{call.name}(p)
+          #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @rv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
+            f = @furthest
+            ex = @expected
+            @furthest = of
+            @expected = oe
+            @rr_#{id}[p] = g
+            @rp_#{id}[p] = q
+            @rf_#{id}[p] = f
+            @re_#{id}[p] = ex
+            merge(f, ex)
+            return q
+          end
+        RUBY
+      end
+
+      # Does name lead a cycle through other rules too?
+      def leads_others?(name)
+        analysis = @grammar.left_recursion
+        analysis.leader(name) == name && !analysis.cycle(name).one?
+      end
+
+      # Ref for a cycle's leader: seed-growing, as Birman::Context#grow.
+      # The memo entry starts as a failing seed, so the rule's own call is
+      # an ordinary memo hit, and each match that gets further replaces
+      # it. Each attempt starts with fresh failure tracking, so a commit
+      # failure reports only its own attempt's, and is then merged into
+      # the rule's, so every attempt's expectations are kept. A leader of
+      # other rules numbers each round (@round counts them across the
+      # parse) in its @gp_ table at p, and sets it to 0 when done. A
+      # lookahead that catches a commit failure mid-growth abandons the
+      # entry (ABSENT), seed, round number and all.
       def growing_ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
+        marks = leads_others?(name)
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
@@ -840,8 +903,8 @@ module Birman
             @furthest = p
             @expected = NONE
             @in_progress << @mp_#{id}
-            @in_progress_at << p
-            while true
+            @in_progress_at << p#{"\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}
+            while true#{"\n    @round += 1\n    @gp_#{id}[p] = @round" if marks}
               af = @furthest
               ae = @expected
               @furthest = p
@@ -858,7 +921,7 @@ module Birman
           #{"    @mv_#{id}[p] = #{call.value || "nil"}" if valued}
             end
             @in_progress.pop
-            @in_progress_at.pop
+            @in_progress_at.pop#{"\n  @gp_#{id}[p] = 0\n  @in_progress.pop\n  @in_progress_at.pop" if marks}
             q = @mp_#{id}[p]
           #{"  @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
             f = @furthest

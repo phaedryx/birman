@@ -220,6 +220,20 @@ than a short one, and errors say what the last attempt needed
 (`1-` expects an integer after the `-`). `to_ruby` generates parsers
 that do the same.
 
+The recursion can go through other rules too (indirect left
+recursion), as when each level of precedence is split in two:
+
+```ruby
+rule(:sum)   { terms }
+rule(:terms) { either(seq(sum, "-", term).map { |l, _, r| l - r }, term) }
+```
+
+Each cycle grows at one rule, its leader, as pegen does: the first rule
+(in the order the grammar uses them) that every way round the cycle
+passes through, here `sum`. While it grows, the cycle's other rules
+are matched afresh each round, since what they match depends on how
+far it has got.
+
 - The rule needs an alternative that doesn't start with itself, its
   base case (`term` above), and the alternatives that do start with it
   come first. Tried first, `term` would win every round, so
@@ -227,13 +241,25 @@ that do the same.
   mistake in the rule's own `either` (not one nested inside a `seq`)
   raises `ArgumentError` on the first parse, or `to_ruby`, saying which: ``in left-recursive rule :expr, the alternative `term`
   comes before `expr "-" term`, so the rule can never grow past it``.
+  In a cycle, any of its rules counts as the rule itself: one of them
+  needs a base case, and in each, the alternatives that start with a
+  rule of the cycle come first.
 - `expr op expr`, with the rule on both sides, comes out
   right-associative: `3-4-5` is `3-(4-5)`. The call on the right grows
   to the end of the input before the left one can. Write `expr op term`.
-- Only a rule that calls itself is supported. A cycle through other
-  rules (`expr` calls `term` first, which calls `expr` first) raises
-  `ArgumentError` on the first parse, or `to_ruby`, naming the cycle:
-  `indirect left recursion isn't supported yet: :expr -> :term -> :expr`.
+- A cycle is grown only at its leader, so a parse that enters it at
+  another rule gets that rule's match with the leader's grown one,
+  which may already have taken what that rule needed. In
+  `l ← p ".x" / "x"; p ← p "(n)" / l` (Medeiros et al., 2014), every
+  way round passes through `p`, so `p` leads even when the parse
+  starts at `l`; then `x.x` matches only `x`, since `p` has grown over
+  the `.x`. Starting at `p` parses it. Usually this doesn't come up: of
+  the rules that could lead, the one the grammar uses first does.
+- Cycles with no rule in common (`a` and `b` each call themselves and
+  each other) have nowhere to grow both from, so they raise
+  `ArgumentError` on the first parse, or `to_ruby`, naming them:
+  `left recursion through cycles with no rule in common isn't
+  supported: :a -> :a; :b -> :b`.
 
 ## Checks
 
@@ -513,6 +539,9 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 - **Left recursion on both sides.** `expr op expr` groups to the right
   (see [Left recursion](#left-recursion)); write `expr op term` for
   left-associative operators.
+- **Entering a left-recursive cycle away from its leader** gets a
+  shorter match than growing from there would (see
+  [Left recursion](#left-recursion)).
 - **Changing rules after parsing.** `Grammar.parse` reuses one
   instance per class, so each rule is built once. Defining a rule or
   changing a setting on a class resets that class's instance, but a
@@ -522,13 +551,11 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 
 ## Not yet
 
-- Indirect left recursion. A cycle of rules that can each call the next
-  without consuming input raises `ArgumentError` on the first parse (or
-  `to_ruby`), whatever the input, naming the cycle (`indirect left
-  recursion isn't supported yet: :expr -> :term -> :expr`); make one
-  rule call itself instead, or use `infix`. Left recursion through a
-  custom matcher, which Birman can't see into, is caught when the parse
-  gets there.
+- Left recursion through cycles with no rule in common. They raise
+  `ArgumentError` on the first parse (or `to_ruby`), whatever the
+  input, naming the cycles; give them a rule in common, or use `infix`.
+  Left recursion through a custom matcher, which Birman can't see into,
+  is caught when the parse gets there.
 - Railroad diagrams from `to_ast`
 
 ## Development

@@ -583,6 +583,7 @@ module BirmanRT
       @position = 0
       @in_progress = []
       @in_progress_at = []
+      @round = 0 # growth rounds of left-recursive cycles so far
       @lookaheads = 0
     end
 

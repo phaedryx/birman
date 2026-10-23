@@ -472,14 +472,14 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["x", "x.", "x!?", ""]
   end
 
-  def test_left_recursion_is_rejected_before_generating
+  def test_unsupported_left_recursion_is_rejected_before_generating
     g = grammar do
-      rule(:top) { (other >> "x") | str("y") }
-      rule(:other) { top }
+      rule(:top) { either(seq(top, "1"), seq(other, "2"), "x") }
+      rule(:other) { either(seq(other, "3"), seq(top, "4"), "y") }
     end
     error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
-    assert_equal "indirect left recursion isn't supported yet: :top -> :other -> :top " \
-                 "(each rule can call the next without consuming input)", error.message
+    assert_equal "left recursion through cycles with no rule in common isn't supported: :top -> :top; " \
+                 ":other -> :other (each rule can call the next without consuming input)", error.message
   end
 
   # --- Direct left recursion, grown from a seed ---

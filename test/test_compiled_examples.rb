@@ -3,9 +3,10 @@
 require "test_helper"
 require_relative "support/examples"
 
-# Parsers generated from the README grammar, examples/calc.rb (and a
-# left-recursive version of it), json.rb, email.rb and toml.rb, and
-# Examples::Numbers agree with the interpreter under CRuby. `rake spinel`
+# Parsers generated from the README grammar, examples/calc.rb (and
+# left-recursive versions of it, direct and indirect), json.rb, email.rb
+# and toml.rb, and Examples::Numbers agree with the interpreter under
+# CRuby. `rake spinel`
 # checks the same inputs against the parsers compiled by Spinel.
 class CompiledExamplesTest < Minitest::Test
   COUNT = Integer(ENV.fetch("INPUTS", 600))
