@@ -77,7 +77,8 @@ end
 ```
 
 See `examples/calc.rb` for a complete small language with an
-interpreter, `examples/json.rb` for a full JSON parser (tested against
+interpreter, `examples/leftcalc.rb` for its arithmetic written as left
+recursion instead of `infix`, `examples/json.rb` for a full JSON parser (tested against
 `JSON.parse`), `examples/toml.rb` for TOML 1.0 (tested against the
 official toml-test suite), `examples/query.rb` for a GitHub-style
 search query (lookahead, implicit AND, a custom error formatter) with
@@ -137,6 +138,16 @@ puts Lists.parse("[1, [2, x], []]").message
 | `.map { }`                    | transform the value with a block (prefer the above)  |
 | `.label("name")`              | "expected name" in errors                            |
 | `.quiet`                      | never mention in errors                              |
+
+Rules can be left-recursive, written the way a textbook grammar writes
+left-associative operators (see [Left recursion](#left-recursion)):
+
+```ruby
+rule(:expr) { either(seq(expr.as(:left), either("+", "-").as(:op), term.as(:right)).to(BinOp), term) }
+```
+
+`1 - 2 - 3` parses as `(1 - 2) - 3`, the same tree
+`infix(term, "+", "-", node: BinOp)` builds.
 
 A name used twice in one `seq` raises `ArgumentError`, and so does a
 `seq` of named parts (or `match(re).captures`) inside another whose
@@ -260,6 +271,8 @@ far it has got.
   `ArgumentError` on the first parse, or `to_ruby`, naming them:
   `left recursion through cycles with no rule in common isn't
   supported: :a -> :a; :b -> :b`.
+- Left recursion through a custom matcher, which Birman can't see into,
+  is caught only when the parse gets there.
 
 ## Checks
 
@@ -551,11 +564,9 @@ isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 
 ## Not yet
 
-- Left recursion through cycles with no rule in common. They raise
-  `ArgumentError` on the first parse (or `to_ruby`), whatever the
-  input, naming the cycles; give them a rule in common, or use `infix`.
-  Left recursion through a custom matcher, which Birman can't see into,
-  is caught when the parse gets there.
+- Left recursion through cycles with no rule in common (see
+  [Left recursion](#left-recursion)); give them a rule in common, or
+  use `infix`.
 - Railroad diagrams from `to_ast`
 
 ## Development
@@ -566,6 +577,7 @@ bundle exec rake    # tests + rubocop
 bundle exec rake spinel   # generated parsers compiled by Spinel vs the interpreter
                           # (SPINEL=/path/to/spinel; skipped if not found)
 ruby examples/calc.rb
+ruby examples/leftcalc.rb
 ruby examples/json.rb
 ruby examples/email.rb
 ruby examples/toml.rb
