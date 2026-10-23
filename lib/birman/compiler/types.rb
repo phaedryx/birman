@@ -14,8 +14,10 @@ module Birman
       SENDS = { to_i: :int, to_f: :float, to_sym: :sym, to_s: :str, join: :str, to_h: :hash,
                 upcase: :str, downcase: :str, strip: :str, to_a: :array }.freeze
 
-      def initialize(grammar)
+      # entries: rules the parser may start at besides the root.
+      def initialize(grammar, entries = [])
         @grammar = grammar
+        @entries = entries
       end
 
       # The initializer literal for a value of matcher's type.
@@ -89,10 +91,10 @@ module Birman
         @rules.transform_values { _1 || :poly }
       end
 
-      # The rules reachable from the root and the ignore rule.
+      # The rules reachable from the root, the ignore rule and the entries.
       def rule_names
         names = []
-        queue = [@grammar.class.root, @grammar.class.ignore].compact
+        queue = [@grammar.class.root, @grammar.class.ignore, *@entries].compact
         while (name = queue.shift)
           next if names.include?(name)
 

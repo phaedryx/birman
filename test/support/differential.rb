@@ -2,8 +2,9 @@
 
 # Differential testing of generated parsers (Grammar.to_ruby) against
 # the interpreter (Grammar.parse). Both sides are reduced to one report
-# string: the value with every node's span, or the failure's position,
-# expectations, committed flag, reason and message. The generated side
+# string: where the match ended and the value with every node's span,
+# or the failure's position, expectations, committed flag, reason and
+# message. options are the parse's (root:, consume:), on both sides. The generated side
 # is either loaded into this process (CRuby) or a compiled binary that
 # prints the same report (see Differential.main_source).
 module Differential
@@ -26,34 +27,35 @@ module Differential
   end
 
   def report(result, dumper)
-    return "ok #{dumper.call(result.value)}" if result.success?
+    return "ok pos=#{result.pos} #{dumper.call(result.value)}" if result.success?
 
     "fail pos=#{result.pos} committed=#{result.committed} expected=#{result.expected.inspect} " \
       "reason=#{result.reason.inspect}\n#{result.message}"
   end
 
-  def interpreted(grammar, input) = report(grammar.parse(input), method(:dump))
+  def interpreted(grammar, input, **) = report(grammar.parse(input, **), method(:dump))
 
-  def generated(parser, input)
+  def generated(parser, input, **)
     runtime = Object.const_get(parser.name.delete_suffix("::Parser"))::BirmanRT
-    report(parser.new(input).parse, runtime.method(:dump))
+    report(parser.new(input).parse(**), runtime.method(:dump))
   end
 
   # The entry point appended to a generated parser to make a binary:
   # it reads stdin and prints the report. With --bench it only parses.
-  def main_source(namespace)
+  def main_source(namespace, **options)
+    call = options.empty? ? "parse" : "parse(#{options.map { |k, v| "#{k}: #{v.inspect}" }.join(", ")})"
     <<~RUBY
       def report(result)
-        return "ok \#{#{namespace}::BirmanRT.dump(result.value)}" if result.success?
+        return "ok pos=\#{result.pos} \#{#{namespace}::BirmanRT.dump(result.value)}" if result.success?
 
         "fail pos=\#{result.pos} committed=\#{result.committed} expected=\#{result.expected.inspect} " \\
           "reason=\#{result.reason.inspect}\\n\#{result.message}"
       end
 
       if ARGV.size.positive? && ARGV[0] == "--bench"
-        puts #{namespace}::Parser.new($stdin.read).parse.success? ? "ok" : "fail"
+        puts #{namespace}::Parser.new($stdin.read).#{call}.success? ? "ok" : "fail"
       else
-        puts report(#{namespace}::Parser.new($stdin.read).parse)
+        puts report(#{namespace}::Parser.new($stdin.read).#{call})
       end
     RUBY
   end
@@ -76,9 +78,9 @@ module Differential
   end
 
   # Loads a generated parser into this process, under namespace.
-  def load(grammar, namespace)
+  def load(grammar, namespace, **)
     Object.send(:remove_const, namespace) if Object.const_defined?(namespace, false)
-    source = grammar.to_ruby(namespace:)
+    source = grammar.to_ruby(namespace:, **)
     Object.class_eval(source, "(#{namespace} generated)", 1)
     Object.const_get(namespace)::Parser
   end

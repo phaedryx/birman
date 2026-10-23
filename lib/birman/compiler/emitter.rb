@@ -41,11 +41,15 @@ module Birman
 
       # valued: the rules to keep values for. If read_rules turns out
       # bigger, compile again with those (see Compiler#to_ruby).
-      def initialize(grammar, valued)
+      # analysis: the grammar's LeftRecursion for the roots. roots: the
+      # rules parse may start at besides the grammar's root.
+      def initialize(grammar, valued, analysis, roots) # rubocop:disable Metrics/MethodLength
         @grammar = grammar
         @valued = valued
-        @read_rules = [grammar.class.root]
-        @types = Types.new(grammar)
+        @analysis = analysis
+        @roots = roots
+        @read_rules = [grammar.class.root, *roots]
+        @types = Types.new(grammar, roots)
         @nodes = Nodes.new
         @actions = Actions.new(grammar)
         @methods = []
@@ -58,7 +62,7 @@ module Birman
 
       def compile
         root = @grammar.class.root or raise Error, "#{@grammar.class} has no root rule"
-        queue = [root, ignore_rule].compact
+        queue = [root, ignore_rule, *@roots].compact
         while (name = queue.shift)
           next if @rules.key?(name)
 
@@ -713,21 +717,27 @@ module Birman
         RUBY
       end
 
+      # Grammar#parse, root: and consume: included. root: is the
+      # grammar's root or one of to_ruby's roots:, each a branch of its
+      # own, so each Success.new sees one rule's value.
       def parse_method
         start = ignore_rule ? "start = ref_#{ident(ignore_rule)}(0)\nstart = 0 if start == FAIL" : "start = 0"
-        root = @grammar.class.root
+        roots = [@grammar.class.root, *@roots].uniq
         <<~RUBY
-          # Grammar#parse: Success(value) if all of the input parses, else Failure.
-          def parse
+          # Grammar#parse: Success(value) if all of the input parses (or,
+          # with consume: false, a prefix of it), else Failure. root: is
+          # #{roots.map(&:inspect).join(", ")} (nil: #{roots.first.inspect}).
+          def parse(root: nil, consume: true)
+            entry = 0
+          #{indent(entry_checks(roots))}
             bad = BirmanRT.invalid_byte(@input)
             return invalid_input(bad) if bad != FAIL
 
             reset
             init_memos
           #{indent(start)}
-            q = ref_#{ident(root)}(start)
-            return Success.new(@v_ref_#{ident(root)}) if q == @len
-
+            q = FAIL
+          #{indent(entry_matches(roots))}
             fail_at(q, "end of input") if q != FAIL
             failure(@furthest, @expected, false)
           rescue Committed => e
@@ -736,6 +746,28 @@ module Birman
             failure_because(@position, "input is nested too deeply")
           end
         RUBY
+      end
+
+      # Sets entry to root's index in roots, or raises.
+      def entry_checks(roots)
+        branches = roots.each_with_index.map do |name, i|
+          test = i.zero? ? "root.nil? || root == #{name.inspect}" : "root == #{name.inspect}"
+          "#{i.zero? ? "if" : "elsif"} #{test}\n  entry = #{i}\n"
+        end
+        message = "\#{root.inspect} isn't a root of this parser (#{roots.map(&:inspect).join(", ")}); " \
+                  "Grammar.to_ruby's roots: adds others"
+        "#{branches.join}else\n  raise ArgumentError, \"#{message}\"\nend\n"
+      end
+
+      # Matches the entry's rule, returning a Success where it stopped (if
+      # consume: false) or at the end of input.
+      def entry_matches(roots)
+        branches = roots.each_with_index.map do |name, i|
+          id = ident(name)
+          "#{i.zero? ? "if" : "elsif"} entry == #{i}\n  q = ref_#{id}(start)\n  " \
+            "return Success.new(@v_ref_#{id}, @input, token_end(q)) if q != FAIL && (q == @len || !consume)\n"
+        end
+        "#{branches.join}end\n"
       end
 
       # Lexeme's tail: the ignore rule, recorded so spans leave it out.
@@ -767,7 +799,7 @@ module Birman
       # A cycle's leader numbers its rounds in @gp_; the cycle's other
       # rules keep a memo for the round (see in_round).
       def round_memos(name)
-        leader = @grammar.left_recursion.leader(name)
+        leader = @analysis.leader(name)
         tables = if leader.nil? then []
                  elsif leader == name then leads_others?(name) ? %w[gp] : []
                  else @valued.include?(name) ? %w[rr rp rv rf re] : %w[rr rp rf re]
@@ -784,7 +816,7 @@ module Birman
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
       # tried again there.
       def ref_method(name, call)
-        leader = @grammar.left_recursion.leader(name)
+        leader = @analysis.leader(name)
         return growing_ref_method(name, call) if leader == name
 
         valued = @valued.include?(name)
@@ -867,8 +899,7 @@ module Birman
 
       # Does name lead a cycle through other rules too?
       def leads_others?(name)
-        analysis = @grammar.left_recursion
-        analysis.leader(name) == name && !analysis.cycle(name).one?
+        @analysis.leader(name) == name && !@analysis.cycle(name).one?
       end
 
       # Ref for a cycle's leader: seed-growing, as Birman::Context#grow.

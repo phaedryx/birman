@@ -87,6 +87,30 @@ module Examples
     end
   end
 
+  # A left-recursive rule the root never reaches, parsed with root:
+  # (and generated with to_ruby's roots:).
+  module Unreached
+    # 2 * 3 * 4
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+      include Birman::Rules::Numbers
+
+      root :word
+      ignore :spacing
+
+      Mul = node(:left, :right)
+      Num = node(:value)
+
+      lexeme(:word) { match(/[a-z]+/) }
+      rule(:product) { either(seq(product.as(:left), "*", commit, factor.as(:right)).to(Mul), factor) }
+      rule(:factor) { either(integer.to(Num), parens(product)) }
+    end
+
+    FIXED = ["2 * 3 * 4", "2", "(2 * 3) * 4 ", "2 * (3 * 4)", "2 *", "* 2", "", " 7 ", "2 * x", "ab"].freeze
+    TOKENS = ["2", "3", "*", "(", ")", " ", "x", "\n"].freeze
+  end
+
   # Rules in a cycle (a -> b -> a) whose values are all Strings, read by
   # .map(:to_i): their types are worked out together.
   module Cycles
@@ -326,14 +350,36 @@ module Examples
     end
   end
 
-  Example = Data.define(:name, :grammar, :namespace, :inputs)
+  # A grammar to check the generated parser of, on inputs. options are
+  # the parse's (root:, consume:); a root: is generated with to_ruby's
+  # roots:.
+  Example = Data.define(:name, :grammar, :namespace, :inputs, :options) do
+    def initialize(name:, grammar:, namespace:, inputs:, options: {}) = super
+
+    def to_ruby_options = options.key?(:root) ? { roots: [options[:root]] } : {}
+  end
 
   module_function
 
   def all(count)
     [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), json(count),
      email(count), toml(count),
-     numbers(count), cycles(count), dates(count), moments(count), defaults(count), *one_type(count)]
+     numbers(count), cycles(count), dates(count), moments(count), defaults(count), *one_type(count),
+     *entries(count)]
+  end
+
+  # Parses started at another rule (root:), or matching a prefix
+  # (consume: false): a left-recursive rule the root reaches, one it
+  # doesn't, and JSON documents followed by more.
+  def entries(count)
+    sums = calc(count).inputs.map { _1.sub(/\Aprint /, "").gsub("(" * 200, "(" * 100).gsub(")" * 199, ")" * 99) }
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    prefixed = json(count).inputs.each_slice(2).map { |a, b| "#{a} #{b}" }
+    [Example.new("sumroot", LeftCalc::Indirect, "SumRootCompiled", sums, { root: :sum }),
+     Example.new("sumprefix", LeftCalc::Indirect, "SumPrefixCompiled", sums, { root: :sum, consume: false }),
+     Example.new("unreached", Unreached::Grammar, "UnreachedCompiled",
+                 Unreached::FIXED + Differential.fuzz(Unreached::TOKENS, rng, count, 8), { root: :product }),
+     Example.new("jsonprefix", JSONExample::Grammar, "JSONPrefixCompiled", prefixed, { consume: false })]
   end
 
   def let(count)

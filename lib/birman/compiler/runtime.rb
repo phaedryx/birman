@@ -110,11 +110,20 @@ module BirmanRT
     end
   end
 
+  # pos counts characters, as Birman::Success's does: where the match
+  # ended, before the spacing ignored after its last token.
   class Success
-    attr_reader :value
+    attr_reader :value, :byte_pos
 
-    def initialize(value)
+    #: (untyped, String, Integer) -> void
+    def initialize(value, input, byte_pos)
       @value = value
+      @input = input
+      @byte_pos = byte_pos
+    end
+
+    def pos
+      BirmanRT.char_count(@input, 0, @byte_pos)
     end
 
     def success?

@@ -90,13 +90,17 @@ module Birman
 
       # A standalone parser for this grammar, as Ruby source: the same
       # results as parse, from code Spinel can compile to a native binary.
+      # Its parse takes consume: as parse does, and root: for the
+      # grammar's root or one of roots: (other rules aren't in it).
       # [method."Grammar.to_ruby"]
       # params = [
       #   "namespace: String, the module the parser is defined in (\"CalcParser\")",
+      #   "roots: Array of Symbol = [], rules its parse may start at (root:) besides the grammar's root",
       #   "lookahead_depth: Integer = 56, how deeply lookaheads may nest (see Compiler)"
       # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = [
+      #   "ArgumentError naming a root that isn't a rule",
       #   "ArgumentError for left-recursive cycles with no rule in common, or a cycle that can't grow, as parse",
       #   "Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)",
       #   "Birman::Compiler::Error for actions calling Integer() or to_i: use large_integer"

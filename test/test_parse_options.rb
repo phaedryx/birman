@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require_relative "support/differential"
 
 # Grammar#parse's options: consume: false, which succeeds when a prefix
 # of the input matches, and root:, which starts at any rule.
@@ -131,11 +132,16 @@ class TestParseOptions < Minitest::Test
   def expressions
     grammar do
       rule(:pair) { seq(identifier, "=", expr) }
-      rule(:expr) { either(seq(expr, "-", integer).map { |l, _, r| l - r }, integer) }
+      rule(:expr) { either(seq(expr, "-", integer).action(:minus), integer) }
       lexeme(:word) { match(/[a-z]+/) }
       # Not reachable from :pair.
-      rule(:product) { either(seq(product, "*", integer).map { |l, _, r| l * r }, integer) }
+      rule(:product) { either(seq(product, "*", integer).action(:times), integer) }
       rule(:no_base) { seq(no_base, "!") }
+
+      # rubocop:disable Lint/NestedMethodDefinition
+      def minus(parts) = parts[0] - parts[2]
+      def times(parts) = parts[0] * parts[2]
+      # rubocop:enable Lint/NestedMethodDefinition
     end
   end
 
@@ -218,5 +224,44 @@ class TestParseOptions < Minitest::Test
   def test_the_instance_methods_take_root
     assert_equal 3, expressions.new.parse!("5 - 2", root: :expr)
     assert_equal 3, expressions.new.parse("5 - 2", root: :expr).value
+  end
+
+  # --- to_ruby ---
+
+  def generated(grammar, **)
+    Differential.load(grammar, "ParseOptionsParser", **)
+  end
+
+  def test_a_generated_parser_takes_consume_and_reports_where_it_stopped
+    g = grammar { rule(:pair) { seq(match(/[^=\s]+/), "=", integer) } }
+    result = generated(g).new("ñandú= 1   b = 2").parse(consume: false)
+    assert_equal ["ñandú", "=", 1], result.value
+    assert_equal 8, result.pos
+    assert_equal 8, generated(g).new("ñandú= 1   ").parse.pos
+  end
+
+  def test_a_generated_parser_starts_at_its_roots
+    parser = generated(expressions, roots: %i[expr product])
+    assert_equal(-4, parser.new("1 - 2 - 3").parse(root: :expr).value)
+    assert_equal 24, parser.new("2 * 3 * 4").parse(root: :product).value
+    assert_equal ["a", "=", 1], parser.new("a = 1").parse.value
+    assert_equal ["a", "=", 1], parser.new("a = 1").parse(root: :pair).value
+  end
+
+  def test_a_generated_parser_refuses_a_root_it_wasnt_generated_with
+    parser = generated(expressions, roots: [:expr])
+    error = assert_raises(ArgumentError) { parser.new("2").parse(root: :product) }
+    assert_equal ":product isn't a root of this parser (:pair, :expr); Grammar.to_ruby's roots: adds others",
+                 error.message
+  end
+
+  def test_to_ruby_refuses_roots_that_arent_rules
+    error = assert_raises(ArgumentError) { expressions.to_ruby(namespace: "Nope", roots: [:nope]) }
+    assert_equal "undefined rule :nope", error.message
+  end
+
+  def test_to_ruby_checks_the_left_recursion_its_roots_reach
+    error = assert_raises(ArgumentError) { expressions.to_ruby(namespace: "Nope", roots: [:no_base]) }
+    assert_match(/left-recursive rule :no_base has no alternative/, error.message)
   end
 end
