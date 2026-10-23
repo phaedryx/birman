@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Added
+
+- `parse(input, root: :rule)` starts at any rule instead of the
+  grammar's root, reachable from it or not (Citrus's `root:`). That
+  rule's left recursion is checked on its first parse and grown, and
+  no cycle's leader depends on where the parse starts. A name that
+  isn't a rule raises `ArgumentError`, `undefined rule :name`.
+- `parse(input, consume: false)` succeeds when a prefix of the input
+  matches (Citrus's `consume:`), and fails only if the root rule does,
+  never expecting "end of input". `Birman.parse` and `Birman.parse!`
+  take it too, but not `root:`.
+- `Success#pos`, where the match ended, in characters, before any
+  spacing ignored after its last token. It isn't a `Data` member, so
+  `in Birman::Success(value)` and `==` are unchanged; a `Success` built
+  by hand has none (`nil`).
+- `to_ruby(roots: [...])` generates a parser whose `parse` takes
+  `root:` (the grammar's root or one of `roots:`; anything else raises
+  `ArgumentError`) and `consume:`, giving the interpreter's results,
+  `Success#pos` included.
+
 ## [0.3.0] - 2026-10-23
 
 ### Breaking
