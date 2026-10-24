@@ -1,190 +1,208 @@
 ## [Unreleased]
 
-- **Added:** direct left recursion. A rule that calls itself before
-  consuming input, `rule(:expr) { either(seq(expr, "-", term), term) }`,
-  is grown from a seed (Warth et al., 2008), so `3-4-5` parses as
-  `(3-4)-5`, with a node per level whose span covers it. Errors say what
-  the last attempt needed (`1-` expects a term after the `-`), and
-  `to_ruby` generates parsers that do the same. `expr op expr` groups
-  to the right (`3-(4-5)`): see the README's Left recursion section.
-  A left-recursive rule with no alternative that doesn't start with
+## [0.3.0] - 2026-10-23
+
+### Breaking
+
+- **A chain of `>>` is one seq**, however it's grouped:
+  `a.as(:x) >> (b.as(:y) >> c.as(:z))` gives `{x:, y:, z:}`, like
+  `(a.as(:x) >> b.as(:y)) >> c.as(:z)`, and `a >> (b >> c)` gives
+  `[a, b, c]`, not `[a, [b, c]]`. A seq built any other way
+  (`seq(...)`, or with a `commit` or `only`) is one part on either side
+  of `>>` or `>`, as in `seq(x, y)`: `seq(a, b) >> c` is `[[a, b], c]`
+  rather than `[a, b, c]`, `(seq(a, commit, b) >> c) | d` backtracks
+  when `c` fails instead of committing to it,
+  `seq("[", only(x), "]") >> y` keeps `y`, and a stored
+  `pair = seq(k.as(:k), v.as(:v))` gives `pair >> z` as `[{k:, v:}, z]`.
+  Where a value changed, write the seq you mean: `seq(a, b, c)` for the
+  flat one, `seq(a, commit, b, c)` to commit to `c`, or `a >> seq(b, c)`
+  for `[a, [b, c]]`.
+- **The first parse builds every rule reachable from the root and the
+  ignore rule**, so a rule whose matcher can't be built (`.captures` on
+  a pattern with no named groups, say) raises `ArgumentError` then, even
+  if the input never reaches it. Fix or remove such rules. An undefined
+  rule still raises only when reached.
+- **`to_ast` has a `[:lexeme, inner]` node**: inner, then the ignore
+  rule. Lexeme rules show as one (`lexeme(:num) { match(/\d+/) }` was
+  `[:pat, "/\\d+/"]`), and so does an empty literal
+  (`[:lexeme, [:str, ""]]`). Literals with text are still
+  `[:str, text]`. Code that walks `to_ast` needs to handle the new node.
+  `to_ebnf` is unchanged.
+- **`left_recursion` can't be a rule name**: it's a method of every
+  grammar now, and defining the rule raises `ArgumentError`. Rename it.
+
+### Added
+
+- Direct left recursion. A rule that calls itself before consuming
+  input, `rule(:expr) { either(seq(expr, "-", term), term) }`, is grown
+  from a seed (Warth et al., 2008), so `3-4-5` parses as `(3-4)-5`, with
+  a node per level whose span covers it. Errors say what the last
+  attempt needed (`1-` expects a term after the `-`), and `to_ruby`
+  generates parsers that do the same. `expr op expr` groups to the
+  right (`3-(4-5)`): see the README's Left recursion section. A
+  left-recursive rule with no alternative that doesn't start with
   itself (it could never match), or with one before an alternative that
   does (it would never grow), raises `ArgumentError` on the first parse
   and in `to_ruby`, saying how to fix it.
-- **Added:** indirect left recursion, through a cycle of rules
+- Indirect left recursion, through a cycle of rules
   (`sum -> terms -> sum`). Each cycle grows from a seed at its leader,
   as pegen does: the first rule that every way round it passes through.
   The checks above cover the whole cycle. A parse that enters a cycle
   at another rule gets a shorter match than growing from there would:
   see the README's Left recursion section.
-- **Changed:** left recursion is found from the grammar, not the input.
-  A grammar with cycles that have no rule in common raises
-  `ArgumentError` on its first parse, whatever the input, and so does
-  `to_ruby`, naming them: `left recursion through cycles with no rule
-  in common isn't supported: :a -> :a; :b -> :b (each rule can call the
-  next without consuming input)`. Before, any left recursion raised,
-  and only when some input reached it, naming one rule. Through a
-  custom matcher with no `to_ast` it's still found only then, with the
-  old message.
-- **Fixed:** a commit failure inside a rule, caught by `present` or a
-  guard where the lookahead began, said only that the rule was
-  expected (`expected r1 or "b"`), where the same failure without the
-  commit, and the generated parser, said what the rule expected there
-  (`expected "a", "c" or "b"`). Now it says that too.
-- **Changed:** the first parse builds every rule reachable from the
-  root and the ignore rule, so a rule whose matcher can't be built
-  (`.captures` on a pattern with no named groups, say) raises then,
-  even if the input never reaches it. An undefined rule still raises
-  only when reached.
-- **Changed:** `to_ast` has a `[:lexeme, inner]` node: inner, then the
-  ignore rule. Lexeme rules show as one (`lexeme(:num) { match(/\d+/) }`
-  was `[:pat, "/\\d+/"]`), and so does an empty literal
-  (`[:lexeme, [:str, ""]]`). Literals with text are still
-  `[:str, text]`. `to_ebnf` is unchanged.
-- **Changed:** `left_recursion` can't be a rule name: it's a method of
-  every grammar now.
-
-- **Added:** matchers without a grammar class. The combinators are
-  available on `Birman` (`Birman.seq`, `Birman.str`, `Birman.match`...),
-  and `Birman.parse(matcher, input, ignore: nil)` and `Birman.parse!`
-  run one as a whole grammar, returning `Success`/`Failure` as
+- `examples/leftcalc.rb`: `examples/calc.rb` with its arithmetic written
+  as left recursion instead of `infix`, giving the same trees.
+- `Grammar.to_ruby(namespace:)` generates a standalone parser, as Ruby
+  source Spinel can compile to a native binary, that agrees with
+  `parse` on values, spans and errors. Differential tests check the
+  README grammar, `examples/calc.rb` and `examples/json.rb` against the
+  interpreter (`rake test`, and `rake spinel` for the compiled
+  binaries). Actions and `.map(:name)` run even when nothing reads
+  their value, as in the interpreter.
+- Generated parsers support nodes whose `initialize` gives fields
+  defaults, `node(:name, :args) { def initialize(name:, args: []) = super }`,
+  as the README shows. Each node is built with the default for any
+  field its value leaves out (named parts, captures, a single value, or
+  a Hash known only at parse time), written where it's built so a `[]`
+  default is a new Array for every node. The `initialize` must take
+  exactly the fields as keywords, with literal defaults, and only call
+  `super`; `to_ruby` refuses anything more, naming the node and what it
+  does.
+- Copied actions may read `Float::INFINITY` and `Float::NAN` (and
+  `-Float::INFINITY`). Other constant paths are still refused.
+- Matchers without a grammar class. The combinators are available on
+  `Birman` (`Birman.seq`, `Birman.str`, `Birman.match`...), and
+  `Birman.parse(matcher, input, ignore: nil)` and `Birman.parse!` run
+  one as a whole grammar, returning `Success`/`Failure` as
   `Grammar.parse` does. `ignore:` takes a matcher, not a rule name. A
   matcher that refers to a rule, or whose `.action`/`.check` names a
   method only a grammar of your own would have, raises `ArgumentError`
   before parsing.
-- **Changed:** a chain of `>>` builds one seq, however it's grouped,
-  so `a.as(:x) >> (b.as(:y) >> c.as(:z))` now gives `{x:, y:, z:}`
-  like `(a.as(:x) >> b.as(:y)) >> c.as(:z)`. A seq built any other way
-  (`seq(...)`, or with a `commit` or `only`) is one part on either side
-  of `>>` or `>`, as in `seq(x, y)`: `(seq(a, commit, b) >> c) | d`
-  backtracks when `c` fails instead of committing to it,
-  `seq("[", only(x), "]") >> y` keeps `y`, a stored
-  `pair = seq(k.as(:k), v.as(:v))` gives `pair >> z` as
-  `[{k:, v:}, z]`, and `seq(a, b) >> c` is `[[a, b], c]` rather than
-  `[a, b, c]`.
-- **Changed:** names can't be dropped silently. The same `.as` name
-  twice in one `seq`, or a `seq` of named parts or a `.captures`
-  (seen through `maybe`, `label`, `quiet`, `check`, `&`, `either`,
-  `between` and `only`, but not `rep`, `sep_by` or a transform) inside
-  a `seq` whose value would drop it, raises `ArgumentError` when the
-  matcher is built. Name
-  the inner seq with `.as`, or list its parts in the outer one. A rule
-  reference still keeps its names to itself.
-- **Added:** `either` passes on a name all its alternatives share:
+- `either` passes on a name all its alternatives share:
   `seq(either(a.as(:x), b.as(:x)), c.as(:y))` gives `{x:, y:}`.
   Generated parsers agree.
-- **Added:** generated parsers support nodes whose `initialize` gives
-  fields defaults, `node(:name, :args) { def initialize(name:, args: []) = super }`
-  as the README shows: each node is built with the default for any field
-  its value leaves out (named parts, captures, a single value, or a Hash
-  known only at parse time), written where it's built so a `[]` default
-  is a new Array for every node. The `initialize` must take exactly the
-  fields as keywords, with literal defaults, and only call `super`;
-  `to_ruby` refuses anything more, naming the node and what it does.
-- **Added:** copied actions may read `Float::INFINITY` and `Float::NAN`
-  (and `-Float::INFINITY`). Other constant paths are still refused.
-- **Changed:** `examples/toml.rb` reads `inf` and `nan` as
-  `Float::INFINITY` and `Float::NAN`, and builds a local time as a
-  `Moment` with no date (its `initialize` defaults `date` and `offset`
-  to nil) rather than a separate `Clock` node.
-- **Added:** `Grammar.to_ruby(namespace:)` generates a standalone
-  parser, as Ruby source Spinel can compile to a native binary, that
-  agrees with `parse` on values, spans and errors. Differential tests
-  check the README grammar, `examples/calc.rb` and `examples/json.rb`
-  against the interpreter (`rake test`, and `rake spinel` for the
-  compiled binaries). Actions and `.map(:name)` run even when nothing
-  reads their value, as in the interpreter.
-- **Added:** `match(re).captures`: the value is a Hash of `re`'s named
-  groups, `{date: "1979-05-27", time: nil}`, with Symbol keys, in
-  order, and `nil` for a group that didn't match, so
+- `match(re).captures`: the value is a Hash of `re`'s named groups,
+  `{date: "1979-05-27", time: nil}`, with Symbol keys, in order, and
+  `nil` for a group that didn't match, so
   `match(MOMENT).captures.to(Moment)` needs no action re-matching the
   text. A regexp with no named groups, or a name used twice, raises
   `ArgumentError`. Generated parsers support it (reading the groups by
   number, as Spinel's scanner needs), building nodes from it directly.
-- **Added:** `sep_by(x, sep, trailing: true)` (and `sep_by1`) allows one
-  separator after the last item, as in TOML's `[1, 2,]`. A list of none
-  still can't be just a separator. After a trailing separator the item
-  is still expected, so `[1, x` reports `expected value or "]"`; without
+- `sep_by(x, sep, trailing: true)` (and `sep_by1`) allows one separator
+  after the last item, as in TOML's `[1, 2,]`. A list of none still
+  can't be just a separator. After a trailing separator the item is
+  still expected, so `[1, x` reports `expected value or "]"`; without
   `trailing`, `[1,]` still reports `expected value`. Generated parsers
   support it.
-- **Added:** `Birman::Failure.at(span, reason)`, for checks made in a
-  second pass over the AST: a committed `Failure` at the start of a
-  node's span, whose message is the reason. The README's Checks
-  section shows one.
-- **Added:** `large_integer(value, base = 0)`, for actions: `Integer`,
-  but a generated parser's gives Bignums in a Spinel binary too, where
-  `Integer`, `String#to_i`, `#hex` and `#oct` raise past 63 bits, or
-  silently give 2**63 - 1 when Spinel can't tell the receiver's type.
-  `to_ruby` refuses actions that call any of those (or `send` them by
-  a computed name), and `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)`
-  on values that may not be Strings. `examples/json.rb` uses it for
-  integers and `\u` escapes.
-- **Added:** `examples/email.rb`, RFC 5322 email addresses (addr-spec,
-  with UTF-8 and nested comments): a grammar with no ignore rule. It's
-  checked against the generated parsers too.
-- **Added:** `.check(:name, "label")`, a semantic predicate: the
-  grammar's method `name` gets the value and returns truthy to accept
-  it. A falsy result is an ordinary failure, "expected label", where
-  the match began, so it backtracks (the furthest failure still wins)
-  and commits only inside a committed `seq`. Generated parsers support
-  it too.
-- **Added:** `examples/toml.rb`, TOML 1.0, parsing to Hashes, Times,
-  Dates and the rest in two passes: the grammar reads a flat list of
-  statements, and a second pass builds the Hash and rejects tables or
-  keys defined twice, additions to inline tables and arrays, and dates
-  that don't exist, reporting each at its node's span. It's tested
-  against a slice of the official toml-test suite (`test/toml-test`),
-  and its generated parser against the interpreter, Spinel binary too.
-- **Added:** ways to transform a value without a block, so a grammar
-  can be plain data (groundwork for compiling grammars later):
+- `.check(:name, "label")`, a semantic predicate: the grammar's method
+  `name` gets the value and returns truthy to accept it. A falsy result
+  is an ordinary failure, "expected label", where the match began, so
+  it backtracks (the furthest failure still wins) and commits only
+  inside a committed `seq`. Generated parsers support it too.
+- Ways to transform a value without a block, so a grammar can be plain
+  data (groundwork for compiling grammars later):
   - `.map(:to_i)` calls that method on the value. The Symbol is kept,
     not turned into a Proc; from `.map(&:to_i)`, just delete the `&`.
-  - `.action(:json_number)` passes the value to a grammar method,
-    which may be private and which subclasses can override.
+  - `.action(:json_number)` passes the value to a grammar method, which
+    may be private and which subclasses can override.
   - `.means(v)` replaces the value with `v`: `lit("null").means(nil)`.
 
   `.map { }` blocks still work.
-- **Fixed:** a lexeme (and a literal) skips the ignore rule of the
-  grammar running it, as a bare string always has. Before, it kept the
-  ignore rule of wherever it was built: none when built outside a
-  grammar, another grammar's when reused, and a parent's old one in a
-  subclass that had already parsed when the parent's `ignore` changed.
-- **Fixed:** `parse` raised ArgumentError on invalid UTF-8 (from the
-  regexps). It's now a Failure at the first invalid byte, with
-  `reason` "invalid UTF-8" (or "invalid US-ASCII", and so on, for input
-  in other encodings), so `parse!` raises ParseError. The bytes before
-  it are valid, so line and column point at it as usual. Generated
-  parsers do the same.
-- **Fixed:** a rule reached from several alternatives at one position
-  repeated its expectations on every memo hit, growing the list as
-  3^n (a 16-deep grammar took 7 seconds). Merging one in now skips
-  expectations already recorded, in the interpreter and in generated
-  parsers; `Failure#expected` and error messages are unchanged.
-- **Fixed:** a rule named after a private helper of one of Birman's
-  rule modules (`Rules::Strings`'s `decode_escape`) silently replaced
-  it; it now raises `ArgumentError`, as Grammar's and Combinators'
-  private methods already did, and a test lists every private method
-  Birman gives a grammar, so a new one can't slip through. The error
-  now says why the name is taken: a method Birman relies on, one every
-  Ruby object has, or one of the grammar's own.
-- **Fixed:** generated parsers called the wrong method when a rule
-  named `ref` or `skip` had a part named like another rule's method
-  (rule `:ref`'s choice was `ref_pat`, as was rule `:pat`'s entry), and
-  kept a rule's value in the same variable as a part of another rule
-  (`:a_pat`'s and `:a`'s `a_pat`). Rules whose names meet in the
-  generated parser (`:a?` and `:a_3f`) are refused, and copied action
-  methods can no longer replace the runtime's `input` or `invalid_input`.
-- **Fixed:** a node with no fields, `Empty = node`, built with `.to`
-  drops the value: `seq("(", ")").to(Empty)` gives `(Empty)` with its
-  span. Before, `parse` raised TypeError when the value wasn't a Hash,
-  and `to_ruby` refused it or, for `.means({})`, generated
-  `Empty.new(, span(p, q))`, a syntax error.
+- `Birman::Failure.at(span, reason)`, for checks made in a second pass
+  over the AST: a committed `Failure` at the start of a node's span,
+  whose message is the reason. The README's Checks section shows one.
+- `large_integer(value, base = 0)`, for actions: `Integer`, but a
+  generated parser's gives Bignums in a Spinel binary too, where
+  `Integer`, `String#to_i`, `#hex` and `#oct` raise past 63 bits, or
+  silently give 2**63 - 1 when Spinel can't tell the receiver's type.
+  `to_ruby` refuses actions that call any of those (or `send` them by a
+  computed name), and `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on
+  values that may not be Strings. `examples/json.rb` uses it for
+  integers and `\u` escapes.
+- `examples/email.rb`, RFC 5322 email addresses (addr-spec, with UTF-8
+  and nested comments): a grammar with no ignore rule. It's checked
+  against the generated parsers too.
+- `examples/toml.rb`, TOML 1.0, parsing to Hashes, Times, Dates and the
+  rest in two passes: the grammar reads a flat list of statements, and
+  a second pass builds the Hash and rejects tables or keys defined
+  twice, additions to inline tables and arrays, and dates that don't
+  exist, reporting each at its node's span. It's tested against a slice
+  of the official toml-test suite (`test/toml-test`), and its generated
+  parser against the interpreter, Spinel binary too.
+- `examples/query.rb`, a GitHub-style search query (lookahead, implicit
+  AND, a custom error formatter), with an evaluator that filters
+  records and a compiler to a SQL condition for ActiveRecord's `where`.
+
+### Changed
+
+- Left recursion is found from the grammar, not the input. A grammar
+  with cycles that have no rule in common raises `ArgumentError` on its
+  first parse, whatever the input, and so does `to_ruby`, naming them:
+  `left recursion through cycles with no rule in common isn't
+  supported: :a -> :a; :b -> :b (each rule can call the next without
+  consuming input)`. Before, any left recursion raised, and only when
+  some input reached it, naming one rule. Through a custom matcher with
+  no `to_ast` it's still found only then, with the old message.
+- Names can't be dropped silently. The same `.as` name twice in one
+  `seq`, or a `seq` of named parts or a `.captures` (seen through
+  `maybe`, `label`, `quiet`, `check`, `&`, `either`, `between` and
+  `only`, but not `rep`, `sep_by` or a transform) inside a `seq` whose
+  value would drop it, raises `ArgumentError` when the matcher is
+  built. Name the inner seq with `.as`, or list its parts in the outer
+  one. A rule reference still keeps its names to itself.
+- `examples/toml.rb` reads `inf` and `nan` as `Float::INFINITY` and
+  `Float::NAN`, and builds a local time as a `Moment` with no date (its
+  `initialize` defaults `date` and `offset` to nil) rather than a
+  separate `Clock` node.
 - The library's own rules (`maybe`, `keyword`, `one_of`, `sep_by`,
   `Rules::Numbers`, `Rules::Strings`) and both examples no longer use
-  blocks. EBNF output is unchanged; about 4% fewer allocations per
-  JSON parse.
+  blocks. EBNF output is unchanged; about 4% fewer allocations per JSON
+  parse.
 - Internal: the block matcher `Birman::Action` is now `Birman::Map`;
   `Birman::Action` is the `.action(:name)` matcher.
+
+### Fixed
+
+- A commit failure inside a rule, caught by `present` or a guard where
+  the lookahead began, said only that the rule was expected
+  (`expected r1 or "b"`), where the same failure without the commit,
+  and the generated parser, said what the rule expected there
+  (`expected "a", "c" or "b"`). Now it says that too.
+- A lexeme (and a literal) skips the ignore rule of the grammar running
+  it, as a bare string always has. Before, it kept the ignore rule of
+  wherever it was built: none when built outside a grammar, another
+  grammar's when reused, and a parent's old one in a subclass that had
+  already parsed when the parent's `ignore` changed.
+- `parse` raised `ArgumentError` on invalid UTF-8 (from the regexps).
+  It's now a `Failure` at the first invalid byte, with `reason` "invalid
+  UTF-8" (or "invalid US-ASCII", and so on, for input in other
+  encodings), so `parse!` raises `ParseError`. The bytes before it are
+  valid, so line and column point at it as usual. Generated parsers do
+  the same.
+- A rule reached from several alternatives at one position repeated its
+  expectations on every memo hit, growing the list as 3^n (a 16-deep
+  grammar took 7 seconds). Merging one in now skips expectations
+  already recorded, in the interpreter and in generated parsers;
+  `Failure#expected` and error messages are unchanged.
+- A rule named after a private helper of one of Birman's rule modules
+  (`Rules::Strings`'s `decode_escape`) silently replaced it; it now
+  raises `ArgumentError`, as Grammar's and Combinators' private methods
+  already did, and a test lists every private method Birman gives a
+  grammar, so a new one can't slip through. The error now says why the
+  name is taken: a method Birman relies on, one every Ruby object has,
+  or one of the grammar's own.
+- Generated parsers called the wrong method when a rule named `ref` or
+  `skip` had a part named like another rule's method (rule `:ref`'s
+  choice was `ref_pat`, as was rule `:pat`'s entry), and kept a rule's
+  value in the same variable as a part of another rule (`:a_pat`'s and
+  `:a`'s `a_pat`). Rules whose names meet in the generated parser (`:a?`
+  and `:a_3f`) are refused, and copied action methods can no longer
+  replace the runtime's `input` or `invalid_input`.
+- A node with no fields, `Empty = node`, built with `.to` drops the
+  value: `seq("(", ")").to(Empty)` gives `(Empty)` with its span.
+  Before, `parse` raised `TypeError` when the value wasn't a Hash, and
+  `to_ruby` refused it or, for `.means({})`, generated
+  `Empty.new(, span(p, q))`, a syntax error.
 
 ## [0.2.2] - 2026-10-17
 

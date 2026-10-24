@@ -1,14 +1,16 @@
 # frozen_string_literal: true
 
 # The grammars generated parsers are checked against (the README's,
-# examples/calc.rb and left-recursive versions of it, json.rb, email.rb
-# and toml.rb, and the small ones below), each with the inputs to check:
+# examples/calc.rb and left-recursive versions of it, leftcalc.rb's
+# among them, json.rb, email.rb and toml.rb, and the small ones below),
+# each with the inputs to check:
 # fixed edge cases, random token soup, and valid documents built from
 # the grammar or, for toml, taken from test/toml-test (plus, for calc,
 # json, email and toml, one-character mutations of them).
 require "json"
 require_relative "differential"
 require_relative "../../examples/calc"
+require_relative "../../examples/leftcalc"
 require_relative "../../examples/json"
 require_relative "../../examples/email"
 require_relative "../../examples/toml"
@@ -103,13 +105,10 @@ module Examples
   end
 
   # examples/calc.rb with its arithmetic left-recursive instead of
-  # infix: the same trees, grown from a seed.
+  # infix (examples/leftcalc.rb): the same trees, grown from a seed.
   module LeftCalc
     # print 1 - 2 - 3
-    class Grammar < Calc::Grammar
-      rule(:sum)     { either(seq(sum.as(:left), either("+", "-").as(:op), product.as(:right)).to(BinOp), product) }
-      rule(:product) { either(seq(product.as(:left), either("*", "/").as(:op), atom.as(:right)).to(BinOp), atom) }
-    end
+    Grammar = ::LeftCalc::Grammar
 
     # Committed after each operator, so commit failures happen mid-growth.
     class Committed < Grammar
