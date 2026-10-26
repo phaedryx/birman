@@ -1091,6 +1091,30 @@ class BirmanTest < Minitest::Test
     assert_equal ['"select"i'], g.parse("selectx").expected, "the boundary failing is the literal failing"
   end
 
+  # Case folding can change byte length (ß folds to SS), so the match
+  # length comes from the regexp, not from the literal.
+  def test_nocase_is_byte_correct_on_multibyte_text
+    g = grammar { rule(:top) { seq(nocase("straße"), match(/\w+/)) } }
+    assert_equal %w[straße x], g.parse!("STRASSEx")
+    assert_equal %w[straße x], g.parse!("Straßex")
+    assert_equal 'line 1, column 8: expected /\w+/, found end of input', g.parse("STRASSE").message.lines.first.chomp
+
+    g = grammar { rule(:top) { seq(nocase("école"), str("!")) } }
+    assert_equal %w[école !], g.parse!("ÉCOLE!")
+    assert_equal 'line 1, column 6: expected "!", found "?"', g.parse("École?").message.lines.first.chomp
+  end
+
+  def test_nocase_works_wherever_a_matcher_goes
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(one_of(nocase("asc") => :up, nocase("desc") => :down), nulls) }
+      rule(:nulls) { either(nocase("nulls"), "x") >> nocase("first") }
+    end
+    assert_equal [:up, %w[nulls first]], g.parse!("ASC Nulls FIRST")
+    assert_equal [:down, %w[x first]], g.parse!("desc x first")
+    assert_equal %w[a b], Birman.parse!(Birman.nocase("a") >> Birman.nocase("b"), "A B", ignore: /\s*/)
+  end
+
   def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar

@@ -27,6 +27,7 @@ module Birman
         case matcher
         when Str, Pat then :str
         when Lit then of(@grammar.literal_matcher(matcher.text))
+        when Nocase then of(@grammar.nocase_matcher(matcher.text))
         when Seq then seq(matcher)
         when Pick then of(matcher.parts[matcher.index])
         when SepBy, Rep then :array
@@ -110,6 +111,7 @@ module Birman
         case value
         when Ref then [value.name]
         when Lit then refs(@grammar.literal_matcher(value.text))
+        when Nocase then refs(@grammar.nocase_matcher(value.text))
         when Data then value.to_h.values.flat_map { refs(_1) }
         when Array then value.flat_map { refs(_1) }
         else []

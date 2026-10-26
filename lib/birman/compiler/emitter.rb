@@ -130,6 +130,7 @@ module Birman
         when Pat then pat(matcher, want, name)
         when Captures then captures(matcher, want, name)
         when Lit then lit(matcher, want)
+        when Nocase then nocase(matcher, want)
         when Seq then seq(matcher, want, name)
         when Pick then pick(matcher, want, name)
         when SepBy then sep_by(matcher, want, name)
@@ -252,6 +253,15 @@ module Birman
         outer = @prefix
         @prefix = "lit_#{slug(matcher.text)}"
         compile_matcher(@grammar.literal_matcher(matcher.text), want, @prefix)
+      ensure
+        @prefix = outer
+      end
+
+      # A case-insensitive literal, likewise (see Combinators#nocase_matcher).
+      def nocase(matcher, want)
+        outer = @prefix
+        @prefix = "nocase_#{slug(matcher.text)}"
+        compile_matcher(@grammar.nocase_matcher(matcher.text), want, @prefix)
       ensure
         @prefix = outer
       end
@@ -565,7 +575,7 @@ module Birman
         when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
-        when Lit, Str, Pat, Rep, SepBy, Not, And, To then nil
+        when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To then nil
         when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown
         when Const then matcher.constant.is_a?(Hash) ? matcher.constant.keys : nil
