@@ -35,7 +35,7 @@ module Birman
       @seeds = {}
       # { leader of other rules => { pos it grows at => this round's memo
       # for the other rules } }, and the same for their longest matches
-      # over the rounds so far (see publish)
+      # over its latest growth there (see keep_longest)
       @rounds = left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
       @longest = @rounds.to_h { |leader, _| [leader, {}] }
       @furthest = from
@@ -135,10 +135,10 @@ module Birman
     # own, not the memo: what they match there depends on the seed, which
     # changes every round. When it has grown, each of them keeps its
     # longest match from those rounds (see publish), so a parse that
-    # enters the cycle at one of them, from outside, gets that: it
-    # matches the leader there first if nothing has (see entered). (A
-    # match of theirs already in the memo there is final: it was
-    # published, or made after the leader finished, or without it.)
+    # enters the cycle at one of them, from outside, gets that (see
+    # outside). (A match of theirs already in the memo there is final:
+    # it was published, or made after the leader finished, or without
+    # it.)
     # Every way back to a rule of the
     # cycle at pos passes through the leader's seed, so meeting any rule
     # again at the same position while it is still being matched means
@@ -158,7 +158,7 @@ module Birman
 
       @position = pos
       return grow(name, table, pos, &) if leader.equal?(name)
-      return entered(leader, table, pos, &) if leader && !@memo[leader]&.key?(pos)
+      return outside(leader, name, table, pos, &) if leader
 
       compute(table, pos, &)
     end
@@ -206,41 +206,48 @@ module Birman
     end
 
     # The rule's longest match so far in its leader's growth at pos,
-    # updated with entry: the first match of the growth, or one that
-    # gets further than the longest so far (a failure is shortest).
+    # updated with this round's entry: its result if it gets further
+    # than the longest so far (a failure is shortest; the first round's
+    # counts), and its diagnostics folded in, as the leader's own are
+    # over its rounds (see grow).
     def keep_longest(name, pos, entry)
       longest = @longest[@growing[name]][pos]
       best = longest[name]
-      longest[name] = entry if !best || (entry[0]&.pos || -1) > (best[0]&.pos || -1)
+      longest[name] = if best
+                        result = (entry[0]&.pos || -1) > (best[0]&.pos || -1) ? entry[0] : best[0]
+                        [result, *further(best[1..], entry[1], entry[2])]
+                      else
+                        entry
+                      end
       entry
     end
 
-    # The leader's growth at pos is done: the cycle's other rules keep
-    # their longest matches from its rounds, in the memo. A parse that
-    # enters the cycle at one of them from outside gets that match, as
-    # the paper's semantics (Medeiros et al. 2014) give; the rule's match
-    # with the leader's final one may be shorter, since that may already
-    # have taken what the rule needed.
-    def publish(longest, pos)
+    # The leader's growth at pos is done, with diagnostics from all its
+    # rounds: the cycle's other rules keep their longest matches from
+    # them, with those diagnostics folded in (the leader's attempts are
+    # part of theirs), and in the memo if they have no entry there. A
+    # parse that enters the cycle at one of them from outside gets that
+    # match, as the paper's semantics (Medeiros et al. 2014) give; the
+    # rule's match with the leader's final one may be shorter, since
+    # that may already have taken what the rule needed.
+    def publish(longest, pos, furthest, expected)
       longest.each do |rule, entry|
+        entry = longest[rule] = [entry[0], *further([furthest, expected], entry[1], entry[2])]
         table = @memo[rule] ||= {}
         table[pos] = entry unless table.key?(pos)
       end
     end
 
-    # A rule of a cycle entered from outside at pos, before its leader
-    # has been matched there: the leader is matched (grown) first, which
-    # publishes the rule's match if the leader's rounds reached it;
-    # otherwise it's computed as any rule is, with the leader's final
-    # match.
-    def entered(leader, table, pos, &)
-      @leader_refs ||= {}
-      (@leader_refs[leader] ||= Ref.new(leader)).match(self, pos)
-      entry = table[pos]
-      return entry if entry
+    # A rule of a cycle entered from outside at pos: its match is
+    # computed as any rule's is, and if that grew the leader at pos
+    # (which happens only if its match reached the leader there) and the
+    # leader's rounds reached it, its longest match from them (see
+    # publish) replaces what it matched with the leader's final one.
+    def outside(leader, name, table, pos, &)
+      entry = compute(table, pos, &)
+      return entry unless @memo[leader]&.key?(pos)
 
-      @position = pos
-      compute(table, pos, &)
+      table[pos] = @longest[leader][pos]&.[](name) || entry
     end
 
     # Seed-growing (Warth et al. 2008), at a cycle's leader only, as pegen
@@ -251,7 +258,7 @@ module Birman
     # every way back to it passes through its seed. A leader of other
     # rules starts each round with an empty table for them at pos, and
     # the growth with an empty table of their longest matches, published
-    # at the end.
+    # at the end (and read by outside after it).
     #
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows
@@ -273,12 +280,11 @@ module Birman
 
         seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
       end
-      publish(longest[pos], pos) if longest
+      publish(longest[pos], pos, *diagnostics) if longest
       table[pos] = [best[0], *diagnostics]
     ensure
       seeds&.delete(pos) # nil if the stack ran out before it was set
       rounds&.delete(pos)
-      longest&.delete(pos)
       table.delete(pos) if table[pos].equal?(IN_PROGRESS)
     end
 

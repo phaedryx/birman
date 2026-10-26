@@ -21,7 +21,7 @@ module Birman
       RESERVED = /\A(?:rule_|ref_|lit_|init_|skip_|str_)/
       RUNTIME_METHODS = %i[
         initialize input parse reset skip_ignored fail_at merge commit_failure ignored_after token_end span_end
-        span failure failure_because invalid_input label_end check_end peek_end bytes_at? abandon left_recursion
+        span failure failure_because invalid_input label_end check_end peek_end bytes_at? abandon left_recursion union
         large_integer
       ].freeze
 

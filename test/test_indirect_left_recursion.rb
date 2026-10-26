@@ -191,6 +191,37 @@ class TestIndirectLeftRecursion < Minitest::Test
     assert_same_results g, ["1+2+3;", "1+2+3!", "1;", "1+;", "1+2", ""]
   end
 
+  # The leader is grown only when the entry rule's own match reaches it:
+  # here a lookahead keeps n's first alternative from l, so l's commit
+  # never runs, and "<+-" is n's "<" then "+-", as it is from the leader.
+  def test_an_entry_that_doesnt_reach_the_leader_doesnt_grow_it
+    g = grammar(:start) do
+      rule(:start) { either(seq("#", l), seq(n, "+-")) }
+      rule(:l) { either(seq(n, "+", commit, "!"), "<") }
+      rule(:n) { either(seq(str("?").present, l, "?"), "<") }
+    end
+    assert_equal :l, g.new.left_recursion.leader(:n)
+    assert_equal ["<", "+-"], g.parse!("<+-")
+    assert_pattern { g.parse("<") => Birman::Failure(pos: 1, expected: ['"+-"'], committed: false) }
+    assert_same_results g, ["<+-", "<", "<+!", "#<+!", "#<+-", "?<?", ""]
+  end
+
+  # A rule's kept match carries what every round of the leader's growth
+  # expected, the leader's own attempts included, whether the parse
+  # reaches the rule at that position before the leader or after.
+  def test_an_entrys_diagnostics_cover_every_round
+    g = grammar(:start) do
+      rule(:start) { either(seq(l.present, "#"), seq(n, ";")) }
+      rule(:after) { seq(n, ";") }
+      rule(:l) { either(seq(n, "!"), "<") }
+      rule(:n) { seq(l, ".", ">") }
+    end
+    assert_pattern { g.parse("<.x;") => Birman::Failure(pos: 2, expected: ['">"']) }
+    assert_pattern { g.parse("<.x;", root: :after) => Birman::Failure(pos: 2, expected: ['">"']) }
+    assert_pattern { g.parse("<.>!.x;", root: :after) => Birman::Failure(pos: 5, expected: ['">"']) }
+    assert_same_results g, ["<.x;", "<.>;", "<.>!.>;", "<.>!.x;", "<;", "<#", ""], roots: [:after]
+  end
+
   # Member access as an assignment target (see Examples::Lvalues): the
   # assignment enters the call/member cycle at member, which can't lead.
   def test_member_access_as_an_assignment_target
