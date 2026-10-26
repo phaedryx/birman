@@ -182,6 +182,30 @@ class CompilerEdgesTest < Minitest::Test
     assert_equal want.message, got.message
   end
 
+  # Spinel types a parameter by the values it sees, so a seq's
+  # [Integer, "*", Integer] could reach an action typed Array[String] and
+  # raise TypeError in the binary. Copied methods take untyped parameters.
+  def test_copied_methods_take_untyped_parameters
+    g = grammar do
+      rule(:top) { seq(match(/\d/).map(:to_i), "*", match(/\d/).map(:to_i)).action(:multiply).check(:big?, "big") }
+
+      private
+
+      # rubocop:disable Lint/NestedMethodDefinition
+      def multiply(parts) = times(parts[0], parts[2])
+      def times(left, right) = scaled(left * right)
+      def scaled(value, by = 1) = value * by
+      def big?(product) = product > 1
+      # rubocop:enable Lint/NestedMethodDefinition
+    end
+    source = g.to_ruby(namespace: "CompilerTestParser")
+    assert_match(/# @rbs parts: untyped\n *def multiply\(parts\)/, source)
+    assert_match(/# @rbs left: untyped\n *# @rbs right: untyped\n *def times\(left, right\)/, source)
+    assert_match(/# @rbs product: untyped\n *def big\?\(product\)/, source)
+    refute_match(/@rbs \w+: untyped\n *def scaled/, source, "Spinel drops a signature with an optional parameter")
+    assert_same_results g, ["3*4", "1*1", "3*", "x"]
+  end
+
   # --- Checks ---
 
   # The check's value is never read, but the predicate still decides.

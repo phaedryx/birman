@@ -82,7 +82,7 @@ module Birman
       def method_source(found, rule)
         node, scopes = found
         walk(node) { visit(_1, scopes, rule) }
-        MethodFinder.source(node)
+        "#{UntypedParameters.of(node)}#{MethodFinder.source(node)}"
       end
 
       def visit(node, scopes, rule)
@@ -157,6 +157,29 @@ module Birman
       def walk(node, &)
         yield node
         node.compact_child_nodes.each { walk(_1, &) }
+      end
+    end
+
+    # Inline RBS saying each parameter of a copied method is untyped.
+    # Spinel otherwise types a parameter by the values it can see, so a
+    # seq's [Integer, "*", Integer] can reach an action whose parts it
+    # typed Array[String], and the binary raises TypeError converting it.
+    # Only for methods whose parameters are all plain required ones: Spinel
+    # ignores a signature with optional or rest parameters, and the others
+    # aren't needed for an action's one value. A comment, so CRuby runs the
+    # method as before.
+    module UntypedParameters
+      def self.of(node)
+        params = node.parameters
+        return "" unless params && plain?(params)
+
+        params.requireds.map { "# @rbs #{_1.name}: untyped\n" }.join
+      end
+
+      def self.plain?(params)
+        params.requireds.all?(Prism::RequiredParameterNode) &&
+          [params.optionals, params.posts, params.keywords].all?(&:empty?) &&
+          [params.rest, params.keyword_rest, params.block].all?(&:nil?)
       end
     end
 
