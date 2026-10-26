@@ -222,6 +222,21 @@ class TestIndirectLeftRecursion < Minitest::Test
     assert_same_results g, ["<.x;", "<.>;", "<.>!.>;", "<.>!.x;", "<;", "<#", ""], roots: [:after]
   end
 
+  # The entry rule's own match, made with the other rules' kept matches,
+  # can get further than its own kept one (here n's rounds reach n only
+  # where m fails): the longer of the two wins.
+  def test_an_entrys_own_match_wins_when_it_gets_further
+    g = grammar(:pp) do
+      rule(:pp) { either(seq(pp, "(n)"), m, n, "x") }
+      rule(:m) { either(seq(pp, ".x"), "z") }
+      rule(:n) { either(seq(m, "=", commit, "!"), seq(pp, "+")) }
+    end
+    assert_equal :pp, g.new.left_recursion.leader(:n)
+    assert_equal [[["x", "(n)"], ".x"], "=", "!"], g.parse!("x(n).x=!", root: :n)
+    assert_pattern { g.parse("x(n).x=!") => Birman::Failure(pos: 6) } # from pp, m comes before n
+    assert_same_results g, ["x(n).x=!", "x(n).x=?", "x(n)+", "x.x", "z=!", "x", ""], roots: %i[n m]
+  end
+
   # Member access as an assignment target (see Examples::Lvalues): the
   # assignment enters the call/member cycle at member, which can't lead.
   def test_member_access_as_an_assignment_target

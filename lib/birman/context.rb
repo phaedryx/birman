@@ -214,13 +214,15 @@ module Birman
       longest = @longest[@growing[name]][pos]
       best = longest[name]
       longest[name] = if best
-                        result = (entry[0]&.pos || -1) > (best[0]&.pos || -1) ? entry[0] : best[0]
-                        [result, *further(best[1..], entry[1], entry[2])]
+                        [end_of(entry) > end_of(best) ? entry[0] : best[0], *further(best[1..], entry[1], entry[2])]
                       else
                         entry
                       end
       entry
     end
+
+    # Where a memo entry's match ended; a failure ends before anything.
+    def end_of(entry) = entry[0]&.pos || -1
 
     # The leader's growth at pos is done, with diagnostics from all its
     # rounds: the cycle's other rules keep their longest matches from
@@ -242,12 +244,17 @@ module Birman
     # computed as any rule's is, and if that grew the leader at pos
     # (which happens only if its match reached the leader there) and the
     # leader's rounds reached it, its longest match from them (see
-    # publish) replaces what it matched with the leader's final one.
+    # publish) replaces what it matched with the leader's final one,
+    # unless that got further: made with the other rules' kept matches,
+    # it can (ties go to the kept one).
     def outside(leader, name, table, pos, &)
       entry = compute(table, pos, &)
       return entry unless @memo[leader]&.key?(pos)
 
-      table[pos] = @longest[leader][pos]&.[](name) || entry
+      kept = @longest[leader][pos]&.[](name)
+      return entry unless kept && end_of(kept) >= end_of(entry)
+
+      table[pos] = kept
     end
 
     # Seed-growing (Warth et al. 2008), at a cycle's leader only, as pegen

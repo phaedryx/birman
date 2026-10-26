@@ -926,7 +926,7 @@ module Birman
                 @bf_#{id}[p] = f
                 @be_#{id}[p] = ex
               elsif f == bf && !ex.empty?
-                @be_#{id}[p] = union(@be_#{id}[p], ex)
+                @be_#{id}[p] = fold_expected(@be_#{id}[p], ex)
               end
             end
             merge(f, ex)
@@ -941,7 +941,8 @@ module Birman
       # as any rule is. If that grew the leader at p (its memo entry
       # there is final now) and the leader's rounds reached the rule, the
       # rule's longest match from them, with their diagnostics, replaces
-      # what it matched with the leader's final one.
+      # what it matched with the leader's final one, unless that got
+      # further (ties go to the kept one).
       def adopt(name, leader)
         valued = @valued.include?(name)
         id = ident(name)
@@ -949,7 +950,7 @@ module Birman
           l = @mp_#{ident(leader)}[p]
           unless l.nil? || l == ABSENT
             b = @bp_#{id}[p]
-            if b != ABSENT
+            if b != ABSENT && b >= q
               q = b
               @mp_#{id}[p] = b
           #{indent("if b != FAIL\n  @v_ref_#{id} = @bv_#{id}[p]\n  @mv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
@@ -987,7 +988,7 @@ module Birman
               @bf_#{id}[p] = f
               @be_#{id}[p] = ex
             elsif bf == f
-              @be_#{id}[p] = union(ex, @be_#{id}[p])
+              @be_#{id}[p] = fold_expected(ex, @be_#{id}[p])
             end
             m = @mp_#{id}[p]
             if m.nil? || m == ABSENT

@@ -61,7 +61,9 @@
   had grown over what that rule needed: `sum = terms; terms = sum op
   product / product` entered at `terms` couldn't parse `1 + 2`. Now
   each of a cycle's other rules keeps its longest match from the
-  leader's rounds, and a parse entering there gets that. Generated
+  leader's rounds, and a parse entering there gets that (or the rule's
+  own match with the others' kept ones, if it gets further: so a
+  `commit` in it can now fail where it used to fail plainly). Generated
   parsers do the same.
 
 ## [0.3.0] - 2026-10-23

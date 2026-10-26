@@ -640,7 +640,7 @@ module BirmanRT
     # left-recursive rule's diagnostics folded over the rounds it was
     # matched in (as Context#further does).
     #: (Array[String], Array[String]) -> Array[String]
-    def union(a, b)
+    def fold_expected(a, b)
       out = Array.new(0, "")
       i = 0
       while i < a.size
