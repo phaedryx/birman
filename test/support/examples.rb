@@ -111,6 +111,46 @@ module Examples
     TOKENS = ["2", "3", "*", "(", ")", " ", "x", "\n"].freeze
   end
 
+  # Keywords in any case (nocase), with a commit after the first, a
+  # keyword boundary (SELECTED is a name) and a non-ASCII literal whose
+  # folding changes its byte length (STRASSE matches straße).
+  module Select
+    # SELECT a, b FROM t WHERE x <= 3
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      Query = node(:columns, :table, :where)
+      Cond = node(:op, :left, :right)
+
+      root :query
+      ignore :spacing
+
+      rule(:query) do
+        seq(nocase("select"), commit, sep_by1(column, ",").as(:columns), nocase("from"), name.as(:table),
+            seq(nocase("where"), commit, only(condition)).maybe.as(:where)).to(Query)
+      end
+      rule(:column) { either("*", name) }
+      rule(:condition) do
+        seq(name.as(:left), one_of(nocase("is") => :is, "<=" => :lte, "=" => :eq).as(:op), value.as(:right)).to(Cond)
+      end
+      rule(:value) { either(nocase("null").means(nil), nocase("straße"), number, name) }
+      lexeme(:name) { seq(reserved.absent, only(match(/[a-zé_]\w*/i))).label("name") }
+      rule(:reserved) { either(nocase("select"), nocase("from"), nocase("where"), nocase("is"), nocase("null")) }
+      lexeme(:number) { match(/\d+/).map(:to_i) }
+    end
+
+    FIXED = ["SELECT a, b FROM t WHERE x <= 3", "select * from T", "Select A From b Where C is NULL",
+             "SELECT a FROM t WHERE size = STRASSE", "select a from t where size = Straße", "SELECTED a FROM t",
+             "SELECT selected FROM fromage", "SELECT a FROM where", "select a from t where is = 1", "SELECT",
+             "select a", "select a from", "select a from t where", "select a from t where x",
+             "SELECT a FROM t WHERE x <",
+             "SELECT é FROM École WHERE É IS null", "", "from t", "select a,b,c from t where x<=42 "].freeze
+    TOKENS = ["SELECT", "select", "Select", "FROM", "from", "WHERE", "where", "IS", "is", "NULL", "null", "Null",
+              "a", "b", "t", "selected", "fromage", "x", "é", "É", "straße", "STRASSE", "Straße", "*", ",", "<=", "=",
+              " ", " ", "\n", "1", "42"].freeze
+  end
+
   # Rules in a cycle (a -> b -> a) whose values are all Strings, read by
   # .map(:to_i): their types are worked out together.
   module Cycles
@@ -396,7 +436,8 @@ module Examples
   def all(count)
     [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), json(count),
      email(count), toml(count),
-     numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), *one_type(count),
+     numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), select(count),
+     *one_type(count),
      *entries(count)]
   end
 
@@ -497,6 +538,14 @@ module Examples
     entries = Array.new(count / 2) { Array.new(rng.rand(1..4)) { Dates::TOKENS.sample(random: rng) }.join(", ") }
     inputs = fixed + Differential.fuzz(Dates::TOKENS, rng, count, 8) + entries
     Example.new("dates", Dates::Grammar, "DatesCompiled", inputs)
+  end
+
+  def select(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    queries = Array.new(count / 2) { SelectGen.query(rng) }
+    mutants = queries.map { Differential.mutate(rng, _1, Select::TOKENS) }
+    inputs = Select::FIXED + Differential.fuzz(Select::TOKENS, rng, count, 8) + queries + mutants
+    Example.new("select", Select::Grammar, "SelectCompiled", inputs)
   end
 
   def defaults(count)
@@ -643,6 +692,31 @@ module Examples
                     "36:", "2:", "8:", "1" * 20, "f" * 20].freeze
 
   # Valid and invalid numbers, in random bases, mostly past 63 bits.
+  # Valid queries, each keyword in a random case.
+  module SelectGen
+    module_function
+
+    NAMES = %w[a b t x size école selected fromage].freeze
+    SPACES = [" ", " ", "  ", "\n"].freeze
+
+    def query(rng)
+      columns = rng.rand(3).zero? ? "*" : Array.new(rng.rand(1..3)) { NAMES.sample(random: rng) }.join(", ")
+      where = rng.rand(2).zero? ? "" : "#{space(rng)}#{word(rng, "where")}#{space(rng)}#{condition(rng)}"
+      table = NAMES.sample(random: rng)
+      "#{word(rng, "select")}#{space(rng)}#{columns}#{space(rng)}#{word(rng, "from")}#{space(rng)}#{table}#{where}"
+    end
+
+    def condition(rng)
+      op = ["<=", "=", " #{word(rng, "is")} "].sample(random: rng)
+      values = [word(rng, "null"), word(rng, "straße"), rng.rand(100).to_s, NAMES.sample(random: rng)]
+      value = values.sample(random: rng)
+      "#{NAMES.sample(random: rng)}#{op}#{value}"
+    end
+
+    def word(rng, text) = text.each_char.map { rng.rand(2).zero? ? _1.upcase : _1 }.join
+    def space(rng) = SPACES.sample(random: rng)
+  end
+
   module NumbersGen
     module_function
 

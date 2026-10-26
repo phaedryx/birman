@@ -122,6 +122,7 @@ puts Lists.parse("[1, [2, x], []]").message
 | `seq("[", only(x), "]")`      | value is just `x`; the rest must match but is dropped |
 | `either(a, b, c)`             | ordered choice                                       |
 | `one_of("true" => true, ...)` | one of these literals, producing its value (tried in order) |
+| `nocase("select")`            | a literal in any case (`SELECT`, `Select`); value `"select"` |
 | `x.as(:key)`                  | name a part; the sequence's value becomes a hash     |
 | `x.to(Node)`                  | build a node from that hash (or from a single value) |
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
@@ -175,6 +176,14 @@ Declare `ignore :spacing` and whitespace (and comments, with
   or after `>>`, `|`, `&` and `>`. They skip trailing spacing, and
   word-like ones (`"let"`) are keywords, so `"let"` won't match the
   start of `letter`.
+- `nocase("select")` is a literal matched in any case: `SELECT`,
+  `Select` and `select` all match, and its value is `"select"` as
+  written in the grammar, so the rest of the grammar compares against
+  one spelling (use `match(/select/i)` to keep the text as typed). It
+  skips trailing spacing and gets the keyword boundary like any
+  literal, and shows as `"select"i` in errors and EBNF. Folding is
+  Ruby's (`/i`): `nocase("straße")` matches `STRASSE`, and the match is
+  as long as the input, not the literal.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
   no skipping. `match(/.../).captures` is raw too, its value a hash of
   the named groups with Symbol keys, every name always present. Each

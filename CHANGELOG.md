@@ -2,6 +2,17 @@
 
 ### Added
 
+- `nocase("select")`, a literal matched in any case (Citrus's backtick
+  strings): `SELECT`, `Select` and `select` all match. It's a literal
+  otherwise, skipping trailing spacing, with the keyword boundary when
+  word-like (`nocase("is")` doesn't match the start of `island`), and
+  usable wherever one goes (`one_of(nocase("asc") => :up)`). Its value
+  is the text as written in the grammar, `"select"`, whatever case the
+  input used. It folds as Ruby's `/i` does, and the match is as long
+  as the input (`nocase("straße")` matches the seven bytes of
+  `STRASSE`). Errors and `to_ebnf` show it as `"select"i`; `to_ast`
+  has a new `[:istr, text]` node for it (`[:lexeme, [:istr, ""]]` when
+  empty), nullable only when empty, and `to_ruby` generates it.
 - `parse(input, root: :rule)` starts at any rule instead of the
   grammar's root, reachable from it or not (Citrus's `root:`). That
   rule's left recursion is checked on its first parse and grown, and
