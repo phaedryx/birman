@@ -559,7 +559,7 @@ class CompilerTest < Minitest::Test
   # switched off here to reach the generated check.
   def test_left_recursion_the_static_check_misses_raises_like_the_interpreter
     g = grammar { rule(:top) { (top >> "x") | str("y") } }
-    g.define_method(:left_recursion) { Birman::LeftRecursion.new({}) }
+    g.define_method(:left_recursion) { |_entry = nil| Birman::LeftRecursion.new({}) }
     parser = Differential.load(g, "CompilerTestParser")
     error = assert_raises(ArgumentError) { parser.new("yx").parse }
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message

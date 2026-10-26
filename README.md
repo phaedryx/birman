@@ -266,6 +266,10 @@ far it has got.
   starts at `l`; then `x.x` matches only `x`, since `p` has grown over
   the `.x`. Starting at `p` parses it. Usually this doesn't come up: of
   the rules that could lead, the one the grammar uses first does.
+  `parse(root:)` doesn't change which rule leads, so a generated
+  parser agrees whatever rule it starts at. A cycle the grammar's root
+  never reaches, only a `root:` rule does, takes the first rule that
+  could lead by name.
 - Cycles with no rule in common (`a` and `b` each call themselves and
   each other) have nowhere to grow both from, so they raise
   `ArgumentError` on the first parse, or `to_ruby`, naming them:
@@ -412,6 +416,34 @@ has one.
   Input nested too deeply for Ruby's stack is a `Failure` too, with
   `reason` set (see Limits), and so is invalid UTF-8: `reason` is
   "invalid UTF-8", at the first bad byte.
+- `parse(input, root: :rule)` starts at any rule instead of the root,
+  which is handy for testing one rule on its own. The rule needn't be
+  reachable from the root; its left recursion is checked and grown as
+  the root's is. A name that isn't a rule (even `:send`, which is a
+  method) raises `ArgumentError`, `undefined rule :send`.
+
+  ```ruby
+  Calc::Grammar.parse!("1 + 2 * 3", root: :sum)  # => (BinOp "+" (Num 1) ...)
+  ```
+
+- `parse(input, consume: false)` succeeds when a prefix of the input
+  matches, rather than all of it, and fails only if the root does (the
+  Failure never expects "end of input"). `Success#pos` says where the
+  match ended, in characters: where its last token ended, before any
+  spacing the grammar ignored after it, so the rest of the input is
+  `input[result.pos..]`. Read a header, then stop (with a grammar of
+  your own whose `:headers` rule reads them):
+
+  ```ruby
+  result = MailGrammar.parse(email, root: :headers, consume: false)
+  body = email[result.pos..].sub(/\A\r?\n/, "")
+  ```
+
+  `pos` isn't a field of `Success` (it's left out of `==` and
+  `inspect`, as a node's span is), so `in Birman::Success(value)` still
+  matches. `parse!`, the instance methods, `Birman.parse` (which takes
+  `consume:` but not `root:`, since its matcher is the only rule) and
+  generated parsers take the same options.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
@@ -449,6 +481,16 @@ source = Calc::Grammar.to_ruby(namespace: "CalcParser") + <<~RUBY
   puts result.success? ? result.value.inspect : result.message
 RUBY
 File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
+```
+
+Its `parse` takes `consume:` as `Grammar#parse` does, and `root:` for
+the rules you name when generating it (besides the grammar's root, the
+only other rules kept whole in it):
+
+```ruby
+source = Calc::Grammar.to_ruby(namespace: "CalcParser", roots: [:sum])
+CalcParser::Parser.new("1 + 2").parse(root: :sum)   # => Success
+CalcParser::Parser.new("1 + 2").parse(root: :atom)  # ArgumentError
 ```
 
 Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,

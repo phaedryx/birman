@@ -69,13 +69,13 @@ module Birman
       # rather than on every parse. Defining a rule or changing a
       # setting starts a fresh one.
       # [method."Grammar.parse"]
-      # params = ["input: String"]
+      # params = ["input: String", "consume: Boolean = true (false: a prefix of input may match)"]
       # returns = "Success(value) or Failure; see Grammar#parse"
       # notes = "Uses one cached instance; defining a rule or changing a setting resets it"
-      def parse(input) = instance.parse(input)
+      def parse(input, **) = instance.parse(input, **)
 
       # [method."Grammar.parse!"]
-      # params = ["input: String", "formatter: #call(failure) = ErrorFormatter.new"]
+      # params = ["input: String", "consume: as parse", "formatter: #call(failure) = ErrorFormatter.new"]
       # returns = "The parsed value"
       # raises = ["Birman::ParseError"]
       def parse!(input, **) = instance.parse!(input, **)
@@ -90,13 +90,17 @@ module Birman
 
       # A standalone parser for this grammar, as Ruby source: the same
       # results as parse, from code Spinel can compile to a native binary.
+      # Its parse takes consume: as parse does, and root: for the
+      # grammar's root or one of roots: (other rules aren't in it).
       # [method."Grammar.to_ruby"]
       # params = [
       #   "namespace: String, the module the parser is defined in (\"CalcParser\")",
+      #   "roots: Array of Symbol = [], rules its parse may start at (root:) besides the grammar's root",
       #   "lookahead_depth: Integer = 56, how deeply lookaheads may nest (see Compiler)"
       # ]
       # returns = "String: Ruby source defining <namespace>::Parser (new(input).parse => Success or Failure)"
       # raises = [
+      #   "ArgumentError naming a root that isn't a rule",
       #   "ArgumentError for left-recursive cycles with no rule in common, or a cycle that can't grow, as parse",
       #   "Birman::Compiler::Error for what can't be compiled (.map blocks, custom matchers...)",
       #   "Birman::Compiler::Error for actions calling Integer() or to_i: use large_integer"
@@ -122,32 +126,48 @@ module Birman
     def keywords = self.class.keywords
 
     # Returns Success(value) or Failure(...). Never raises on bad input.
+    #
+    # root: starts the parse at that rule instead of the grammar's root;
+    # the rule needn't be reachable from it. Its left recursion is
+    # checked, and grown, as the root's is (see left_recursion).
+    #
+    # consume: false succeeds when a prefix of input matches, rather than
+    # all of it, and fails only if the root rule does: the Failure never
+    # expects "end of input". Success#pos says where the match ended.
     # [method.parse]
-    # params = ["input: String"]
-    # returns = "Birman::Success(value) when all of input parses, else Birman::Failure"
+    # params = [
+    #   "input: String",
+    #   "root: Symbol | nil = nil (the rule to start at; nil: the grammar's root)",
+    #   "consume: Boolean = true (false: a prefix of input may match)"
+    # ]
+    # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
     # raises = [
-    #   "ArgumentError on the first parse, whatever the input, for no root rule",
+    #   "ArgumentError on the first parse, whatever the input, for no root rule (and no root:)",
+    #   "ArgumentError for a root: that isn't a rule of the grammar, naming it",
     #   "ArgumentError on the first parse for left-recursive cycles with no rule in common",
     #   "ArgumentError on the first parse for a left-recursive cycle with no base case, or a base case first",
     #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",
     #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
     # ]
-    # notes = "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set"
-    def parse(input)
-      left_recursion
+    # notes = [
+    #   "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set",
+    #   "\"The first parse\" is per root: a root: is checked on its first parse, for what it reaches"
+    # ]
+    def parse(input, root: nil, consume: true)
+      analysis = left_recursion(root)
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      __match_all(input)
+      __match_all(input, root || root_rule, consume, analysis)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
     # [method."parse!"]
-    # params = ["input: String", "formatter: #call(failure) = ErrorFormatter.new"]
+    # params = ["input: String", "root:, consume: as parse", "formatter: #call(failure) = ErrorFormatter.new"]
     # returns = "The parsed value"
-    # raises = ["Birman::ParseError (message from formatter)"]
-    def parse!(input, formatter: ErrorFormatter.new) = parse(input).value!(formatter)
+    # raises = ["Birman::ParseError (message from formatter)", "ArgumentError, as parse"]
+    def parse!(input, formatter: ErrorFormatter.new, **) = parse(input, **).value!(formatter)
 
     def matcher_for(name)
       (@matchers ||= {})[name] ||= begin
@@ -167,14 +187,42 @@ module Birman
     # the grammar has left-recursive cycles with no rule in common, or a
     # cycle that can't grow (see LeftRecursion#check!); later parses only
     # read the ivar. Context reads its leaders, to grow them.
-    def left_recursion = @left_recursion ||= LeftRecursion.new(__analyzable_asts, ignore: ignore_rule).check!
+    #
+    # entry: a rule parse's root: starts at (or, for to_ruby's roots:,
+    # an Array of them). Its analysis is of the rules reachable from the
+    # grammar's root and ignore rule, in first-use order as without one,
+    # then of the rest the entry reaches, by name: built (and checked)
+    # once per entry, and read from a Hash after that. Leaders are
+    # chosen in that order, which no entry changes, so every cycle has
+    # the same leader whatever the entry, and a generated parser's one
+    # set of leaders agrees with every parse's.
+    # [method.left_recursion]
+    # params = ["entry: Symbol | Array of Symbol | nil = nil (rules a parse may start at, besides the root)"]
+    # returns = "LeftRecursion, checked"
+    # raises = ["ArgumentError naming an entry that isn't a rule", "ArgumentError, as LeftRecursion#check!"]
+    def left_recursion(entry = nil)
+      return @left_recursion ||= __left_recursion(nil) unless entry
+
+      (@left_recursions ||= {})[entry] ||= __left_recursion(Array(entry))
+    end
 
     private
 
-    def __match_all(input)
-      ctx = Context.new(input, self, ignore_rule)
-      result = Ref.new(root_rule).match(ctx, ctx.start)
-      return Success.new(result.value) if result && result.pos == input.bytesize
+    def __left_recursion(entries)
+      entries&.each do |name|
+        next if name.is_a?(Symbol) && respond_to?(:"__rule_#{name}", true)
+
+        raise ArgumentError, "undefined rule #{name.inspect}"
+      end
+      LeftRecursion.new(__analyzable_asts(entries), ignore: ignore_rule).check!
+    end
+
+    def __match_all(input, root, consume, analysis)
+      ctx = Context.new(input, self, ignore_rule, analysis)
+      result = Ref.new(root).match(ctx, ctx.start)
+      if result && (!consume || result.pos == input.bytesize)
+        return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos))
+      end
 
       ctx.fail_at(result.pos, "end of input") if result
       build_failure(input, ctx.furthest, ctx.expected)
@@ -189,8 +237,8 @@ module Birman
     # matcher with no to_ast. The analysis takes those to consume input
     # and to call nothing, so a cycle through one is left to
     # Context#memoize, and rules only it refers to aren't analyzed.
-    def __analyzable_asts
-      __reachable_asts do |name|
+    def __analyzable_asts(entries = nil)
+      __reachable_asts(entries) do |name|
         next unless respond_to?(:"__rule_#{name}", true)
 
         matcher_for(name).to_ast
@@ -200,17 +248,29 @@ module Birman
     end
 
     # { rule_name => yield(rule_name) } for every rule reachable from the
-    # root and the ignore rule, in first-use order, skipping nil results.
-    def __reachable_asts
-      rules = {}
-      queue = [root_rule, ignore_rule].compact
+    # root and the ignore rule, in first-use order, then the others
+    # reachable from entries (when given, the root may be unset), by
+    # name, skipping nil results. The order of a rule never depends on
+    # the entries, so neither does a cycle's leader (see left_recursion).
+    def __reachable_asts(entries = nil, &)
+      rules = __closure([entries ? self.class.root : root_rule, ignore_rule].compact, {}, &)
+      if entries
+        more = __closure(entries.dup, rules.dup, &).except(*rules.keys)
+        rules.merge!(more.sort_by { |name, _| name.to_s }.to_h)
+      end
+      rules.compact
+    end
+
+    # rules, with yield(name) for every rule reachable from queue that it
+    # doesn't have yet, in first-use order.
+    def __closure(queue, rules)
       while (name = queue.shift)
         next if rules.key?(name)
 
         rules[name] = yield(name)
         queue.concat(AST.refs(rules[name]))
       end
-      rules.compact
+      rules
     end
 
     # Kernel#Integer(value, base), for actions: use it instead of Integer

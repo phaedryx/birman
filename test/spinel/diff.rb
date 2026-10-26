@@ -31,8 +31,8 @@ module SpinelDiff
     FileUtils.mkdir_p(OUT)
     source = File.join(OUT, "#{example.name}_parser.rb")
     binary = File.join(OUT, "#{example.name}_parser")
-    File.write(source, "#{example.grammar.to_ruby(namespace: example.namespace)}\n" \
-                       "#{Differential.main_source(example.namespace)}")
+    File.write(source, "#{example.grammar.to_ruby(namespace: example.namespace, **example.to_ruby_options)}\n" \
+                       "#{Differential.main_source(example.namespace, **example.options)}")
     out, status = Open3.capture2e(compiler, source, "-o", binary)
     abort "spinel failed on #{source}:\n#{out}" unless status.success?
     binary
@@ -48,7 +48,7 @@ module SpinelDiff
   def agrees?(example, binary)
     inputs = example.inputs.uniq
     mismatches = inputs.filter_map do |input|
-      want = Differential.interpreted(example.grammar, input)
+      want = Differential.interpreted(example.grammar, input, **example.options)
       got = run(binary, input)
       [input, want, got] unless want == got
     end
@@ -132,7 +132,7 @@ module DepthCheck
     default = build(compiler, "nest_parser", Birman::Compiler::LOOKAHEAD_DEPTH)
     deep = build(compiler, "nest_parser_deep", 4000, "--cc=cc -DSP_EXC_STACK_MAX=4096")
     too_deep = "reason=\"input is nested too deeply\""
-    results = [gives?(default, 50, "ok ["), gives?(default, 100, too_deep), gives?(deep, 3000, "ok ["),
+    results = [gives?(default, 50, "ok pos="), gives?(default, 100, too_deep), gives?(deep, 3000, "ok pos="),
                gives?(deep, 5000, too_deep)]
     puts "lookahead depth: #{results.size} cases, #{results.count(false)} mismatches"
     results.all?
