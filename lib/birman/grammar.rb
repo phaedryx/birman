@@ -153,13 +153,13 @@ module Birman
     #   "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set",
     #   "\"The first parse\" is per root: a root: is checked on its first parse, for what it reaches"
     # ]
-    def parse(input, root: nil, consume: true)
+    def parse(input, root: nil, consume: true, offset: 0)
       analysis = left_recursion(root)
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
       end
 
-      __match_all(input, root || root_rule, consume, analysis)
+      __match_all(input, root || root_rule, consume, analysis, Birman.byte_offset(input, offset))
     end
 
     # Returns the value or raises ParseError, worded by formatter.
@@ -217,8 +217,8 @@ module Birman
       LeftRecursion.new(__analyzable_asts(entries), ignore: ignore_rule).check!
     end
 
-    def __match_all(input, root, consume, analysis)
-      ctx = Context.new(input, self, ignore_rule, analysis)
+    def __match_all(input, root, consume, analysis, from)
+      ctx = Context.new(input, self, ignore_rule, analysis, from)
       result = Ref.new(root).match(ctx, ctx.start)
       if result && (!consume || result.pos == input.bytesize)
         return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos))

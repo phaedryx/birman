@@ -25,16 +25,16 @@ module Birman
   # ]
   # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
   # raises = ["ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks"]
-  def self.parse(matcher, input, ignore: nil, consume: true)
-    Standalone.grammar(matcher, ignore).parse(input, consume:)
+  def self.parse(matcher, input, ignore: nil, consume: true, offset: 0)
+    Standalone.grammar(matcher, ignore).parse(input, consume:, offset:)
   end
 
   # [method."Birman.parse!"]
   # params = ["matcher, input, ignore, consume: as Birman.parse", "formatter: #call(failure) = ErrorFormatter.new"]
   # returns = "The parsed value"
   # raises = ["Birman::ParseError", "ArgumentError, as Birman.parse"]
-  def self.parse!(matcher, input, ignore: nil, consume: true, formatter: ErrorFormatter.new)
-    Standalone.grammar(matcher, ignore).parse!(input, consume:, formatter:)
+  def self.parse!(matcher, input, ignore: nil, consume: true, offset: 0, formatter: ErrorFormatter.new) # rubocop:disable Metrics/ParameterLists
+    Standalone.grammar(matcher, ignore).parse!(input, consume:, offset:, formatter:)
   end
 
   # The anonymous grammar classes behind Birman.parse: the matcher is
