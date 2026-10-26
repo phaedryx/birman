@@ -155,7 +155,7 @@ module Birman
     # raises = [
     #   "ArgumentError on the first parse, whatever the input, for no root rule (and no root:)",
     #   "ArgumentError for a root: that isn't a rule of the grammar, naming it",
-    #   "ArgumentError for an offset: that's negative or past the end of input (checked after the input's encoding)",
+    #   "ArgumentError for an offset: that isn't an Integer, or is outside the input (checked after the encoding)",
     #   "ArgumentError on the first parse for left-recursive cycles with no rule in common",
     #   "ArgumentError on the first parse for a left-recursive cycle with no base case, or a base case first",
     #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",

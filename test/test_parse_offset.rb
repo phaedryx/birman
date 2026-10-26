@@ -56,8 +56,21 @@ class TestParseOffset < Minitest::Test
   def test_an_offset_outside_the_input_raises
     error = assert_raises(ArgumentError) { pairs.parse("a = 1", offset: 6) }
     assert_equal "offset 6 is outside the input (0..5)", error.message
+    error = assert_raises(ArgumentError) { pairs.parse("ñ = 1", offset: 6) }
+    assert_equal "offset 6 is outside the input (0..5)", error.message
     assert_raises(ArgumentError) { pairs.parse("a = 1", offset: -1) }
     assert_raises(ArgumentError) { pairs.parse!("a = 1", offset: 6) }
+  end
+
+  def test_an_offset_that_isnt_an_integer_raises
+    error = assert_raises(ArgumentError) { pairs.parse("a = 1", offset: 1.0) }
+    assert_equal "offset must be an Integer, not 1.0", error.message
+    assert_raises(ArgumentError) { pairs.parse("a = 1", offset: 0.0) }
+  end
+
+  def test_offset_counts_bytes_as_characters_in_single_byte_encodings
+    assert_equal ["b", "=", 2], pairs.parse("\xFF = 1 b = 2".b, offset: 6).value
+    assert_equal ["b", "=", 2], pairs.parse("x = 1 b = 2".encode("US-ASCII"), offset: 6).value
   end
 
   # --- Positions are relative to the whole input ---
@@ -187,6 +200,8 @@ class TestParseOffset < Minitest::Test
     parser = generated(pairs)
     error = assert_raises(ArgumentError) { parser.new("a = 1").parse(offset: 6) }
     assert_equal "offset 6 is outside the input (0..5)", error.message
+    error = assert_raises(ArgumentError) { parser.new("ñ = 1").parse(offset: 6) }
+    assert_equal "offset 6 is outside the input (0..5)", error.message
     assert_raises(ArgumentError) { parser.new("a = 1").parse(offset: -1) }
     assert_equal "", generated(grammar { rule(:pair) { match(/\d*/) } }).new("abc").parse(offset: 3).value
   end
@@ -200,7 +215,8 @@ class TestParseOffset < Minitest::Test
     end
     parser = generated(g, roots: [:expr])
     inputs = ["ñ = 1 b = 2", "ñ = 1 b = 2 - 3", "ñ = 1 b = 2 - x", "ñ = 1 b = 2 c", "ñ = 1   \n b = 2", "ñ = 1 ",
-              "é\nb = \xFF", "\xFF = 1 b = 2", "ñ = 1 b = 1 - 2 - 3 !"]
+              "é\nb = \xFF", "\xFF = 1 b = 2", "ñ = 1 b = 1 - 2 - 3 !", "\xFF = 1 b = 2".b, "\xFF = 1 b = x".b,
+              "x = 1 b = 2".encode("US-ASCII")]
     options = [{ offset: 6 }, { offset: 6, consume: false }, { offset: 9, root: :expr }, { offset: 1, consume: false },
                { offset: 10, root: :expr, consume: false }]
     options.product(inputs).each do |opts, input|

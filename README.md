@@ -466,9 +466,8 @@ has one.
   the body from where it ended:
 
   ```ruby
-  header = MailGrammar.parse!(email, root: :headers, consume: false)
-  body = email[header.pos..]                           # the rest, for a look
-  result = MailGrammar.parse(email, root: :body, offset: header.pos)
+  header = MailGrammar.parse(email, root: :headers, consume: false)
+  body = MailGrammar.parse(email, root: :body, offset: header.pos)
   ```
 
   The regexps see the whole input: `\A` matches only at 0, not at the

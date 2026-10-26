@@ -461,8 +461,8 @@ module Examples
                  { root: :sum, consume: false, offset: HEADER.length })]
   end
 
-  # Before an offset: parse's input starts after it. Multibyte, so the
-  # offset's characters and bytes differ, and an \A in a grammar would.
+  # Before an offset: the parse starts after it. Multibyte, so the
+  # offset's characters and bytes differ.
   HEADER = "# ñ→\n"
 
   def let(count)

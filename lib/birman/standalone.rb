@@ -27,7 +27,7 @@ module Birman
   # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
   # raises = [
   #   "ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks",
-  #   "ArgumentError for an offset: that's negative or past the end of input"
+  #   "ArgumentError for an offset: that isn't an Integer, or is negative or past the end of input"
   # ]
   def self.parse(matcher, input, ignore: nil, consume: true, offset: 0)
     Standalone.grammar(matcher, ignore).parse(input, consume:, offset:)

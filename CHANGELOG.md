@@ -33,8 +33,9 @@
   input (Citrus's `offset:`), past the ignored spacing there. Positions
   still count from the start of the input, `\A` matches only at 0, a
   lookbehind sees what's before the offset, and "end of input" is the
-  real end. An offset outside the input raises `ArgumentError`.
-  `parse!`, the instance methods, `Birman.parse` and `Birman.parse!`
+  real end. An offset outside the input raises `ArgumentError`
+  (invalid input is still a `Failure` first). `parse!`, the instance
+  methods, `Birman.parse` and `Birman.parse!`
   take it too.
 - `to_ruby(roots: [...])` generates a parser whose `parse` takes
   `root:` (the grammar's root or one of `roots:`; anything else raises

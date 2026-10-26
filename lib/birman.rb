@@ -40,11 +40,12 @@ module Birman
   # [method."Birman.byte_offset"]
   # params = ["input: String", "char_pos: Integer"]
   # returns = "Integer: the byte offset of char_pos"
-  # raises = ["ArgumentError for a char_pos that's negative or past the end of input"]
+  # raises = ["ArgumentError for a char_pos that isn't an Integer, or is negative or past the end of input"]
   def self.byte_offset(input, char_pos)
+    raise ArgumentError, "offset must be an Integer, not #{char_pos.inspect}" unless char_pos.is_a?(Integer)
     return 0 if char_pos.zero?
-    unless char_pos.is_a?(Integer) && char_pos.positive? && char_pos <= input.length
-      raise ArgumentError, "offset #{char_pos.inspect} is outside the input (0..#{input.length})"
+    unless char_pos.positive? && char_pos <= input.length
+      raise ArgumentError, "offset #{char_pos} is outside the input (0..#{input.length})"
     end
 
     input.ascii_only? ? char_pos : input[0, char_pos].bytesize
