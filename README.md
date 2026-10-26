@@ -457,9 +457,29 @@ has one.
 
   `pos` isn't a field of `Success` (it's left out of `==` and
   `inspect`, as a node's span is), so `in Birman::Success(value)` still
-  matches. `parse!`, the instance methods, `Birman.parse` (which takes
-  `consume:` but not `root:`, since its matcher is the only rule) and
-  generated parsers take the same options.
+  matches.
+- `parse(input, offset: n)` starts the parse at character `n` of the
+  input instead of the first (Citrus's `offset:`), skipping ignored
+  spacing there as it would at the start. Positions still count from
+  the start of the input, so `Success#pos`, a `Failure`'s position and
+  node spans point into the whole string. Read a header, then parse
+  the body from where it ended:
+
+  ```ruby
+  header = MailGrammar.parse!(email, root: :headers, consume: false)
+  body = email[header.pos..]                           # the rest, for a look
+  result = MailGrammar.parse(email, root: :body, offset: header.pos)
+  ```
+
+  The regexps see the whole input: `\A` matches only at 0, not at the
+  offset, and a lookbehind can see what's before the offset, as if the
+  whole document were being parsed. "End of input" is the real end. An
+  offset that's negative or past the end raises `ArgumentError`. Invalid
+  UTF-8 anywhere in the input is a `Failure`, before the offset too,
+  since a regexp would refuse the whole string.
+- `parse!`, the instance methods, `Birman.parse` (which takes
+  `consume:` and `offset:` but not `root:`, since its matcher is the
+  only rule) and generated parsers take the same options.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
 - Rules are methods, so they compose and override through `include`.
@@ -499,9 +519,9 @@ RUBY
 File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
 ```
 
-Its `parse` takes `consume:` as `Grammar#parse` does, and `root:` for
-the rules you name when generating it (besides the grammar's root, the
-only other rules kept whole in it):
+Its `parse` takes `consume:` and `offset:` as `Grammar#parse` does, and
+`root:` for the rules you name when generating it (besides the grammar's
+root, the only other rules kept whole in it):
 
 ```ruby
 source = Calc::Grammar.to_ruby(namespace: "CalcParser", roots: [:sum])
