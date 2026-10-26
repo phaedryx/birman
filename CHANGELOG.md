@@ -20,6 +20,19 @@
   `ArgumentError`) and `consume:`, giving the interpreter's results,
   `Success#pos` included.
 
+### Fixed
+
+- A generated parser's Spinel binary no longer raises `TypeError`
+  ("cannot store Integer into an Array[String]") when an action, check,
+  or a method they call indexes a seq's value whose parts have different
+  types: `seq(int, "*", int).action(:multiply)` with
+  `def multiply(parts) = parts[0] * parts[2]`. Spinel typed the
+  parameter by the parts it could see and converted the Array on the
+  call. Copied methods now say their parameters are untyped, in an
+  inline RBS comment (`# @rbs parts: untyped`), so CRuby runs them as
+  before. Methods with optional, rest, keyword or block parameters
+  are left as written (Spinel ignores a signature with the first two).
+
 ## [0.3.0] - 2026-10-23
 
 ### Breaking
