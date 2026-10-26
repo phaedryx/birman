@@ -442,9 +442,10 @@ module Examples
      *entries(count)]
   end
 
-  # Parses started at another rule (root:), or matching a prefix
-  # (consume: false): a left-recursive rule the root reaches, one it
-  # doesn't, and JSON documents followed by more.
+  # Parses started at another rule (root:), matching a prefix (consume:
+  # false), or started partway in (offset:): a left-recursive rule the
+  # root reaches, one it doesn't, JSON documents followed by more, and
+  # inputs after a header with multibyte characters in it.
   def entries(count)
     sums = calc(count).inputs.map { _1.sub(/\Aprint /, "").gsub("(" * 200, "(" * 100).gsub(")" * 199, ")" * 99) }
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
@@ -453,8 +454,16 @@ module Examples
      Example.new("sumprefix", LeftCalc::Indirect, "SumPrefixCompiled", sums, { root: :sum, consume: false }),
      Example.new("unreached", Unreached::Grammar, "UnreachedCompiled",
                  Unreached::FIXED + Differential.fuzz(Unreached::TOKENS, rng, count, 8), { root: :product }),
-     Example.new("jsonprefix", JSONExample::Grammar, "JSONPrefixCompiled", prefixed, { consume: false })]
+     Example.new("jsonprefix", JSONExample::Grammar, "JSONPrefixCompiled", prefixed, { consume: false }),
+     Example.new("jsonoffset", JSONExample::Grammar, "JSONOffsetCompiled", json(count).inputs.map { "#{HEADER}#{_1}" },
+                 { offset: HEADER.length }),
+     Example.new("sumoffset", LeftCalc::Indirect, "SumOffsetCompiled", sums.map { "#{HEADER}#{_1}" },
+                 { root: :sum, consume: false, offset: HEADER.length })]
   end
+
+  # Before an offset: parse's input starts after it. Multibyte, so the
+  # offset's characters and bytes differ, and an \A in a grammar would.
+  HEADER = "# ñ→\n"
 
   def let(count)
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))

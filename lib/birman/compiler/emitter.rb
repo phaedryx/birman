@@ -727,23 +727,25 @@ module Birman
         RUBY
       end
 
-      # Grammar#parse, root: and consume: included. root: is the
+      # Grammar#parse, root:, consume: and offset: included. root: is the
       # grammar's root or one of to_ruby's roots:, each a branch of its
       # own, so each Success.new sees one rule's value.
       def parse_method
-        start = ignore_rule ? "start = ref_#{ident(ignore_rule)}(0)\nstart = 0 if start == FAIL" : "start = 0"
+        start = ignore_rule ? "start = ref_#{ident(ignore_rule)}(from)\nstart = from if start == FAIL" : "start = from"
         roots = [@grammar.class.root, *@roots].uniq
         <<~RUBY
           # Grammar#parse: Success(value) if all of the input parses (or,
           # with consume: false, a prefix of it), else Failure. root: is
           # #{roots.map(&:inspect).join(", ")} (nil: #{roots.first.inspect}).
-          def parse(root: nil, consume: true)
+          # offset: is the character offset to start at.
+          def parse(root: nil, consume: true, offset: 0)
             entry = 0
           #{indent(entry_checks(roots))}
             bad = BirmanRT.invalid_byte(@input)
             return invalid_input(bad) if bad != FAIL
 
-            reset
+            from = BirmanRT.byte_offset(@input, offset)
+            reset(from)
             init_memos
           #{indent(start)}
             q = FAIL

@@ -6,6 +6,8 @@ require_relative "support/differential"
 # Grammar#parse's offset: option: the character offset the parse starts
 # at. Positions stay relative to the whole input.
 class TestParseOffset < Minitest::Test
+  Pair = Birman.node(:name, :value)
+
   def grammar(&rules)
     Class.new do
       include Birman::Grammar
@@ -78,8 +80,7 @@ class TestParseOffset < Minitest::Test
   end
 
   def test_node_spans_count_from_the_start_of_the_input
-    pair = Birman.node(:name, :value)
-    g = grammar { rule(:pair) { seq(identifier.as(:name), "=", integer.as(:value)).to(pair) } }
+    g = grammar { rule(:pair) { seq(identifier.as(:name), "=", integer.as(:value)).to(Pair) } }
     node = g.parse!("ñ = 1 b = 2", offset: 6)
     assert_equal 6, node.span.from
     assert_equal 11, node.span.to
@@ -166,5 +167,47 @@ class TestParseOffset < Minitest::Test
     assert_equal 5, result.pos
     assert_equal %w[b c], Birman.parse!(m, "ñ b c d", ignore: /\s*/, offset: 1, consume: false)
     assert_raises(ArgumentError) { Birman.parse(m, "a b c", offset: 9) }
+  end
+
+  # --- to_ruby ---
+
+  def generated(grammar, **)
+    Differential.load(grammar, "ParseOffsetParser", **)
+  end
+
+  def test_a_generated_parser_takes_offset
+    parser = generated(pairs)
+    result = parser.new("ñ = 1 b = 2").parse(offset: 6)
+    assert_equal ["b", "=", 2], result.value
+    assert_equal 11, result.pos
+    assert_equal 11, parser.new("ñ = 1 b = 2 c").parse(offset: 6, consume: false).pos
+  end
+
+  def test_a_generated_parser_refuses_an_offset_outside_the_input
+    parser = generated(pairs)
+    error = assert_raises(ArgumentError) { parser.new("a = 1").parse(offset: 6) }
+    assert_equal "offset 6 is outside the input (0..5)", error.message
+    assert_raises(ArgumentError) { parser.new("a = 1").parse(offset: -1) }
+    assert_equal "", generated(grammar { rule(:pair) { match(/\d*/) } }).new("abc").parse(offset: 3).value
+  end
+
+  def test_a_generated_parser_parses_from_an_offset_as_the_interpreter_does
+    g = grammar do
+      rule(:pair) { seq(identifier.as(:name), "=", expr.as(:value)).to(Pair) }
+      rule(:expr) { either(seq(expr, "-", integer).action(:minus), integer) }
+
+      def minus(parts) = parts[0] - parts[2] # rubocop:disable Lint/NestedMethodDefinition
+    end
+    parser = generated(g, roots: [:expr])
+    inputs = ["ñ = 1 b = 2", "ñ = 1 b = 2 - 3", "ñ = 1 b = 2 - x", "ñ = 1 b = 2 c", "ñ = 1   \n b = 2", "ñ = 1 ",
+              "é\nb = \xFF", "\xFF = 1 b = 2", "ñ = 1 b = 1 - 2 - 3 !"]
+    options = [{ offset: 6 }, { offset: 6, consume: false }, { offset: 9, root: :expr }, { offset: 1, consume: false },
+               { offset: 10, root: :expr, consume: false }]
+    options.product(inputs).each do |opts, input|
+      next if opts[:offset] > input.length
+
+      assert_equal Differential.interpreted(g, input, **opts), Differential.generated(parser, input, **opts),
+                   "#{input.inspect} #{opts}"
+    end
   end
 end

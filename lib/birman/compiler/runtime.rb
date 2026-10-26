@@ -287,6 +287,30 @@ module BirmanRT
     w
   end
 
+  # The byte offset of character chars of input (Parser#parse's
+  # offset:), as Birman.byte_offset: the input is valid by now, so every
+  # byte that isn't a continuation byte starts a character.
+  def self.byte_offset(input, chars)
+    if chars >= 0
+      return chars if single_byte?(input) && chars <= input.bytesize
+
+      unless single_byte?(input)
+        n = 0
+        i = 0
+        while i < input.bytesize
+          unless continuation?(input.getbyte(i))
+            return i if n == chars
+
+            n += 1
+          end
+          i += 1
+        end
+        return i if n == chars
+      end
+    end
+    raise ArgumentError, "offset #{chars} is outside the input (0..#{char_count(input, 0, input.bytesize)})"
+  end
+
   # Characters in input's bytes from...to: in UTF-8, every byte that
   # isn't a continuation byte starts one.
   def self.char_count(input, from, to)
@@ -576,7 +600,7 @@ module BirmanRT
 
       @input = input
       @len = input.bytesize
-      reset
+      reset(0)
     end
 
     private
@@ -584,12 +608,13 @@ module BirmanRT
     # Per-parse state, fresh for every parse (as Birman's Context is), so
     # a parse that ended in a commit failure, with rules still marked in
     # progress, leaves nothing behind. Generated parsers also clear their
-    # memos (init_memos).
-    def reset
-      @furthest = 0
+    # memos (init_memos). from: the byte offset the parse starts at.
+    #: (Integer) -> void
+    def reset(from)
+      @furthest = from
       @expected = NONE
       @token_ends = {}
-      @position = 0
+      @position = from
       @in_progress = []
       @in_progress_at = []
       @round = 0 # growth rounds of left-recursive cycles so far
