@@ -1054,6 +1054,25 @@ class BirmanTest < Minitest::Test
     assert g.parse("ifx").failure?
   end
 
+  def test_nocase_matches_any_case_and_gives_the_literal_as_written
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), match(/\w+/)) }
+    end
+    assert_equal %w[select x], g.parse!("SELECT x")
+    assert_equal %w[select x], g.parse!("Select  x")
+    assert_equal %w[select x], g.parse!("select x")
+  end
+
+  def test_nocase_word_literals_are_keywords
+    g = grammar { rule(:top) { seq(nocase("if"), match(/\w*/)) } }
+    assert g.parse("IFx").failure?, "a word-like nocase literal needs a boundary"
+    assert_equal ["if", ""], g.parse!("If")
+
+    g = grammar { rule(:top) { seq(nocase("<="), match(/\w+/)) } }
+    assert_equal ["<=", "x"], g.parse!("<=x"), "punctuation needs no boundary"
+  end
+
   def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar

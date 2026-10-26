@@ -84,6 +84,32 @@ module Birman
       end
     end
 
+    # A literal matched in any case: nocase("select") matches SELECT,
+    # Select or select. Like a literal, it skips trailing spacing and a
+    # word-like one is a keyword. Its value is the text as written here
+    # ("select"), not as matched.
+    # [method.nocase]
+    # params = ["text: String"]
+    # returns = "Matcher for text in any case: a literal (spacing skipped, word-like ones are keywords)"
+    # value = "text, as written in the grammar, whatever case the input used"
+    def nocase(text) = Nocase.new(text)
+
+    # The matcher a case-insensitive literal stands for (see nocase): the
+    # text as a /i pattern, with a keyword boundary when word-like, then
+    # the ignore rule. Built once per grammar instance, as literal_matcher.
+    # [method.nocase_matcher]
+    # params = ["text: String"]
+    # returns = "The matcher nocase(text) stands for: a /i pattern (keyword-bounded when word-like), then the ignore rule"
+    # side_effects = ["Caches the matcher on the grammar instance"]
+    # notes = "Called by Nocase at match time; rarely needed directly"
+    def nocase_matcher(text)
+      (@nocase_matchers ||= {})[text] ||= begin
+        word = text.match?(/\A\w+\z/)
+        re = Regexp.new("#{Regexp.escape(text)}#{"(?!\\w)" if word}", Regexp::IGNORECASE)
+        Lexeme.new(Pat.new(re, "#{text.inspect}i").means(text))
+      end
+    end
+
     # Sequence. Put `commit` where the construct becomes unambiguous:
     #   seq("let", commit, name.as(:name), "=", expr.as(:value))
     # [method.seq]
@@ -190,5 +216,5 @@ module Birman
   # a grammar runs for a literal, and Birman isn't one.
   extend Combinators
 
-  singleton_class.send(:private, :literal_matcher)
+  singleton_class.send(:private, :literal_matcher, :nocase_matcher)
 end
