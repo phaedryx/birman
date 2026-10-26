@@ -99,7 +99,7 @@ module Birman
     # the ignore rule. Built once per grammar instance, as literal_matcher.
     # [method.nocase_matcher]
     # params = ["text: String"]
-    # returns = "The matcher nocase(text) stands for: a /i pattern, keyword-bounded when word-like, then the ignore rule"
+    # returns = "What nocase(text) stands for: a /i pattern, keyword-bounded when word-like, then the ignore rule"
     # side_effects = ["Caches the matcher on the grammar instance"]
     # notes = "Called by Nocase at match time; rarely needed directly"
     def nocase_matcher(text)
