@@ -179,11 +179,18 @@ Declare `ignore :spacing` and whitespace (and comments, with
 - `nocase("select")` is a literal matched in any case: `SELECT`,
   `Select` and `select` all match, and its value is `"select"` as
   written in the grammar, so the rest of the grammar compares against
-  one spelling (use `match(/select/i)` to keep the text as typed). It
-  skips trailing spacing and gets the keyword boundary like any
-  literal, and shows as `"select"i` in errors and EBNF. Folding is
-  Ruby's (`/i`): `nocase("straße")` matches `STRASSE`, and the match is
-  as long as the input, not the literal.
+  one spelling (to keep the text as typed, use the raw
+  `match(/select/i)`, which skips no spacing and has no boundary). It
+  skips trailing spacing like any literal, and word-like ones (ASCII
+  letters, digits and `_`) get the keyword boundary, so `nocase("is")`
+  doesn't match the start of `island`. It shows as `"select"i` in
+  errors and EBNF. Folding is Ruby's (`/i`): `nocase("école")` matches
+  `ÉCOLE`, and the match is as long as the input, not the literal
+  (`nocase("straße")` matches the seven bytes of `STRASSE`; a Spinel
+  binary folds one character to one, see
+  [Generating a parser](#generating-a-parser)). `keywords` and
+  `Rules::Identifiers` are case-sensitive: a grammar whose keywords are
+  `nocase` needs its own reserved-word check in its identifier rule.
 - `str("...")` and `match(/.../)` are **raw**: exactly those characters,
   no skipping. `match(/.../).captures` is raw too, its value a hash of
   the named groups with Symbol keys, every name always present. Each
@@ -586,7 +593,10 @@ comment for each parameter, so Spinel takes a seq's mixed parts
 block parameters gets none: give an action that indexes mixed parts
 plain parameters. Under Spinel, a string that
 isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
-`inspect`s differently.
+`inspect`s differently. Spinel's regexps fold case one character to
+one: `nocase("école")` matches `ÉCOLE` in a binary as in Ruby, but
+`nocase("straße")` matches `STRASSE` only in Ruby (whose `/i` folds ß
+to ss), and the same goes for `match(/straße/i)`.
 
 ## Limits
 

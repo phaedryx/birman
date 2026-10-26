@@ -112,8 +112,9 @@ module Examples
   end
 
   # Keywords in any case (nocase), with a commit after the first, a
-  # keyword boundary (SELECTED is a name) and a non-ASCII literal whose
-  # folding changes its byte length (STRASSE matches straße).
+  # keyword boundary (SELECTED is a name) and a non-ASCII literal
+  # (ÉCOLE matches école). Not straße: Ruby's /i folds ß to ss, Spinel's
+  # folds one character to one, so STRASSE would match only in Ruby.
   module Select
     # SELECT a, b FROM t WHERE x <= 3
     class Grammar
@@ -134,20 +135,20 @@ module Examples
       rule(:condition) do
         seq(name.as(:left), one_of(nocase("is") => :is, "<=" => :lte, "=" => :eq).as(:op), value.as(:right)).to(Cond)
       end
-      rule(:value) { either(nocase("null").means(nil), nocase("straße"), number, name) }
+      rule(:value) { either(nocase("null").means(nil), nocase("école"), number, name) }
       lexeme(:name) { seq(reserved.absent, only(match(/[a-zé_]\w*/i))).label("name") }
       rule(:reserved) { either(nocase("select"), nocase("from"), nocase("where"), nocase("is"), nocase("null")) }
       lexeme(:number) { match(/\d+/).map(:to_i) }
     end
 
     FIXED = ["SELECT a, b FROM t WHERE x <= 3", "select * from T", "Select A From b Where C is NULL",
-             "SELECT a FROM t WHERE size = STRASSE", "select a from t where size = Straße", "SELECTED a FROM t",
+             "SELECT a FROM t WHERE place = ÉCOLE", "select a from t where place = École", "SELECTED a FROM t",
              "SELECT selected FROM fromage", "SELECT a FROM where", "select a from t where is = 1", "SELECT",
              "select a", "select a from", "select a from t where", "select a from t where x",
              "SELECT a FROM t WHERE x <",
              "SELECT é FROM École WHERE É IS null", "", "from t", "select a,b,c from t where x<=42 "].freeze
     TOKENS = ["SELECT", "select", "Select", "FROM", "from", "WHERE", "where", "IS", "is", "NULL", "null", "Null",
-              "a", "b", "t", "selected", "fromage", "x", "é", "É", "straße", "STRASSE", "Straße", "*", ",", "<=", "=",
+              "a", "b", "t", "selected", "fromage", "x", "é", "É", "école", "ÉCOLE", "École", "*", ",", "<=", "=",
               " ", " ", "\n", "1", "42"].freeze
   end
 
@@ -691,12 +692,11 @@ module Examples
   NUMBERS_TOKENS = ["0x", "0b", "0o", "0d", "0", "1", "7", "9", "f", "z", "Z", "_", "-", "+", ",", " ", ":", "16:",
                     "36:", "2:", "8:", "1" * 20, "f" * 20].freeze
 
-  # Valid and invalid numbers, in random bases, mostly past 63 bits.
   # Valid queries, each keyword in a random case.
   module SelectGen
     module_function
 
-    NAMES = %w[a b t x size école selected fromage].freeze
+    NAMES = %w[a b t x place écolé selected fromage].freeze
     SPACES = [" ", " ", "  ", "\n"].freeze
 
     def query(rng)
@@ -708,7 +708,7 @@ module Examples
 
     def condition(rng)
       op = ["<=", "=", " #{word(rng, "is")} "].sample(random: rng)
-      values = [word(rng, "null"), word(rng, "straße"), rng.rand(100).to_s, NAMES.sample(random: rng)]
+      values = [word(rng, "null"), word(rng, "école"), rng.rand(100).to_s, NAMES.sample(random: rng)]
       value = values.sample(random: rng)
       "#{NAMES.sample(random: rng)}#{op}#{value}"
     end
@@ -717,6 +717,7 @@ module Examples
     def space(rng) = SPACES.sample(random: rng)
   end
 
+  # Valid and invalid numbers, in random bases, mostly past 63 bits.
   module NumbersGen
     module_function
 

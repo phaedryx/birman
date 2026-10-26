@@ -86,13 +86,18 @@ module Birman
 
     # A literal matched in any case: nocase("select") matches SELECT,
     # Select or select. Like a literal, it skips trailing spacing and a
-    # word-like one is a keyword. Its value is the text as written here
-    # ("select"), not as matched.
+    # word-like one (ASCII letters, digits and _) is a keyword. Its value
+    # is the text as written here ("select"), not as matched.
     # [method.nocase]
     # params = ["text: String"]
     # returns = "Matcher for text in any case: a literal (spacing skipped, word-like ones are keywords)"
     # value = "text, as written in the grammar, whatever case the input used"
-    def nocase(text) = Nocase.new(text)
+    # raises = ["ArgumentError (anything but a String)"]
+    def nocase(text)
+      raise ArgumentError, "nocase needs a String, got #{text.inspect}" unless text.is_a?(String)
+
+      Nocase.new(text)
+    end
 
     # The matcher a case-insensitive literal stands for (see nocase): the
     # text as a /i pattern, with a keyword boundary when word-like, then
@@ -212,8 +217,8 @@ module Birman
   end
 
   # Birman.seq, Birman.str and the rest, for building matchers outside a
-  # grammar (see Birman.parse). literal_matcher stays private: it's what
-  # a grammar runs for a literal, and Birman isn't one.
+  # grammar (see Birman.parse). literal_matcher and nocase_matcher stay
+  # private: they're what a grammar runs for a literal, and Birman isn't one.
   extend Combinators
 
   singleton_class.send(:private, :literal_matcher, :nocase_matcher)

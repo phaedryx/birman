@@ -1115,6 +1115,49 @@ class BirmanTest < Minitest::Test
     assert_equal %w[a b], Birman.parse!(Birman.nocase("a") >> Birman.nocase("b"), "A B", ignore: /\s*/)
   end
 
+  def test_nocase_needs_a_string
+    error = assert_raises(ArgumentError) { Birman.nocase(:select) }
+    assert_equal "nocase needs a String, got :select", error.message
+    assert_raises(ArgumentError) { Birman.nocase(nil) }
+  end
+
+  def test_nocase_text_is_matched_literally_not_as_a_pattern
+    g = grammar { rule(:top) { either(nocase("a.b"), nocase("(?x)"), nocase("c d"), nocase("#"), nocase("\\")) } }
+    assert_equal "a.b", g.parse!("A.B")
+    assert g.parse("axb").failure?
+    assert_equal "(?x)", g.parse!("(?X)")
+    assert_equal "c d", g.parse!("C D")
+    assert_equal "#", g.parse!("#")
+    assert_equal "\\", g.parse!("\\")
+  end
+
+  # Word-like means ASCII letters, digits and _, as for a literal: a
+  # non-ASCII nocase literal gets no boundary, and the boundary is ASCII.
+  def test_nocase_boundary_is_ascii_like_a_literals
+    g = grammar { rule(:top) { seq(nocase("straße"), match(/\w*/)) } }
+    assert_equal %w[straße N], g.parse!("STRASSEN")
+    g = grammar { rule(:top) { seq(nocase("is"), match(/.*/)) } }
+    assert_equal %w[is é], g.parse!("ISé")
+    assert g.parse("ISe").failure?
+  end
+
+  def test_nocase_in_a_committed_seq_and_in_left_recursion
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), commit, nocase("from")) }
+    end
+    f = g.parse("select x")
+    assert f.committed
+    assert_equal ['"from"i'], f.expected
+
+    g = grammar do
+      ignore :spacing
+      rule(:top) { either(seq(top, nocase("or"), term), term) }
+      lexeme(:term) { match(/[a-z]+/).label("term") }
+    end
+    assert_equal [%w[a or b], "or", "c"], g.parse!("a OR b Or c")
+  end
+
   def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar

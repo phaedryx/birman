@@ -65,6 +65,9 @@ class CompilerTest < Minitest::Test
 
     g = grammar { rule(:top) { either(nocase("if"), "if") >> match(/\w*/) } }
     assert_same_results g, ["IFx", "if", "If ", "iffy", "x"]
+
+    g = grammar { rule(:top) { either(nocase("a.b"), nocase("(?x)"), nocase("c d"), nocase("#"), nocase("\\")) } }
+    assert_same_results g, ["A.B", "axb", "(?X)", "C D", "#", "\\", ""]
   end
 
   def test_lit_without_ignore
