@@ -6,8 +6,9 @@ require_relative "support/examples"
 
 # Indirect left recursion, grown from a seed at each cycle's leader (as
 # pegen does): only the leader grows, and while it grows at a position
-# the cycle's other rules are matched there afresh each round. Each
-# grammar is also checked against its generated parser.
+# the cycle's other rules are matched there afresh each round, each
+# keeping its longest match for a parse that enters the cycle there.
+# Each grammar is also checked against its generated parser.
 class TestIndirectLeftRecursion < Minitest::Test
   include CompilerTestHelpers
 

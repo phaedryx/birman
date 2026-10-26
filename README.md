@@ -274,18 +274,19 @@ far it has got.
 - `expr op expr`, with the rule on both sides, comes out
   right-associative: `3-4-5` is `3-(4-5)`. The call on the right grows
   to the end of the input before the left one can. Write `expr op term`.
-- A cycle is grown only at its leader, so a parse that enters it at
-  another rule gets that rule's match with the leader's grown one,
-  which may already have taken what that rule needed. In
+- A cycle is grown only at its leader. While it grows, each of the
+  cycle's other rules keeps its longest match from the rounds, and a
+  parse that enters the cycle at one of them gets that: in
   `l ← p ".x" / "x"; p ← p "(n)" / l` (Medeiros et al., 2014), every
-  way round passes through `p`, so `p` leads even when the parse
-  starts at `l`; then `x.x` matches only `x`, since `p` has grown over
-  the `.x`. Starting at `p` parses it. Usually this doesn't come up: of
-  the rules that could lead, the one the grammar uses first does.
-  `parse(root:)` doesn't change which rule leads, so a generated
-  parser agrees whatever rule it starts at. A cycle the grammar's root
-  never reaches, only a `root:` rule does, takes the first rule that
-  could lead by name.
+  way round passes through `p`, so `p` leads even when the parse starts
+  at `l`, and `l` still matches all of `x(n).x`, as the paper's
+  semantics give. (The rule's match with the leader's final one would
+  be shorter: `p` has grown over the `.x`.) So an assignment target
+  can be a member access, `member ← call "." name / atom`, though
+  `call ← call "(" args ")" / member` leads. `parse(root:)` doesn't
+  change which rule leads, so a generated parser agrees whatever rule
+  it starts at. A cycle the grammar's root never reaches, only a
+  `root:` rule does, takes the first rule that could lead by name.
 - Cycles with no rule in common (`a` and `b` each call themselves and
   each other) have nowhere to grow both from, so they raise
   `ArgumentError` on the first parse, or `to_ruby`, naming them:
@@ -435,8 +436,10 @@ has one.
 - `parse(input, root: :rule)` starts at any rule instead of the root,
   which is handy for testing one rule on its own. The rule needn't be
   reachable from the root; its left recursion is checked and grown as
-  the root's is. A name that isn't a rule (even `:send`, which is a
-  method) raises `ArgumentError`, `undefined rule :send`.
+  the root's is, whichever rule of a cycle it is (see
+  [Left recursion](#left-recursion)). A name that isn't a rule (even
+  `:send`, which is a method) raises `ArgumentError`, `undefined rule
+  :send`.
 
   ```ruby
   Calc::Grammar.parse!("1 + 2 * 3", root: :sum)  # => (BinOp "+" (Num 1) ...)
@@ -636,9 +639,6 @@ to ss), and the same goes for `match(/straße/i)`.
 - **Left recursion on both sides.** `expr op expr` groups to the right
   (see [Left recursion](#left-recursion)); write `expr op term` for
   left-associative operators.
-- **Entering a left-recursive cycle away from its leader** gets a
-  shorter match than growing from there would (see
-  [Left recursion](#left-recursion)).
 - **Changing rules after parsing.** `Grammar.parse` reuses one
   instance per class, so each rule is built once. Defining a rule or
   changing a setting on a class resets that class's instance, but a

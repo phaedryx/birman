@@ -54,6 +54,16 @@
   before. Methods with optional, rest, keyword or block parameters
   are left as written (Spinel ignores a signature with the first two).
 
+- A parse that enters a left-recursive cycle at a rule other than its
+  leader (`parse(root:)` at one, or a grammar whose own path into the
+  cycle starts at one, as an assignment target that's a member access)
+  got a shorter match than the paper's semantics give, since the leader
+  had grown over what that rule needed: `sum = terms; terms = sum op
+  product / product` entered at `terms` couldn't parse `1 + 2`. Now
+  each of a cycle's other rules keeps its longest match from the
+  leader's rounds, and a parse entering there gets that. Generated
+  parsers do the same.
+
 ## [0.3.0] - 2026-10-23
 
 ### Breaking
