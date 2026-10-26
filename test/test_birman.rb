@@ -1073,6 +1073,24 @@ class BirmanTest < Minitest::Test
     assert_equal ["<=", "x"], g.parse!("<=x"), "punctuation needs no boundary"
   end
 
+  def test_nocase_shows_in_to_ast_and_ebnf_with_an_i_suffix
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), nocase(""), "from") }
+    end
+    assert_equal [:seq, nil, [[:istr, "select"], [:lexeme, [:istr, ""]], [:str, "from"]]], g.to_ast[:top]
+    assert_equal 'top     = "select"i ""i "from" ;', g.to_ebnf.lines.first.chomp
+  end
+
+  def test_nocase_errors_say_the_literal_is_case_insensitive
+    g = grammar { rule(:top) { either(nocase("select"), "from") } }
+    f = g.parse("x")
+    assert_equal ['"select"i', '"from"'], f.expected
+    assert_equal 'line 1, column 1: expected "select"i or "from", found "x"', f.message.lines.first.chomp
+    g = grammar { rule(:top) { nocase("select") } }
+    assert_equal ['"select"i'], g.parse("selectx").expected, "the boundary failing is the literal failing"
+  end
+
   def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar

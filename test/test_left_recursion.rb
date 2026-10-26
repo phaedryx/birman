@@ -558,10 +558,10 @@ class TestLeftRecursion < Minitest::Test
       [:rep, 0, nil, [:str, "a"]], [:rep, 0, 1, [:str, "a"]], [:rep, 2, nil, [:pat, "/a*/"]],
       [:not, [:str, "a"]], [:and, [:str, "a"]], [:both, [:str, "a"], [:str, ""]],
       [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]],
-      [:lexeme, [:str, ""]]
+      [:lexeme, [:str, ""]], [:istr, ""]
     ]
     non_nullable = [
-      [:str, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
+      [:str, "a"], [:istr, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
       [:pat, "/(?=a)a/"], [:pat, "/a(?!b)/"], [:pat, "/[(?=]/"], [:pat, "/\\(?=a/"], [:pat, "/[\\]^]/"],
       [:pat, "/\\\\b/"], [:pat, "/a # (?=b) [\n/x"], [:pat, "/(?#(?=)a/"], [:pat, "/(?=(a))\\1/"],
       [:seq, nil, [[:str, ""], [:str, "a"]]], [:choice, [[:str, "a"], [:str, "b"]]], [:choice, []],

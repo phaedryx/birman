@@ -73,7 +73,7 @@ module Birman
     # consume, which can only hide left recursion, never invent it.
     def nullable_node?(node) # rubocop:disable Metrics
       case node
-      in [:str, s]               then s.empty? # a literal's ignored spacing comes after the literal
+      in [:str | :istr, s]       then s.empty? # a literal's ignored spacing comes after the literal
       in [:pat, source]          then nullable_pattern?(source)
       in [:ref, name]            then nullable?(name)
       in [:seq, _, parts]        then parts.all? { nullable_node?(_1) }

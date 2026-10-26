@@ -3,15 +3,16 @@
 module Birman
   # Helpers for the plain-array ASTs that matchers produce via #to_ast:
   #
-  #   [:str, "if"]  [:pat, "/\\d+/"]  [:ref, :expr]
+  #   [:str, "if"]  [:istr, "if"]  [:pat, "/\\d+/"]  [:ref, :expr]
   #   [:seq, commit_at, [parts...]]  [:choice, [alts...]]
   #   [:rep, min, max, inner]  [:not, inner]  [:and, inner]
   #   [:both, left, right]  [:action, inner]  [:label, name, inner]
   #   [:check, name, inner]  [:quiet, inner]  [:lexeme, inner]
   #
   # A lexeme is inner, then the grammar's ignore rule. Literals are
-  # lexemes too, but show as [:str, text]: the ignore rule runs only
-  # after the text, so only an empty literal shows as [:lexeme, ...].
+  # lexemes too, but show as [:str, text] (or [:istr, text] for a
+  # case-insensitive one, see Combinators#nocase): the ignore rule runs
+  # only after the text, so only an empty literal shows as [:lexeme, ...].
   module AST
     module_function
 
@@ -52,6 +53,7 @@ module Birman
     def expr(node, prec) # rubocop:disable Metrics
       case node
       in [:str, s]           then s.inspect
+      in [:istr, s]          then "#{s.inspect}i"
       in [:pat, source]      then source
       in [:ref, name]        then name.to_s
       in [:action, inner]    then expr(inner, prec)
