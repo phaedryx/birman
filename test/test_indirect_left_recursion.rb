@@ -127,19 +127,79 @@ class TestIndirectLeftRecursion < Minitest::Test
     assert_same_results g, ["x(n)(n).x(n).x", "x.x", "x(n)", "x(n).", ""]
   end
 
-  # Entered at L instead, L sees only P's final match, which already ate
-  # the ".x" L needs: pegen's approach gives "x" here, where the paper's
-  # semantics, growing L around P, gives the whole subject. Pinned, not
-  # designed.
+  # Entered at L instead, P still leads, and L keeps its longest match
+  # from P's rounds: the whole subject, as the paper's semantics give.
+  # (P's final match has eaten the ".x" L needs, so L's match in the
+  # last round is just "x".)
   def test_the_papers_lvalues_from_another_rule
     g = grammar(:l) do
       rule(:l) { either(seq(pp, ".x"), "x") }
       rule(:pp) { either(seq(pp, "(n)"), l) }
     end
-    assert_pattern { g.parse("x(n)(n).x(n).x") => Birman::Failure(pos: 14, expected: ['"(n)"', '".x"']) }
+    assert_equal :pp, g.new.left_recursion.leader(:l)
+    assert_equal [[[[["x", "(n)"], "(n)"], ".x"], "(n)"], ".x"], g.parse!("x(n)(n).x(n).x")
+    assert_equal ["x", ".x"], g.parse!("x.x")
     assert_equal "x", g.parse!("x")
-    assert_pattern { g.parse("x.x") => Birman::Failure(pos: 3) }
-    assert_same_results g, ["x(n)(n).x(n).x", "x(n).x", "x.x", "x", ""]
+    assert_pattern { g.parse("x(n)") => Birman::Failure(pos: 4, expected: ['"(n)"', '".x"']) }
+    assert_same_results g, ["x(n)(n).x(n).x", "x(n).x", "x.x", "x", "x(n)", "x.x(n)", ""]
+  end
+
+  # --- Entering a cycle away from its leader ---
+
+  # Started at terms or factors (root:), the calculator's arithmetic
+  # gives the trees it gives from sum or product: the leader grows, and
+  # the rule the parse entered at keeps its longest match from the
+  # leader's rounds.
+  def test_entering_a_cycle_at_another_rule_gets_its_longest_match
+    g = Examples::LeftCalc::Indirect
+    inputs = ["1 + 2", "1 + 2 + 3", "2 * 3 + 4", "1 - 2 - 3", "(1 - 2) - (3 - 4) * 5 * 6", "42", "x", "1 +", ""]
+    inputs.each do |input|
+      assert_equal g.parse(input, root: :sum), g.parse(input, root: :terms), input
+      assert_equal g.parse(input, root: :product), g.parse(input, root: :factors), input
+    end
+    assert_same_results g, inputs, roots: %i[terms factors]
+  end
+
+  # The rule entered at has no base case of its own, so its match in
+  # the leader's first round fails; the real one comes in a later
+  # round, with the leader's seed.
+  def test_an_entry_rule_with_no_base_case_of_its_own
+    g = grammar(:expr) do
+      rule(:expr) { binop }
+      rule(:binop) { either(seq(binop, "+", postfix), postfix) }
+      rule(:postfix) { either(seq(expr, ".", match(/[a-z]/)), match(/[a-z]/)) }
+    end
+    assert_equal :binop, g.new.left_recursion.leader(:expr)
+    assert_equal "a", g.parse!("a")
+    assert_equal [["a", ".", "b"], "+", "c"], g.parse!("a.b+c")
+    assert_same_results g, ["a", "a.b+c", "a+b.c", "a.b.c+d", "a+", "a.", ""]
+  end
+
+  # The cycle is entered at another rule after its leader has finished
+  # at that position: the rule's match from the leader's rounds is kept
+  # in the memo, so the second alternative sees it.
+  def test_an_entry_after_the_leader_has_finished_there
+    g = numbers(:stmt) do
+      rule(:stmt) { either(seq(sum, "!"), seq(terms, ";")) }
+      rule(:sum) { terms }
+      rule(:terms) { either(seq(sum, "+", integer).action(:add), integer) }
+    end
+    assert_equal :sum, g.new.left_recursion.leader(:terms)
+    assert_equal [6, ";"], g.parse!("1+2+3;")
+    assert_equal [6, "!"], g.parse!("1+2+3!")
+    assert_same_results g, ["1+2+3;", "1+2+3!", "1;", "1+;", "1+2", ""]
+  end
+
+  # Member access as an assignment target (see Examples::Lvalues): the
+  # assignment enters the call/member cycle at member, which can't lead.
+  def test_member_access_as_an_assignment_target
+    g = Examples::Lvalues::Grammar
+    tree = g.parse!("a.b = f(x).c + 1;")
+    assert_pattern do
+      tree => [[Examples::Lvalues::Grammar::Assign(target: Examples::Lvalues::Grammar::Member(name: "b")), ";"]]
+    end
+    assert_equal g.parse!("f(x).c;"), [[g.parse!("f(x).c = 1;").dig(0, 0).target, ";"]]
+    assert_same_results g, Examples::Lvalues::FIXED
   end
 
   # --- Shapes ---

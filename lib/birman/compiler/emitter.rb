@@ -809,12 +809,14 @@ module Birman
       end
 
       # A cycle's leader numbers its rounds in @gp_; the cycle's other
-      # rules keep a memo for the round (see in_round).
+      # rules keep a memo for the round (see in_round) and their longest
+      # match over the growth's rounds in @bp_, @bv_, @bf_ and @be_ (see
+      # growing_ref_method).
       def round_memos(name)
         leader = @analysis.leader(name)
         tables = if leader.nil? then []
                  elsif leader == name then leads_others?(name) ? %w[gp] : []
-                 else @valued.include?(name) ? %w[rr rp rv rf re] : %w[rr rp rf re]
+                 else @valued.include?(name) ? %w[rr rp rv rf re bp bv bf be] : %w[rr rp rf re bp bf be]
                  end
         tables.map { "@#{_1}_#{ident(name)} = {}\n" }
       end
@@ -826,7 +828,10 @@ module Birman
       # being computed are kept on a stack, and a lookahead that catches a
       # commit failure marks the ones it unwound through ABSENT (never
       # deleted: Hash#delete is O(size) in Spinel), so the rule can be
-      # tried again there.
+      # tried again there. A rule in a cycle led by another rule is
+      # matched in the leader's round while it grows at p (in_round), and
+      # entered from outside before the leader has been matched at p,
+      # matches the leader first (entered).
       def ref_method(name, call)
         leader = @analysis.leader(name)
         return growing_ref_method(name, call) if leader == name
@@ -843,7 +848,7 @@ module Birman
           #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
               merge(@mf_#{id}[p], @me_#{id}[p])
               return q
-            end#{"\n#{indent(in_round(name, leader, call)).chomp}" if leader}
+            end#{"\n#{indent(in_round(name, leader, call)).chomp}\n#{indent(entered(name, leader)).chomp}" if leader}
             @mp_#{id}[p] = IN_PROGRESS
             @position = p
             of = @furthest
@@ -870,11 +875,13 @@ module Birman
       end
 
       # The middle of Ref for a rule in a cycle led by another rule, as
-      # Birman::Context#memoize, after a final memo hit: while the leader
+      # Birman::Context#in_round, after a final memo hit: while the leader
       # grows at p (its @gp_ entry is the round's number, above 0), the
       # rule is memoized there for the round only, in its @rr_ (the round
       # each entry is for), @rp_, @rv_, @rf_ and @re_ tables, with fresh
-      # failure tracking merged into the caller's.
+      # failure tracking merged into the caller's. A match that gets
+      # further than the rule's longest so far in this growth (ABSENT
+      # since the leader began it: even a failure beats that) replaces it.
       def in_round(name, leader, call)
         valued = @valued.include?(name)
         id = ident(name)
@@ -903,8 +910,65 @@ module Birman
             @rp_#{id}[p] = q
             @rf_#{id}[p] = f
             @re_#{id}[p] = ex
+            if q > @bp_#{id}[p]
+              @bp_#{id}[p] = q
+          #{"    @bv_#{id}[p] = @v_ref_#{id} if q != FAIL" if valued}
+              @bf_#{id}[p] = f
+              @be_#{id}[p] = ex
+            end
             merge(f, ex)
             return q
+          end
+        RUBY
+      end
+
+      # The next part of Ref for a rule in a cycle led by another rule,
+      # as Birman::Context#entered: the rule is entered from outside the
+      # cycle at p (no round of the leader's is on) before the leader has
+      # been matched there, so the leader is matched first. When it has
+      # grown, it publishes the rule's longest match from its rounds as
+      # the rule's memo entry at p, if its rounds reached the rule.
+      def entered(name, leader)
+        valued = @valued.include?(name)
+        id = ident(name)
+        <<~RUBY
+          l = @mp_#{ident(leader)}[p]
+          if l.nil? || l == ABSENT
+            ref_#{ident(leader)}(p)
+            q = @mp_#{id}[p]
+            unless q.nil? || q == ABSENT
+          #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
+              merge(@mf_#{id}[p], @me_#{id}[p])
+              return q
+            end
+          end
+        RUBY
+      end
+
+      # For a leader's growth at p: the lines that forget each other
+      # rule's longest match (its start), and the ones that publish them
+      # (its end); none for a rule that leads only itself.
+      def longest_lines(name)
+        others = leads_others?(name) ? @analysis.cycle(name) - [name] : []
+        [others.map { "  @bp_#{ident(_1)}[p] = ABSENT\n" }.join.chomp, others.map { indent(publish(_1)) }.join.chomp]
+      end
+
+      # The end of a leader's growth at p, for each other rule of its
+      # cycle: its longest match from the rounds, if there was one,
+      # becomes its memo entry at p, unless it has one.
+      def publish(name)
+        valued = @valued.include?(name)
+        id = ident(name)
+        <<~RUBY
+          b = @bp_#{id}[p]
+          if b != ABSENT
+            m = @mp_#{id}[p]
+            if m.nil? || m == ABSENT
+              @mp_#{id}[p] = b
+          #{"    @mv_#{id}[p] = @bv_#{id}[p] if b != FAIL" if valued}
+              @mf_#{id}[p] = @bf_#{id}[p]
+              @me_#{id}[p] = @be_#{id}[p]
+            end
           end
         RUBY
       end
@@ -921,13 +985,17 @@ module Birman
       # failure reports only its own attempt's, and is then merged into
       # the rule's, so every attempt's expectations are kept. A leader of
       # other rules numbers each round (@round counts them across the
-      # parse) in its @gp_ table at p, and sets it to 0 when done. A
+      # parse) in its @gp_ table at p, and sets it to 0 when done; it
+      # starts the growth with each other rule's longest match at p
+      # ABSENT, and ends it by publishing each one its rounds reached as
+      # that rule's memo entry at p (see Birman::Context#publish). A
       # lookahead that catches a commit failure mid-growth abandons the
       # entry (ABSENT), seed, round number and all.
       def growing_ref_method(name, call)
         valued = @valued.include?(name)
         id = ident(name)
         marks = leads_others?(name)
+        forget, publish = longest_lines(name)
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
@@ -947,6 +1015,7 @@ module Birman
             @expected = NONE
             @in_progress << @mp_#{id}
             @in_progress_at << p#{"\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}
+          #{forget}
             while true#{"\n    @round += 1\n    @gp_#{id}[p] = @round" if marks}
               af = @furthest
               ae = @expected
@@ -965,6 +1034,7 @@ module Birman
             end
             @in_progress.pop
             @in_progress_at.pop#{"\n  @gp_#{id}[p] = 0\n  @in_progress.pop\n  @in_progress_at.pop" if marks}
+          #{publish}
             q = @mp_#{id}[p]
           #{"  @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
             f = @furthest

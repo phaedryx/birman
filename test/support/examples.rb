@@ -152,6 +152,42 @@ module Examples
               " ", " ", "\n", "1", "42"].freeze
   end
 
+  # Calls and member access as Medeiros et al. 2014's l-values (call
+  # leads the cycle, member can't), with member access as an assignment
+  # target: assign enters the cycle at member, away from its leader.
+  module Lvalues
+    # a.b = f(x).c + 1;
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+      include Birman::Rules::Numbers
+      include Birman::Rules::Identifiers
+
+      Assign = node(:target, :value)
+      Add    = node(:left, :right)
+      Call   = node(:callee, :args)
+      Member = node(:object, :name)
+      Num    = node(:value)
+      Var    = node(:name)
+
+      root :program
+      ignore :spacing
+
+      rule(:program) { stmt.rep }
+      rule(:stmt)    { seq(either(assign, expr), ";") }
+      rule(:assign)  { seq(member.as(:target), "=", expr.as(:value)).to(Assign) }
+      rule(:expr)    { sum }
+      rule(:sum)     { either(seq(sum.as(:left), "+", call.as(:right)).to(Add), call) }
+      rule(:call)    { either(seq(call.as(:callee), "(", sep_by(expr, ",").maybe.as(:args), ")").to(Call), member) }
+      rule(:member)  { either(seq(call.as(:object), ".", identifier.as(:name)).to(Member), atom) }
+      rule(:atom)    { either(integer.to(Num), identifier.to(Var), parens(expr)) }
+    end
+
+    FIXED = ["a.b = 1;", "a = 1;", "a.b;", "f(x).c = a + b;", "a.b.c = f(1, 2);", "f(x)(y).z = 1;", "a + b.c;",
+             "(a + b).c = 3;", "a.b().c;", "a.b = ;", "a.b =", "a. = 1;", "f(x) = 1;", "1.a = 2;", "a;b;", ""].freeze
+    TOKENS = ["a", "b", "f", "1", ".", "(", ")", "+", "=", ";", ",", " "].freeze
+  end
+
   # Rules in a cycle (a -> b -> a) whose values are all Strings, read by
   # .map(:to_i): their types are worked out together.
   module Cycles
@@ -435,23 +471,26 @@ module Examples
   module_function
 
   def all(count)
-    [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), json(count),
-     email(count), toml(count),
+    [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), lvalues(count),
+     json(count), email(count), toml(count),
      numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), select(count),
      *one_type(count),
      *entries(count)]
   end
 
   # Parses started at another rule (root:), matching a prefix (consume:
-  # false), or started partway in (offset:): a left-recursive rule the
-  # root reaches, one it doesn't, JSON documents followed by more, and
-  # inputs after a header with multibyte characters in it.
+  # false), or started partway in (offset:): a left-recursive cycle's
+  # leader and its other rules, a left-recursive rule the root doesn't
+  # reach, JSON documents followed by more, and inputs after a header
+  # with multibyte characters in it.
   def entries(count)
     sums = calc(count).inputs.map { _1.sub(/\Aprint /, "").gsub("(" * 200, "(" * 100).gsub(")" * 199, ")" * 99) }
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
     prefixed = json(count).inputs.each_slice(2).map { |a, b| "#{a} #{b}" }
     [Example.new("sumroot", LeftCalc::Indirect, "SumRootCompiled", sums, { root: :sum }),
      Example.new("sumprefix", LeftCalc::Indirect, "SumPrefixCompiled", sums, { root: :sum, consume: false }),
+     Example.new("termsroot", LeftCalc::Indirect, "TermsRootCompiled", sums, { root: :terms }),
+     Example.new("factorsroot", LeftCalc::Indirect, "FactorsRootCompiled", sums, { root: :factors }),
      Example.new("unreached", Unreached::Grammar, "UnreachedCompiled",
                  Unreached::FIXED + Differential.fuzz(Unreached::TOKENS, rng, count, 8), { root: :product }),
      Example.new("jsonprefix", JSONExample::Grammar, "JSONPrefixCompiled", prefixed, { consume: false }),
@@ -476,6 +515,35 @@ module Examples
     mutants = programs.map { Differential.mutate(rng, _1, CalcGen::REPLACEMENTS) }
     inputs = CALC_FIXED + Differential.fuzz(CALC_TOKENS, rng, count, 12) + programs + mutants
     Example.new("calc", Calc::Grammar, "CalcCompiled", inputs)
+  end
+
+  def lvalues(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    programs = Array.new(count / 2) { LvaluesGen.program(rng) }
+    inputs = Lvalues::FIXED + Differential.fuzz(Lvalues::TOKENS, rng, count, 10) + programs
+    Example.new("lvalues", Lvalues::Grammar, "LvaluesCompiled", inputs)
+  end
+
+  # Random Lvalues programs: statements of assignments and expressions.
+  module LvaluesGen
+    module_function
+
+    def program(rng) = Array.new(rng.rand(1..3)) { statement(rng) }.join(" ")
+
+    def statement(rng)
+      rng.rand < 0.5 ? "#{expr(rng, 2)} = #{expr(rng, 2)};" : "#{expr(rng, 2)};"
+    end
+
+    def expr(rng, depth)
+      return %w[a b 1 2].sample(random: rng) if depth.zero? || rng.rand < 0.3
+
+      case rng.rand(4)
+      when 0 then "#{expr(rng, depth - 1)} + #{expr(rng, depth - 1)}"
+      when 1 then "#{expr(rng, depth - 1)}.#{%w[a b c].sample(random: rng)}"
+      when 2 then "#{expr(rng, depth - 1)}(#{Array.new(rng.rand(0..2)) { expr(rng, depth - 1) }.join(", ")})"
+      else "(#{expr(rng, depth - 1)})"
+      end
+    end
   end
 
   def left_calc(count) = left_calc_like(count, "leftcalc", LeftCalc::Grammar, "LeftCalcCompiled")
