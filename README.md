@@ -390,6 +390,21 @@ in a grammar with `ignore`, but `str` and `match` stay raw, so skip
 spacing after them yourself if you need to. Matchers are values, so the grammar built
 for one is cached and reused for an equal one.
 
+A matcher works in `case` too: `===` parses the input as `parse` does
+with no `ignore:`, true when all of it matches, false for a `Failure`
+or anything that isn't a `String`. Another matcher compares equal, as
+before, rather than being parsed.
+
+```ruby
+case "2026-10"
+when date then :date
+when B.match(/[a-z]+/) then :word
+end                         # => :date
+```
+
+The cached grammar is reused here, so a `case` in a loop doesn't
+rebuild it.
+
 To drop the `Birman.` prefix, mix `Birman::Combinators` into a class
 of your own: `extend` it for matchers held in constants, `include` it
 for matchers built by instance methods.

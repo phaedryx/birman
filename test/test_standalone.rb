@@ -109,6 +109,48 @@ class StandaloneTest < Minitest::Test
     refute_same Birman::Standalone.grammar(m, nil), Birman::Standalone.grammar(m, /\s*/)
   end
 
+  def test_case_equality_parses_a_string_with_the_matcher
+    date = B.seq(B.match(/\d{4}/), "-", B.match(/\d\d/))
+    assert_operator date, :===, "2026-10"
+    refute_operator date, :===, "26-10", "a Failure is false"
+    refute_operator date, :===, "2026-10-27", "the whole input must match"
+  end
+
+  def test_case_equality_works_in_case
+    date = B.seq(B.match(/\d{4}/), "-", B.match(/\d\d/))
+    word = B.match(/[a-z]+/)
+    kind = lambda do |input|
+      case input
+      when date then :date
+      when word then :word
+      else :other
+      end
+    end
+    assert_equal :date, kind.call("2026-10")
+    assert_equal :word, kind.call("hello")
+    assert_equal :other, kind.call("2026-10 hello")
+  end
+
+  def test_case_equality_doesnt_skip_spacing_around_bare_strings
+    m = B.seq("(", ")")
+    assert_operator m, :===, "()"
+    refute_operator m, :===, "( )"
+  end
+
+  def test_case_equality_is_false_for_input_that_isnt_a_string
+    m = B.str("a")
+    refute_operator m, :===, nil
+    refute_operator m, :===, 1
+    refute_operator m, :===, :a
+  end
+
+  def test_case_equality_with_a_matcher_is_equality
+    m = B.seq(B.str("a"), B.str("b"))
+    assert_operator m, :===, B.seq(B.str("a"), B.str("b"))
+    refute_operator m, :===, B.seq(B.str("a"), B.str("c"))
+    refute_operator B.str("ab"), :===, B.seq(B.str("a"), B.str("b")), "a matcher isn't parsed, even if it would match"
+  end
+
   def test_values_and_nodes_work
     pair = B.node(:key, :value)
     m = B.seq(B.match(/\w+/).as(:key), "=", B.match(/\d+/).map(:to_i).as(:value)).to(pair)

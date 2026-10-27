@@ -2,6 +2,14 @@
 
 ### Added
 
+- `Matcher#===`, so a matcher works in `case` (Citrus's `Rule#===`):
+  `case input when date then ...` parses the input with the matcher as
+  the whole grammar, as `Birman.parse` does with no `ignore:`, true
+  when all of it matches. A `Failure` is false, and so is anything that
+  isn't a `String`, so a `case` never raises on an input the matcher
+  can't take. Another matcher compares equal, as before, rather than
+  being parsed. The grammar built for the matcher is cached, so a
+  `case` in a loop doesn't rebuild it.
 - `nocase("select")`, a literal matched in any case (Citrus's backtick
   strings): `SELECT`, `Select` and `select` all match. It's a literal
   otherwise, skipping trailing spacing, with the keyword boundary when
