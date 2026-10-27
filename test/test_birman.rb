@@ -908,6 +908,38 @@ class BirmanTest < Minitest::Test
     end
   end
 
+  def test_a_nested_seq_inside_rep_whose_names_would_be_dropped_raises
+    g = grammar { rule(:top) { seq(match(/\d/).as(:n), seq(",", match(/\d/).as(:n)).rep) } }
+    error = assert_raises(ArgumentError) { g.parse("1,2,3") }
+    assert_equal "a seq inside a seq would lose its names :n: list its parts in the outer seq, or name it with .as",
+                 error.message
+
+    g = grammar { rule(:top) { seq(match(/\d/).as(:a), seq(",", match(/\d/).as(:b)).rep) } }
+    error = assert_raises(ArgumentError) { g.parse("1,2,3") }
+    assert_match(/lose its names :b:/, error.message)
+
+    [
+      seq_of_names.rep.maybe, Birman::Choice.new([seq_of_names.rep, Birman::Str.new("z")]),
+      seq_of_names.rep(1).label("pairs"), seq_of_names.maybe.rep,
+      Birman::SepBy.new(item: seq_of_names, sep: Birman::Str.new(","))
+    ].each do |part|
+      g = grammar { rule(:top) { seq(part, str("c").as(:z)) } }
+      error = assert_raises(ArgumentError, part.inspect) { g.parse("abc") }
+      assert_match(/lose its names :x, :y/, error.message)
+    end
+  end
+
+  def test_a_rep_keeps_its_names_where_nothing_drops_them
+    g = grammar { rule(:top) { seq(match(/\d/).as(:a), seq(",", match(/\d/).as(:b)).rep.as(:rest)) } }
+    assert_equal({ a: "1", rest: [{ b: "2" }, { b: "3" }] }, g.parse!("1,2,3"))
+
+    g = grammar { rule(:top) { seq(match(/\d/).as(:a), seq(",", only(match(/\d/).as(:rest))).rep) } }
+    assert_equal({ a: "1", rest: %w[2 3] }, g.parse!("1,2,3"))
+
+    g = grammar { rule(:top) { seq(match(/\d/), seq(",", match(/\d/).as(:b)).rep) } }
+    assert_equal ["1", [{ b: "2" }, { b: "3" }]], g.parse!("1,2,3")
+  end
+
   def test_a_nested_seq_keeps_its_names_where_nothing_drops_them
     g = grammar { rule(:top) { seq(seq(str("a").as(:x), str("b").as(:y)).as(:p), str("c").as(:z)) } }
     assert_equal({ p: { x: "a", y: "b" }, z: "c" }, g.parse!("abc"))

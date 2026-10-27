@@ -152,8 +152,8 @@ rule(:expr) { either(seq(expr.as(:left), either("+", "-").as(:op), term.as(:righ
 
 A name used twice in one `seq` raises `ArgumentError`, and so does a
 `seq` of named parts (or `match(re).captures`) inside another whose
-value would drop it, even through `maybe`, `label`, `either` and the
-like: list the parts in the outer `seq`, or name the inner one,
+value would drop it, even through `maybe`, `rep`, `label`, `either` and
+the like: list the parts in the outer `seq`, or name the inner one,
 `seq(...).as(:pair)`. A name every alternative of an `either` shares
 passes outward; alternatives named differently pass on none. A rule
 keeps its names to itself, so using one inside a `seq` is always fine.

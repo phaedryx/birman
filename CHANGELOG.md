@@ -53,6 +53,14 @@
   inline RBS comment (`# @rbs parts: untyped`), so CRuby runs them as
   before. Methods with optional, rest, keyword or block parameters
   are left as written (Spinel ignores a signature with the first two).
+- A `seq` of named parts inside a `rep` (or `sep_by`) inside another
+  `seq` whose value would drop it now raises `ArgumentError` naming the
+  lost names, as it already did through `maybe`, `label` and `either`:
+  `seq(n.as(:n), seq(",", n.as(:n)).rep)` silently gave `{n: "1"}`,
+  with every later `:n` gone. Name the repetition
+  (`seq(",", n.as(:n)).rep.as(:rest)`), keep one part of it
+  (`seq(",", only(n.as(:rest))).rep`), or use `sep_by(n.as(:n), ",")`.
+  `to_ruby` raises the same way.
 
 ## [0.3.0] - 2026-10-23
 

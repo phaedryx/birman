@@ -494,6 +494,13 @@ class CompilerTest < Minitest::Test
                  ":other -> :other (each rule can call the next without consuming input)", error.message
   end
 
+  def test_a_rep_that_would_lose_names_is_rejected_before_generating
+    g = grammar { rule(:top) { seq(match(/\d/).as(:a), seq(",", match(/\d/).as(:b)).rep) } }
+    error = assert_raises(ArgumentError) { g.to_ruby(namespace: "X") }
+    assert_equal "a seq inside a seq would lose its names :b: list its parts in the outer seq, or name it with .as",
+                 error.message
+  end
+
   # --- Direct left recursion, grown from a seed ---
 
   def test_direct_left_recursion
