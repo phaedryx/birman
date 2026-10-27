@@ -43,6 +43,13 @@
 
 ### Fixed
 
+- A rule that overrides an included one and calls it with a bare
+  `super` now raises `ArgumentError`, `rule :number calls super
+  without parentheses, ... write super() to call the rule it
+  overrides`, instead of Ruby's `RuntimeError` about implicit argument
+  passing from `define_method`. `super()` works as before, in the
+  interpreter and in a generated parser, and the README now says to
+  write it that way.
 - A generated parser's Spinel binary no longer raises `TypeError`
   ("cannot store Integer into an Array[String]") when an action, check,
   or a method they call indexes a seq's value whose parts have different

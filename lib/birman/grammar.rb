@@ -187,6 +187,13 @@ module Birman
         raise ArgumentError, "undefined rule :#{name}" unless respond_to?(body, true)
 
         Birman.coerce(send(body))
+      rescue RuntimeError => e
+        raise unless e.message.start_with?("implicit argument passing of super")
+
+        # A rule is a method made with define_method, so a bare super
+        # (no parentheses) can't pass the arguments on; Ruby refuses it.
+        raise ArgumentError, "rule :#{name} calls super without parentheses, which a rule can't, since rules " \
+                             "are methods made with define_method; write super() to call the rule it overrides"
       end
     end
 

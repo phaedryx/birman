@@ -10,7 +10,9 @@ module Birman
   # Each rule becomes two ordinary methods: `name` returns a Ref, and a
   # private `__rule_name` builds the matcher. Because rules are just
   # methods, they travel through `include` and can be overridden like
-  # any other Ruby method.
+  # any other Ruby method; an overriding rule reaches the one it
+  # replaces with `super()` (parenthesised: define_method can't pass
+  # arguments on implicitly, and Grammar#matcher_for says so).
   # [module.RuleSet]
   # purpose = "Defines rules; extend a module with it to write a reusable rule module"
   # collaborators = ["Grammar (extends its classes with this)", "Ref"]

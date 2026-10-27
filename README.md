@@ -502,7 +502,12 @@ has one.
   Write your own rule module with `extend Birman::RuleSet`, or
   `include Birman::Grammar` in a module to share rules, nodes and
   combinators; any class that includes it is a grammar. Settings
-  (`root`, `ignore`, `keywords`) still go on the class.
+  (`root`, `ignore`, `keywords`) still go on the class. A rule that
+  overrides an included one can call it with `super()`, as in
+  `rule(:number) { seq(super(), "..", super()) }`. It must be the
+  parenthesised form: a bare `super` raises `ArgumentError` saying so,
+  since Ruby can't pass arguments on implicitly from a `define_method`
+  method.
 - A rule can't be named after a method the grammar relies on (`send`,
   `class`, `match`, `token`, or a private helper in one of Birman's
   modules, like `Rules::Strings`'s `decode_escape`), nor after a public
