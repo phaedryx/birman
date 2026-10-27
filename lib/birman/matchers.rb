@@ -289,12 +289,14 @@ module Birman
 
     # The names a part's value is a hash of, when the part has no name of
     # its own to carry that hash: seen through wrappers that keep the
-    # value, but not into rep, sep_by or a transform, which reshape it.
+    # value, and into rep and sep_by, which collect it; a transform consumes it.
     def self.names_inside(part) # rubocop:disable Metrics
       case part
       when Seq then part.only_at ? names_inside(part.parts[part.only_at]) : part.parts.filter_map(&:capture_key)
       when Pick then names_inside(part.parts[part.index])
       when Label, Quiet, Lexeme, Check, Maybe then names_inside(part.inner)
+      when Rep then names_inside(part.inner)
+      when SepBy then names_inside(part.item)
       when Both then names_inside(part.right)
       when Choice then part.alts.flat_map { names_inside(_1) }.uniq
       when Captures then part.pat.re.names.map(&:to_sym)
