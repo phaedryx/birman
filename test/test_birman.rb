@@ -686,6 +686,34 @@ class BirmanTest < Minitest::Test
     assert_in_delta 4.5, g.parse!("4.5")
   end
 
+  def test_an_overriding_rule_calls_the_included_rule_with_super
+    g = Class.new do
+      include Birman::Grammar
+      include Birman::Rules::Numbers
+
+      root :number
+      rule(:number) { seq(super(), "..", super()) }
+    end
+    assert_equal [1, "..", 5], g.parse!("1..5")
+    assert_equal [1.5, "..", 2.5], g.parse!("1.5..2.5")
+    assert g.parse("1").failure?
+  end
+
+  # A rule is a method made with define_method, which can't pass its
+  # arguments on implicitly: Ruby raises RuntimeError on a bare super.
+  def test_a_bare_super_in_a_rule_says_to_write_super_with_parentheses
+    g = Class.new do
+      include Birman::Grammar
+      include Birman::Rules::Numbers
+
+      root :number
+      rule(:number) { seq(super, "..", super) }
+    end
+    error = assert_raises(ArgumentError) { g.parse("1..5") }
+    assert_equal "rule :number calls super without parentheses, which a rule can't, since rules are methods " \
+                 "made with define_method; write super() to call the rule it overrides", error.message
+  end
+
   def test_comments_override_whitespace
     g = Class.new do
       include Birman::Grammar

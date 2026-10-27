@@ -467,6 +467,15 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["x = 1", "x(1.5)", "if = 1", "x (", "x = ", "iffy=2"]
   end
 
+  def test_an_overriding_rule_calling_super
+    g = grammar(:number, ignore: :spacing) do
+      include Birman::Rules::Numbers
+
+      rule(:number) { seq(super(), "..", super()) }
+    end
+    assert_same_results g, ["1..5", "1.5 .. 2.5", "1", "1..", "..5", "a..b", ""]
+  end
+
   # See BirmanTest#test_memo_hits_do_not_repeat_expectations.
   def test_memo_hits_do_not_repeat_expectations
     g = grammar(:l12) do
