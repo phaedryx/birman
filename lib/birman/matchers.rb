@@ -156,6 +156,22 @@ module Birman
     # value = "node.new(**hash), or node.new(first_field => value); with a span for node(...) classes"
     def to(node) = To.new(self, node)
 
+    # Case equality, so a matcher works in `case`: `when date then ...`
+    # parses the input with self as the whole grammar, as Birman.parse
+    # does (no ignore:, so bare strings don't skip spacing). Another
+    # matcher compares equal, as before, rather than being parsed. The
+    # grammar built for self is cached, so a `case` in a loop doesn't
+    # rebuild it.
+    # [method."==="]
+    # params = ["input: String (parsed), Matcher (compared with ==), or anything else (false)"]
+    # returns = "true when all of input parses as self, or input is an equal matcher; never raises"
+    def ===(input)
+      return self == input if input.is_a?(Matcher)
+      return false unless input.is_a?(String)
+
+      Birman.parse(self, input).success?
+    end
+
     # The name given by #as, seen through wrappers like labels.
     def capture_key = nil
 
