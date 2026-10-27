@@ -128,6 +128,38 @@ module Examples
     TOKENS = ["!", "(", ")", "x", "1", "7", "9" * 25, "0"].freeze
   end
 
+  # Actions, checks and the helpers they call indexing a seq's Array
+  # whose parts have different types ([Integer, "*", Integer]), which
+  # Spinel would type by the parts it can see and fail to store into.
+  module Mixed
+    # 3 * 4, ab:2, @7
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      root :terms
+      ignore :spacing
+
+      rule(:terms) { sep_by(term, ",") }
+      rule(:term) { either(product, sized, last, int) }
+      rule(:product) { seq(int, "*", commit, int).action(:multiply) }
+      rule(:sized) { seq(word, ":", int).check(:fits?, "a word that fits").action(:describe) }
+      rule(:last) { seq("@", int).map(:last) }
+      lexeme(:int) { match(/\d+/).map(:to_i) }
+      lexeme(:word) { match(/[a-z]+/) }
+
+      private
+
+      def multiply(parts) = parts[0] * parts[2]
+      def fits?(parts) = parts[0].size <= parts[2]
+      def describe(parts) = label(parts[0], parts[2])
+      def label(word, size) = "#{word}/#{size}"
+    end
+
+    FIXED = ["3 * 4", "ab:2, abc:2", "@7", "3 *", "3 * x", "7, 2*3, a:1, @1", "", "ab:", "@"].freeze
+    TOKENS = ["1", "7", "9", "*", "@", "ab", ":", ",", " "].freeze
+  end
+
   # examples/calc.rb with its arithmetic left-recursive instead of
   # infix (examples/leftcalc.rb): the same trees, grown from a seed.
   module LeftCalc
@@ -364,7 +396,7 @@ module Examples
   def all(count)
     [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), json(count),
      email(count), toml(count),
-     numbers(count), cycles(count), dates(count), moments(count), defaults(count), *one_type(count),
+     numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), *one_type(count),
      *entries(count)]
   end
 
@@ -449,6 +481,12 @@ module Examples
     soup = Differential.fuzz(Cycles::TOKENS, rng, count, 8)
     inputs = ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!", ""] + soup + soup.map { "!#{_1}" }
     Example.new("cycles", Cycles::Grammar, "CyclesCompiled", inputs)
+  end
+
+  def mixed(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    inputs = Mixed::FIXED + Differential.fuzz(Mixed::TOKENS, rng, count, 8)
+    Example.new("mixed", Mixed::Grammar, "MixedCompiled", inputs)
   end
 
   def dates(count)

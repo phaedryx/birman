@@ -571,7 +571,11 @@ File.write("p.rb", G.to_ruby(namespace: "P", lookahead_depth: 4000))
 # spinel p.rb -o p --cc="cc -DSP_EXC_STACK_MAX=4096"
 ```
 
-Copied actions are exactly what you wrote. Under Spinel, a string that
+Copied actions are exactly what you wrote, plus a `# @rbs name: untyped`
+comment for each parameter, so Spinel takes a seq's mixed parts
+(`[3, "*", 4]`) as they come. A method with optional, rest, keyword or
+block parameters gets none: give an action that indexes mixed parts
+plain parameters. Under Spinel, a string that
 isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
 `inspect`s differently.
 
