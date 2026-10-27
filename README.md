@@ -461,7 +461,11 @@ has one.
   (`parse!(input, formatter: f)` words it your way).
   Input nested too deeply for Ruby's stack is a `Failure` too, with
   `reason` set (see Limits), and so is invalid UTF-8: `reason` is
-  "invalid UTF-8", at the first bad byte.
+  "invalid UTF-8", at the first bad byte. Besides a String, `parse`
+  takes anything with `read` (an IO, a StringIO, a File), read once from
+  where it is and left open, or a Pathname, whose file is read as UTF-8;
+  `Failure#input` and the positions are in terms of the String read.
+  Anything else raises `ArgumentError`.
 - `parse(input, root: :rule)` starts at any rule instead of the root,
   which is handy for testing one rule on its own. The rule needn't be
   reachable from the root; its left recursion is checked and grown as
@@ -549,7 +553,7 @@ Add an entry point and compile it:
 
 ```ruby
 source = Calc::Grammar.to_ruby(namespace: "CalcParser") + <<~RUBY
-  result = CalcParser::Parser.new($stdin.read).parse
+  result = CalcParser::Parser.new($stdin).parse
   puts result.success? ? result.value.inspect : result.message
 RUBY
 File.write("calc_parser.rb", source)  # then: spinel calc_parser.rb -o calc
@@ -626,7 +630,8 @@ def json_number(text) = text.match?(/[.eE]/) ? Float(text) : large_integer(text)
 ```
 
 Actions and `.map(:name)` always run, as in the interpreter, even when
-nothing reads their value. The generated parser reads UTF-8 or binary input (other
+nothing reads their value. The generated parser takes what `parse` takes (a
+String, anything with `read`, or a Pathname), in UTF-8 or binary (other
 encodings raise `ArgumentError`). It also nests deeper before reporting
 "input is nested too deeply": its methods use less stack than the
 interpreter's matchers, and a Spinel binary has a 64 MB stack (JSON

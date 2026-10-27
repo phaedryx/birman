@@ -215,6 +215,18 @@ module BirmanRT
     end
   end
 
+  # The String a parse reads: Birman.read_input. A String as it is;
+  # what read gives, once, for anything with read (an IO, a File),
+  # neither rewound nor closed; or the file to_path names, read whole
+  # and taken as UTF-8, valid or not.
+  def self.read_input(input)
+    return input if input.is_a?(String)
+    return input.read if input.respond_to?(:read)
+    return File.binread(input.to_path).force_encoding(Encoding::UTF_8) if input.respond_to?(:to_path)
+
+    raise ArgumentError, "input must be a String, or respond to read or to_path, not #{input.inspect}"
+  end
+
   # Binary (and US-ASCII) input has a character per byte; otherwise
   # it's UTF-8 (Parser#initialize refuses anything else).
   def self.single_byte?(input)
@@ -594,6 +606,7 @@ module BirmanRT
     attr_reader :input
 
     def initialize(input)
+      input = BirmanRT.read_input(input)
       unless input.encoding == Encoding::UTF_8 || BirmanRT.single_byte?(input)
         raise ArgumentError, "the generated parser reads UTF-8 or binary input, not #{input.encoding}"
       end

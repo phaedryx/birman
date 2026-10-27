@@ -721,7 +721,7 @@ module Birman
         <<~RUBY
           def initialize(input)
             super
-            @sc = StringScanner.new(input)
+            @sc = StringScanner.new(@input)
             init_values
           end
         RUBY
