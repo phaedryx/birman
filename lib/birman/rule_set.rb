@@ -26,12 +26,26 @@ module Birman
     # ]
     # raises = ["ArgumentError if name would replace a method the grammar relies on (send, match, token...)"]
     def rule(name, &)
+      raise ArgumentError, "no block given for rule :#{name}" unless block_given?
+
       check_rule_name!(name)
       define_method(:"__rule_#{name}", &)
       private :"__rule_#{name}"
       define_method(name) { Ref.new(name) }
+      (@__rules ||= []) << name unless @__rules&.include?(name)
       @instance = nil # a grammar class's cached instance (see Grammar::ClassMethods)
     end
+
+    # [method.rules]
+    # returns = "Array of Symbol: every rule's name, in declaration order (included modules' first)"
+    def rules
+      ancestors.reverse.flat_map { _1.instance_variable_get(:@__rules) || [] }.uniq
+    end
+
+    # [method."rule?"]
+    # params = ["name: Symbol"]
+    # returns = "true if the grammar has a rule of that name (a method of that name isn't one)"
+    def rule?(name) = name.is_a?(Symbol) && private_method_defined?(:"__rule_#{name}")
 
     # A rule for a token (a number, a string, an identifier): it skips
     # trailing spacing when the grammar declares `ignore`.

@@ -17,6 +17,10 @@ class BirmanTest < Minitest::Test
 
   def top_matcher(grammar) = grammar.new.matcher_for(:top)
 
+  # The EBNF of the rules the root reaches: these grammars include
+  # Whitespace without using it, so to_ebnf ends with its spacing rule.
+  def reachable_ebnf(grammar) = grammar.to_ebnf.split("\n\n").first
+
   def seq_of_names = Birman::Seq.new([Birman::Str.new("a").as(:x), Birman::Str.new("b").as(:y)])
 
   # --- Matchers ---
@@ -306,7 +310,7 @@ class BirmanTest < Minitest::Test
     assert_equal [], g.parse!("")
     assert g.parse(",").failure?, "a separator needs an item before it"
     assert g.parse("1,,").failure?, "only one"
-    assert_equal 'top = (/\d+/ ("," /\d+/)* ","?)? ;', g.to_ebnf
+    assert_equal 'top = (/\d+/ ("," /\d+/)* ","?)? ;', reachable_ebnf(g)
 
     g = grammar { rule(:top) { sep_by1(match(/\d+/), str(","), trailing: true) } }
     assert_equal %w[1], g.parse!("1,")
@@ -338,7 +342,7 @@ class BirmanTest < Minitest::Test
     assert_equal({ date: "1979-05-27", time: nil, offset: nil }, g.parse!("1979-05-27"), "unmatched groups are nil")
     assert_equal({ date: "1979-05-27", time: nil, offset: "-07:00" }, g.parse!("1979-05-27-07:00"))
     assert_pattern { g.parse("1979") => Birman::Failure(pos: 0, expected: [^(MOMENT.inspect)]) }
-    assert_equal "top = #{MOMENT.inspect} ;", g.to_ebnf
+    assert_equal "top = #{MOMENT.inspect} ;", reachable_ebnf(g)
   end
 
   def test_captures_build_nodes
@@ -521,7 +525,7 @@ class BirmanTest < Minitest::Test
   def test_check_is_left_out_of_ebnf
     g = checking { rule(:top) { match(/\d+/).check(:even?, EVEN) } }
     assert_equal [:check, EVEN, [:pat, "/\\d+/"]], g.to_ast[:top]
-    assert_equal "top = /\\d+/ ;", g.to_ebnf
+    assert_equal "top = /\\d+/ ;", reachable_ebnf(g)
   end
 
   def test_library_rules_use_no_blocks
@@ -755,7 +759,7 @@ class BirmanTest < Minitest::Test
 
   # --- AST and EBNF ---
 
-  def test_to_ast_lists_reachable_rules_in_order
+  def test_to_ast_lists_reachable_rules_in_order_then_the_rest
     g = grammar do
       rule(:top)    { item.rep }
       rule(:item)   { str("x") | unused_by_top }
@@ -763,7 +767,7 @@ class BirmanTest < Minitest::Test
       rule(:orphan) { str("z") }
     end
 
-    assert_equal %i[top item unused_by_top], g.to_ast.keys
+    assert_equal %i[top item unused_by_top spacing orphan], g.to_ast.keys
     assert_equal [:rep, 0, nil, %i[ref item]], g.to_ast[:top]
   end
 
@@ -776,7 +780,7 @@ class BirmanTest < Minitest::Test
     end
     assert_equal [:seq, nil, [[:lexeme, [:str, ""]], [:str, "let"], %i[ref num]]], g.to_ast[:top]
     assert_equal [:lexeme, [:pat, "/\\d+/"]], g.to_ast[:num]
-    assert_equal "top = \"\" \"let\" num ;\nnum = /\\d+/ ;", g.to_ebnf
+    assert_equal "top = \"\" \"let\" num ;\nnum = /\\d+/ ;", reachable_ebnf(g)
   end
 
   def test_ebnf
@@ -788,6 +792,8 @@ class BirmanTest < Minitest::Test
     assert_equal <<~EBNF.chomp, g.to_ebnf
       top  = "let" ~ name "="? / name+ ;
       name = !(!/[a-z]+/) ;
+
+      spacing = /\\s*/ ;
     EBNF
   end
 

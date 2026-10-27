@@ -516,7 +516,22 @@ has one.
   `consume:` and `offset:` but not `root:`, since its matcher is the
   only rule) and generated parsers take the same options.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
-- `Grammar.to_ast` and `Grammar.to_ebnf` for introspection
+- `rules` lists a grammar's rule names, as Symbols, in declaration
+  order: an included module's rules first, in the order the modules
+  were included, then the class's own, then a subclass's, which is the
+  order Ruby reads them in. Overriding a rule keeps its place, and
+  `lexeme`s are rules. `rule?(:name)` says whether a rule is defined.
+  Both work on the class and on an instance (`rules` on a rule module
+  too).
+- `rule(:name)` with no block is the rule's matcher, built once: run it
+  with `Birman.parse(matcher, input)`, or compose it with others. A
+  name that isn't a rule raises `ArgumentError`, `undefined rule
+  :name`, and so does a rule whose matcher can't be built.
+- `Grammar.to_ast` and `Grammar.to_ebnf` (on an instance too) cover
+  every rule: the root, the ignore rule and what they reach, as each is
+  first used, then the rest in declaration order. `to_ebnf` lists the
+  rest after a blank line, so the rules nothing reaches are easy to
+  spot. A grammar with no root lists everything in declaration order.
 - Rules are methods, so they compose and override through `include`.
   Write your own rule module with `extend Birman::RuleSet`, or
   `include Birman::Grammar` in a module to share rules, nodes and
@@ -528,12 +543,12 @@ has one.
   since Ruby can't pass arguments on implicitly from a `define_method`
   method.
 - A rule can't be named after a method the grammar relies on (`send`,
-  `class`, `match`, `token`, or a private helper in one of Birman's
-  modules, like `Rules::Strings`'s `decode_escape`), nor after a public
-  method of your own. Defining one raises `ArgumentError` saying whose
-  method it would replace, instead of silently breaking the grammar.
-  Redefining a rule is fine, and so is replacing your grammar's own
-  private helpers.
+  `class`, `match`, `token`, `rules`, or a private helper in one of
+  Birman's modules, like `Rules::Strings`'s `decode_escape`), nor after
+  a public method of your own. Defining one raises `ArgumentError`
+  saying whose method it would replace, instead of silently breaking
+  the grammar. Redefining a rule is fine, and so is replacing your
+  grammar's own private helpers.
 
 ## Generating a parser
 

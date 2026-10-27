@@ -56,6 +56,33 @@
   the same, and `Failure#input`, `Success#pos` and the positions are in
   terms of the String read. Anything else raises `ArgumentError` naming
   it, where a StringIO raised `NoMethodError` before.
+- `rules`, every rule's name as a Symbol, in declaration order
+  (Citrus's `rule_names`): an included module's rules first, in the
+  order the modules were included, then the class's own, then a
+  subclass's. That's the order Ruby reads them in, and the reverse of
+  its method lookup, so a rule that overrides another comes after it;
+  the override keeps the rule's place rather than moving it. `lexeme`s
+  count. `rule?(:name)` says whether a rule is defined (Citrus's
+  `has_rule?`). Both work on the class and on an instance, and `rules`
+  on a module of rules too.
+- `rule(:name)` with no block returns the rule's matcher (Citrus's
+  `rule(:name)`), built once as `matcher_for` builds it, to run with
+  `Birman.parse` or compose with other matchers. An undefined rule, or
+  one whose matcher can't be built, raises `ArgumentError` as the
+  first parse would. On a module of rules, which has no grammar to
+  build one in, it raises `ArgumentError`, `no block given for rule
+  :name`, in place of Ruby's "tried to create Proc object without a
+  block". `rules`, `rule` and `rule?` are now methods the grammar
+  relies on, so a rule can't take those names.
+- `to_ast` and `to_ebnf` cover every rule, not only the ones the root
+  and ignore rule reach: those first, in first-use order as before,
+  then the rest in declaration order. `to_ebnf` lists the rest after a
+  blank line, aligned among themselves, so the reachable rules read
+  exactly as they did. A rule whose matcher can't be built raises
+  `ArgumentError` from `to_ast`, as `rule(:name)` does. A grammar with
+  no root lists everything in declaration order instead of raising.
+  Both work on an instance (`to_ebnf` didn't). Generated parsers are
+  unchanged: `to_ruby` still compiles only what its roots reach.
 
 ### Fixed
 

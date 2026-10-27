@@ -65,6 +65,15 @@ module Birman
         setting(:keywords, words == [nil] ? [] : words.map(&:to_s))
       end
 
+      # With a block, defines a rule (see RuleSet#rule). Without one,
+      # returns the rule's matcher, built once by the cached instance:
+      # run it with Birman.parse, or compose it with other matchers.
+      # [method."Grammar.rule"]
+      # params = ["name: Symbol", "block: the rule's body (omit to read the rule's matcher)"]
+      # returns = "nil when defining; the rule's Matcher when reading"
+      # raises = ["ArgumentError for an undefined rule, or one whose matcher can't be built, when reading"]
+      def rule(name, &) = block_given? ? super : instance.matcher_for(name)
+
       # These share one instance, so each rule's matcher is built once
       # rather than on every parse. Defining a rule or changing a
       # setting starts a fresh one.
@@ -84,12 +93,13 @@ module Birman
       def parse!(input, **) = instance.parse!(input, **)
 
       # [method."Grammar.to_ast"]
-      # returns = "Hash of rule name => AST, for every rule reachable from root and ignore"
+      # returns = "Hash of rule name => AST, for every rule: those reachable from root and ignore first, then the rest"
+      # raises = ["ArgumentError for a rule whose matcher can't be built"]
       def to_ast = instance.to_ast
 
       # [method."Grammar.to_ebnf"]
-      # returns = "String: the grammar in PEG-flavored EBNF"
-      def to_ebnf = EBNF.call(to_ast)
+      # returns = "String: the grammar in PEG-flavored EBNF; rules the root doesn't reach follow a blank line"
+      def to_ebnf = instance.to_ebnf
 
       # A standalone parser for this grammar, as Ruby source: the same
       # results as parse, from code Spinel can compile to a native binary.
@@ -127,6 +137,21 @@ module Birman
     end
 
     def keywords = self.class.keywords
+
+    # [method.rules]
+    # returns = "Array of Symbol: every rule's name, in declaration order (see RuleSet#rules)"
+    def rules = self.class.rules
+
+    # [method."rule?"]
+    # params = ["name: Symbol"]
+    # returns = "true if the grammar has a rule of that name"
+    def rule?(name) = self.class.rule?(name)
+
+    # [method.rule]
+    # params = ["name: Symbol"]
+    # returns = "The rule's Matcher, built once (as matcher_for)"
+    # raises = ["ArgumentError for an undefined rule, or one whose matcher can't be built"]
+    def rule(name) = matcher_for(name)
 
     # Returns Success(value) or Failure(...). Never raises on bad input.
     #
@@ -208,9 +233,16 @@ module Birman
       end
     end
 
-    # { rule_name => ast } for every rule reachable from the root (and
-    # the ignore rule), in first-use order.
-    def to_ast = __reachable_asts { matcher_for(_1).to_ast }
+    # { rule_name => ast } for every rule: those reachable from the root
+    # (and the ignore rule) first, in first-use order, then the rest in
+    # declaration order (see rules).
+    def to_ast = __asts.reduce(:merge)
+
+    # The grammar in PEG-flavored EBNF: the reachable rules, then, after
+    # a blank line, any the root doesn't reach.
+    # [method.to_ebnf]
+    # returns = "String: one rule per line, the unreachable ones in a second block"
+    def to_ebnf = __asts.reject(&:empty?).map { EBNF.call(_1) }.join("\n\n")
 
     # The grammar's left-call analysis (see LeftRecursion), built on the
     # first parse or to_ruby. It raises then, and every time after, if
@@ -237,6 +269,14 @@ module Birman
     end
 
     private
+
+    # [reachable, rest]: the rules reachable from the root and the ignore
+    # rule, as __reachable_asts orders them (none without a root), and
+    # the others in declaration order.
+    def __asts
+      reachable = self.class.root ? __reachable_asts { matcher_for(_1).to_ast } : {}
+      [reachable, (rules - reachable.keys).to_h { [_1, matcher_for(_1).to_ast] }]
+    end
 
     def __left_recursion(entries)
       entries&.each do |name|
