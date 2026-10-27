@@ -287,6 +287,20 @@ far it has got.
   change which rule leads, so a generated parser agrees whatever rule
   it starts at. A cycle the grammar's root never reaches, only a
   `root:` rule does, takes the first rule that could lead by name.
+- Where the paper grows whichever rule a call reaches, Birman grows
+  only the leader, so what a cycle's rules match follows its growth,
+  wherever the parse starts. Most grammars can't tell; three kinds can.
+  With two rules that each have a base case of their own,
+  `b ← c "<" / "<"; c ← b "<" / "<"` (`c` leads), a parse of `<<` at `b`
+  matches `<`, which fits `c` matching both; the paper gives `b` both,
+  which needs `c` to match only `<`. A rule whose match shrinks as the
+  leader grows keeps its longer one from an earlier round: in
+  `a ← b "<" / "<"; b ← a ">" / b "<" / "<"` (`b` leads), `a` matches
+  all of `<<`, with `b` matching `<`, where the paper gives `<`, since
+  `b` has grown over the second one. And a cycle a rule can go round
+  without matching anything (`a ← b / "<"; b ← a / "<<"`, or one past
+  only lookaheads or rules that can match nothing) has no single
+  meaning: there `b` matches all of `<<`, and the paper `<`.
 - Cycles with no rule in common (`a` and `b` each call themselves and
   each other) have nowhere to grow both from, so they raise
   `ArgumentError` on the first parse, or `to_ruby`, naming them:

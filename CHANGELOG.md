@@ -65,6 +65,10 @@
   own match with the others' kept ones, if it gets further: so a
   `commit` in it can now fail where it used to fail plainly). Generated
   parsers do the same.
+  Where Birman still differs from the paper (two rules of a cycle with
+  base cases of their own, a rule whose match shrinks as the leader
+  grows, a cycle that can go round matching nothing), the README's
+  Left recursion section says how.
 
 ## [0.3.0] - 2026-10-23
 
