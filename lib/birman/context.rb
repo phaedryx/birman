@@ -34,8 +34,10 @@ module Birman
       @growing = left_recursion.leaders.then { _1 unless _1.empty? } # nil: nothing to look up
       @seeds = {}
       # { leader of other rules => { pos it grows at => this round's memo
-      # for the other rules } }
+      # for the other rules } }, and the same for their longest matches
+      # over its latest growth there (see keep_longest)
       @rounds = left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
+      @longest = @rounds.to_h { |leader, _| [leader, {}] }
       @furthest = from
       @expected = NOTHING_EXPECTED
       @token_ends = {}
@@ -131,8 +133,12 @@ module Birman
     # LeftRecursion#leaders and grow). While the leader grows at pos, the
     # cycle's other rules are memoized there in a table of the round's
     # own, not the memo: what they match there depends on the seed, which
-    # changes every round. (A match of theirs already in the memo there is
-    # final: it was made after the leader finished, or without it.)
+    # changes every round. When it has grown, each of them keeps its
+    # longest match from those rounds (see publish), so a parse that
+    # enters the cycle at one of them, from outside, gets that (see
+    # outside). (A match of theirs already in the memo there is final:
+    # it was published, or made after the leader finished, or without
+    # it.)
     # Every way back to a rule of the
     # cycle at pos passes through the leader's seed, so meeting any rule
     # again at the same position while it is still being matched means
@@ -152,6 +158,7 @@ module Birman
 
       @position = pos
       return grow(name, table, pos, &) if leader.equal?(name)
+      return outside(leader, name, table, pos, &) if leader
 
       compute(table, pos, &)
     end
@@ -187,14 +194,67 @@ module Birman
     # table (keyed by rule): once a round, however many alternatives call
     # it, or a cycle of n rules with k alternatives each would take
     # k**(n - 1) matches a round. Back at itself without the leader's seed
-    # between, it raises as memoize does.
+    # between, it raises as memoize does. Its match may be the rule's
+    # longest of the growth (see keep_longest).
     def in_round(round, name, pos, &)
       entry = round[name]
       return entry if entry && !entry.equal?(IN_PROGRESS)
       return seed(name, pos) if entry
 
       @position = pos
-      compute(round, name, &)
+      keep_longest(name, pos, compute(round, name, &))
+    end
+
+    # The rule's longest match so far in its leader's growth at pos,
+    # updated with this round's entry: its result if it gets further
+    # than the longest so far (a failure is shortest; the first round's
+    # counts), and its diagnostics folded in, as the leader's own are
+    # over its rounds (see grow).
+    def keep_longest(name, pos, entry)
+      longest = @longest[@growing[name]][pos]
+      best = longest[name]
+      longest[name] = if best
+                        [end_of(entry) > end_of(best) ? entry[0] : best[0], *further(best[1..], entry[1], entry[2])]
+                      else
+                        entry
+                      end
+      entry
+    end
+
+    # Where a memo entry's match ended; a failure ends before anything.
+    def end_of(entry) = entry[0]&.pos || -1
+
+    # The leader's growth at pos is done, with diagnostics from all its
+    # rounds: the cycle's other rules keep their longest matches from
+    # them, with those diagnostics folded in (the leader's attempts are
+    # part of theirs), and in the memo if they have no entry there. A
+    # parse that enters the cycle at one of them from outside gets that
+    # match, as the paper's semantics (Medeiros et al. 2014) give; the
+    # rule's match with the leader's final one may be shorter, since
+    # that may already have taken what the rule needed.
+    def publish(longest, pos, furthest, expected)
+      longest.each do |rule, entry|
+        entry = longest[rule] = [entry[0], *further([furthest, expected], entry[1], entry[2])]
+        table = @memo[rule] ||= {}
+        table[pos] = entry unless table.key?(pos)
+      end
+    end
+
+    # A rule of a cycle entered from outside at pos: its match is
+    # computed as any rule's is, and if that grew the leader at pos
+    # (which happens only if its match reached the leader there) and the
+    # leader's rounds reached it, its longest match from them (see
+    # publish) replaces what it matched with the leader's final one,
+    # unless that got further: made with the other rules' kept matches,
+    # it can (ties go to the kept one).
+    def outside(leader, name, table, pos, &)
+      entry = compute(table, pos, &)
+      return entry unless @memo[leader]&.key?(pos)
+
+      kept = @longest[leader][pos]&.[](name)
+      return entry unless kept && end_of(kept) >= end_of(entry)
+
+      table[pos] = kept
     end
 
     # Seed-growing (Warth et al. 2008), at a cycle's leader only, as pegen
@@ -203,7 +263,9 @@ module Birman
     # as long as the match gets further. It's a loop, so a longer chain
     # uses no more stack. The memo entry stays IN_PROGRESS until the end;
     # every way back to it passes through its seed. A leader of other
-    # rules starts each round with an empty table for them at pos.
+    # rules starts each round with an empty table for them at pos, and
+    # the growth with an empty table of their longest matches, published
+    # at the end (and read by outside after it).
     #
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows
@@ -213,6 +275,8 @@ module Birman
       seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
       table[pos] = IN_PROGRESS
       rounds = @rounds[name]
+      longest = @longest[name]
+      longest[pos] = {} if longest
       diagnostics = [pos, NOTHING_EXPECTED]
       # Not loop: its block adds frames to every level of nesting.
       while true # rubocop:disable Style/InfiniteLoop
@@ -223,6 +287,7 @@ module Birman
 
         seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
       end
+      publish(longest[pos], pos, *diagnostics) if longest
       table[pos] = [best[0], *diagnostics]
     ensure
       seeds&.delete(pos) # nil if the stack ran out before it was set
