@@ -34,6 +34,23 @@ module Birman
     input.ascii_only? ? byte_pos : input.byteslice(0, byte_pos).length
   end
 
+  # The byte offset of a character offset into input (Grammar#parse's
+  # offset:). Free for 0 and for ASCII input, linear otherwise; used
+  # once per parse.
+  # [method."Birman.byte_offset"]
+  # params = ["input: String", "char_pos: Integer"]
+  # returns = "Integer: the byte offset of char_pos"
+  # raises = ["ArgumentError for a char_pos that isn't an Integer, or is negative or past the end of input"]
+  def self.byte_offset(input, char_pos)
+    raise ArgumentError, "offset must be an Integer, not #{char_pos.inspect}" unless char_pos.is_a?(Integer)
+    return 0 if char_pos.zero?
+    unless char_pos.positive? && char_pos <= input.length
+      raise ArgumentError, "offset #{char_pos} is outside the input (0..#{input.length})"
+    end
+
+    input.ascii_only? ? char_pos : input[0, char_pos].bytesize
+  end
+
   # The byte offset of the first byte in input that doesn't start a
   # valid character, or nil if input is valid. Grammar#parse fails
   # there before a regexp can raise on it. Ruby splits invalid bytes

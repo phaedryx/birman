@@ -23,9 +23,11 @@ module Birman
     attr_reader :input, :grammar, :ignore_ref, :furthest, :expected, :position, :isolated_furthest, :isolated_expected
 
     # left_recursion: the grammar's analysis for the rule the parse starts
-    # at (see Grammar#left_recursion).
-    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion)
+    # at (see Grammar#left_recursion). from: the byte offset it starts
+    # at; nothing before it is matched, but positions count from 0.
+    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0)
       @input = input
+      @from = from
       @grammar = grammar
       @ignore_ref = ignore_rule && Ref.new(ignore_rule) # built once per parse, not per token
       @memo = {}
@@ -34,14 +36,14 @@ module Birman
       # { leader of other rules => { pos it grows at => this round's memo
       # for the other rules } }
       @rounds = left_recursion.leaders.values.tally.filter_map { |leader, n| [leader, {}] if n > 1 }.to_h
-      @furthest = 0
+      @furthest = from
       @expected = NOTHING_EXPECTED
       @token_ends = {}
     end
 
     # Where the parse begins: past whatever the ignore rule (if any)
-    # matches at the start of the input.
-    def start = @ignore_ref&.match(self, 0)&.pos || 0
+    # matches at from.
+    def start = @ignore_ref&.match(self, @from)&.pos || @from
 
     # A lexeme ended at token_end, then the ignore rule consumed spacing
     # (whitespace, comments) up to pos. Spans use this to stop at the

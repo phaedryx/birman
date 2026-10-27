@@ -4,7 +4,7 @@
 # the interpreter (Grammar.parse). Both sides are reduced to one report
 # string: where the match ended and the value with every node's span,
 # or the failure's position, expectations, committed flag, reason and
-# message. options are the parse's (root:, consume:), on both sides. The generated side
+# message. options are the parse's (root:, consume:, offset:), on both sides. The generated side
 # is either loaded into this process (CRuby) or a compiled binary that
 # prints the same report (see Differential.main_source).
 module Differential

@@ -63,9 +63,9 @@ module Birman
       @namespace = namespace
     end
 
-    # The Parser's parse(root: nil, consume: true) is Grammar#parse's;
-    # root: is the grammar's root or one of roots:, and anything else
-    # raises ArgumentError.
+    # The Parser's parse(root: nil, consume: true, offset: 0) is
+    # Grammar#parse's; root: is the grammar's root or one of roots:, and
+    # anything else raises ArgumentError.
     # [method."Compiler#to_ruby"]
     # returns = "String: Ruby source defining <namespace>::Parser, its node classes and BirmanRT"
     # raises = [
