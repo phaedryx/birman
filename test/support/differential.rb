@@ -19,6 +19,7 @@ module Differential
       span = value.span
       fields = value.to_h.values.map { dump(_1) }
       "(#{["#{value.class.name.split("::").last}[#{span.byte_from},#{span.byte_to}]", *fields].join(" ")})"
+    when Birman::Spanned then "Spanned[#{value.span.byte_from},#{value.span.byte_to}](#{dump(value.value)})"
     when Array then "[#{value.map { dump(_1) }.join(", ")}]"
     when Hash then "{#{value.map { |k, v| "#{dump(k)} => #{dump(v)}" }.join(", ")}}"
     when String then value.valid_encoding? ? value.inspect : value.b.inspect

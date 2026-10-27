@@ -363,6 +363,38 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["1+2", "1 + 2  ", "1+", "+"]
   end
 
+  # .text and .spanned: the source text, or the value with its span,
+  # ending where a node's span would. Read and unread, around nodes,
+  # reps, maybes and choices, with and without an ignore rule.
+  def test_text_and_spanned
+    g = grammar(ignore: :spacing) do
+      rule(:top) { seq(head.as(:head), body.as(:body), tail.as(:tail), str("x").maybe.spanned.as(:opt)) }
+      rule(:head) { seq("let", name).text }
+      rule(:body) { seq("=", only(either(num.to(Wrap), name.rep(1)).spanned)) }
+      rule(:tail) { seq(";", only(num.spanned.map(:value).text), num.text.map(:to_i).rep.spanned.text) }
+      lexeme(:name) { match(/[a-z]+/) }
+      lexeme(:num) { match(/\d+/).map(:to_i) }
+    end
+    assert_same_results g, ["let a = 1 ; 2 3 4 x", "let  a  =  b c  ;  5  ", "let a = 1 ;", "let a =", "let", "", "x"]
+  end
+
+  def test_spanned_values_are_pattern_matchable_in_generated_parsers
+    g = grammar { rule(:top) { match(/\d+/).map(:to_i).spanned } }
+    parser = Differential.load(g, "CompilerTestParser")
+    value = parser.new("42").parse.value
+    assert_pattern { value => { value: 42, span: { byte_from: 0, byte_to: 2 } } }
+    assert_pattern { value => [42, { byte_to: 2 }] }
+    assert_equal g.parse!("42").inspect, value.inspect
+  end
+
+  def test_empty_matches_after_a_lexeme_have_empty_spans_there
+    g = grammar(ignore: :spacing) do
+      lexeme(:num) { match(/\d+/) }
+      rule(:top) { seq(num, seq.to(Empty), str("x").maybe.spanned, str("y").maybe.text) }
+    end
+    assert_same_results g, ["1", "1 ", "1   x", "1 y", "1 xy"]
+  end
+
   # A node with no fields drops its value, whatever it is.
   def test_to_builds_nodes_with_no_fields
     g = grammar(ignore: :spacing) do

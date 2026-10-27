@@ -57,6 +57,19 @@ module Birman
     # Where the last token ended, for a match that ended at pos.
     def token_end(pos) = @token_ends.fetch(pos, pos)
 
+    # The span of a match from from to to: it ends where the last token
+    # did, leaving out spacing the ignore rule consumed after it; any
+    # whitespace consumed some other way (Rules' token helper, say) is
+    # trimmed too. A match that consumed nothing just after such spacing
+    # (where the token before it ended, as far as token_end knows) is an
+    # empty span where it was made.
+    def span(from, to)
+      to = token_end(to)
+      return Span.new(input, from, from) if to <= from
+
+      Span.new(input, from, from + input.byteslice(from, to - from).rstrip.bytesize)
+    end
+
     # fixed_anchor: \A, ^ and lookbehind see the whole input, not just
     # the text from the current position on.
     def scanner = @scanner ||= StringScanner.new(input, fixed_anchor: true)

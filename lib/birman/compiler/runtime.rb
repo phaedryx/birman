@@ -108,6 +108,48 @@ module BirmanRT
     def inspect
       "#<Birman::Span #{line}:#{column} #{text.inspect}>"
     end
+
+    # ==, and pattern matching by name or position, as Birman::Span's Data gives.
+    def ==(other)
+      other.is_a?(Span) && @input == other.input && @byte_from == other.byte_from && @byte_to == other.byte_to
+    end
+
+    def deconstruct
+      [@input, @byte_from, @byte_to]
+    end
+
+    def deconstruct_keys(_keys)
+      { input: @input, byte_from: @byte_from, byte_to: @byte_to }
+    end
+  end
+
+  # Birman::Spanned (Matcher#spanned): a value with its span. A plain
+  # class, so it carries what Data gives: ==, inspect, and pattern
+  # matching by name (`in {value:, span:}`) or position (`in [value, span]`).
+  class Spanned
+    attr_reader :value, :span
+
+    #: (untyped, Span) -> void
+    def initialize(value, span)
+      @value = value
+      @span = span
+    end
+
+    def ==(other)
+      other.is_a?(Spanned) && @value == other.value && @span == other.span
+    end
+
+    def deconstruct
+      [@value, @span]
+    end
+
+    def deconstruct_keys(_keys)
+      { value: @value, span: @span }
+    end
+
+    def inspect
+      "#<data Birman::Spanned value=#{@value.inspect}, span=#{@span.inspect}>"
+    end
   end
 
   # pos counts characters, as Birman::Success's does: where the match
@@ -344,6 +386,7 @@ module BirmanRT
   def self.dump(value)
     case value
     when Node then value.dump
+    when Spanned then "Spanned[#{value.span.byte_from},#{value.span.byte_to}](#{dump(value.value)})"
     when Array then dump_array(value)
     when Hash then dump_hash(value)
     when String then value.valid_encoding? ? value.inspect : value.b.inspect
@@ -698,10 +741,13 @@ module BirmanRT
     end
 
     # Where a node's span ends: the last token's end, with trailing
-    # whitespace and NULs trimmed (String#rstrip).
+    # whitespace and NULs trimmed (String#rstrip); from, for a match
+    # that consumed nothing (see Birman::Context#span).
     #: (Integer, Integer) -> Integer
     def span_end(from, to)
       to = token_end(to)
+      return from if to < from
+
       while to > from
         b = @input.getbyte(to - 1)
         break unless b.zero? || BirmanRT.space?(b)

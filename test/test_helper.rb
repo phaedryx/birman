@@ -14,7 +14,7 @@ def matchers_in(grammar_class)
     next if seen.include?(m)
 
     seen << m
-    queue << grammar.literal_matcher(m.text) if m.is_a?(Birman::Lit)
+    queue << grammar.literal_matcher(m.str) if m.is_a?(Birman::Lit)
     m.to_h.each_value { queue.concat(Array(_1).grep(Birman::Matcher)) }
   end
   seen

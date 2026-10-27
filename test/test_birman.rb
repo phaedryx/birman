@@ -801,6 +801,7 @@ class BirmanTest < Minitest::Test
 
   Pair = Birman.node(:left, :right)
   Leaf = Birman.node(:value)
+  Empty = Birman.node
 
   def test_node_is_data_with_sexp_inspect
     pair = Pair.new(Leaf.new(1), Leaf.new("x"))
@@ -827,6 +828,18 @@ class BirmanTest < Minitest::Test
 
     sum, = Calc::Grammar.parse!("1 + 2 # three\n")
     assert_equal "1 + 2", sum.span.text
+  end
+
+  # The position after a lexeme's spacing remembers where the token
+  # ended, which is before an empty match made there, not inside it.
+  def test_an_empty_node_after_a_lexeme_has_an_empty_span_there
+    g = grammar do
+      ignore :spacing
+      lexeme(:num) { match(/\d+/) }
+      rule(:top) { seq(num, seq.to(Empty)) }
+    end
+    _, empty = g.parse!("1   ")
+    assert_equal ["", 4, 4], [empty.span.text, empty.span.from, empty.span.to]
   end
 
   def test_span_is_ignored_by_equality_and_kept_by_with

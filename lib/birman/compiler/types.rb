@@ -25,9 +25,9 @@ module Birman
 
       def of(matcher) # rubocop:disable Metrics
         case matcher
-        when Str, Pat then :str
-        when Lit then of(@grammar.literal_matcher(matcher.text))
-        when Nocase then of(@grammar.nocase_matcher(matcher.text))
+        when Str, Pat, Text then :str
+        when Lit then of(@grammar.literal_matcher(matcher.str))
+        when Nocase then of(@grammar.nocase_matcher(matcher.str))
         when Seq then seq(matcher)
         when Pick then of(matcher.parts[matcher.index])
         when SepBy, Rep then :array
@@ -38,6 +38,7 @@ module Birman
         when Const then constant(matcher.constant)
         when Send then SENDS.fetch(matcher.method_name, :poly)
         when To then :node
+        when SpannedMatcher then :spanned
         when Infix then infix(of(matcher.operand))
         when Ref then rules.fetch(matcher.name, :poly)
         when Label, Check, Quiet, Named, Lexeme then of(matcher.inner)
@@ -110,8 +111,8 @@ module Birman
       def refs(value)
         case value
         when Ref then [value.name]
-        when Lit then refs(@grammar.literal_matcher(value.text))
-        when Nocase then refs(@grammar.nocase_matcher(value.text))
+        when Lit then refs(@grammar.literal_matcher(value.str))
+        when Nocase then refs(@grammar.nocase_matcher(value.str))
         when Data then value.to_h.values.flat_map { refs(_1) }
         when Array then value.flat_map { refs(_1) }
         else []
