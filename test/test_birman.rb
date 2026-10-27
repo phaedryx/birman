@@ -1054,6 +1054,110 @@ class BirmanTest < Minitest::Test
     assert g.parse("ifx").failure?
   end
 
+  def test_nocase_matches_any_case_and_gives_the_literal_as_written
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), match(/\w+/)) }
+    end
+    assert_equal %w[select x], g.parse!("SELECT x")
+    assert_equal %w[select x], g.parse!("Select  x")
+    assert_equal %w[select x], g.parse!("select x")
+  end
+
+  def test_nocase_word_literals_are_keywords
+    g = grammar { rule(:top) { seq(nocase("if"), match(/\w*/)) } }
+    assert g.parse("IFx").failure?, "a word-like nocase literal needs a boundary"
+    assert_equal ["if", ""], g.parse!("If")
+
+    g = grammar { rule(:top) { seq(nocase("<="), match(/\w+/)) } }
+    assert_equal ["<=", "x"], g.parse!("<=x"), "punctuation needs no boundary"
+  end
+
+  def test_nocase_shows_in_to_ast_and_ebnf_with_an_i_suffix
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), nocase(""), "from") }
+    end
+    assert_equal [:seq, nil, [[:istr, "select"], [:lexeme, [:istr, ""]], [:str, "from"]]], g.to_ast[:top]
+    assert_equal 'top     = "select"i ""i "from" ;', g.to_ebnf.lines.first.chomp
+  end
+
+  def test_nocase_errors_say_the_literal_is_case_insensitive
+    g = grammar { rule(:top) { either(nocase("select"), "from") } }
+    f = g.parse("x")
+    assert_equal ['"select"i', '"from"'], f.expected
+    assert_equal 'line 1, column 1: expected "select"i or "from", found "x"', f.message.lines.first.chomp
+    g = grammar { rule(:top) { nocase("select") } }
+    assert_equal ['"select"i'], g.parse("selectx").expected, "the boundary failing is the literal failing"
+  end
+
+  # Case folding can change byte length (ß folds to SS), so the match
+  # length comes from the regexp, not from the literal.
+  def test_nocase_is_byte_correct_on_multibyte_text
+    g = grammar { rule(:top) { seq(nocase("straße"), match(/\w+/)) } }
+    assert_equal %w[straße x], g.parse!("STRASSEx")
+    assert_equal %w[straße x], g.parse!("Straßex")
+    assert_equal 'line 1, column 8: expected /\w+/, found end of input', g.parse("STRASSE").message.lines.first.chomp
+
+    g = grammar { rule(:top) { seq(nocase("école"), str("!")) } }
+    assert_equal %w[école !], g.parse!("ÉCOLE!")
+    assert_equal 'line 1, column 6: expected "!", found "?"', g.parse("École?").message.lines.first.chomp
+  end
+
+  def test_nocase_works_wherever_a_matcher_goes
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(one_of(nocase("asc") => :up, nocase("desc") => :down), nulls) }
+      rule(:nulls) { either(nocase("nulls"), "x") >> nocase("first") }
+    end
+    assert_equal [:up, %w[nulls first]], g.parse!("ASC Nulls FIRST")
+    assert_equal [:down, %w[x first]], g.parse!("desc x first")
+    assert_equal %w[a b], Birman.parse!(Birman.nocase("a") >> Birman.nocase("b"), "A B", ignore: /\s*/)
+  end
+
+  def test_nocase_needs_a_string
+    error = assert_raises(ArgumentError) { Birman.nocase(:select) }
+    assert_equal "nocase needs a String, got :select", error.message
+    assert_raises(ArgumentError) { Birman.nocase(nil) }
+  end
+
+  def test_nocase_text_is_matched_literally_not_as_a_pattern
+    g = grammar { rule(:top) { either(nocase("a.b"), nocase("(?x)"), nocase("c d"), nocase("#"), nocase("\\")) } }
+    assert_equal "a.b", g.parse!("A.B")
+    assert g.parse("axb").failure?
+    assert_equal "(?x)", g.parse!("(?X)")
+    assert_equal "c d", g.parse!("C D")
+    assert_equal "#", g.parse!("#")
+    assert_equal "\\", g.parse!("\\")
+  end
+
+  # Word-like means ASCII letters, digits and _, as for a literal: a
+  # non-ASCII nocase literal gets no boundary, and the boundary is ASCII.
+  def test_nocase_boundary_is_ascii_like_a_literals
+    g = grammar { rule(:top) { seq(nocase("straße"), match(/\w*/)) } }
+    assert_equal %w[straße N], g.parse!("STRASSEN")
+    g = grammar { rule(:top) { seq(nocase("is"), match(/.*/)) } }
+    assert_equal %w[is é], g.parse!("ISé")
+    assert g.parse("ISe").failure?
+  end
+
+  def test_nocase_in_a_committed_seq_and_in_left_recursion
+    g = grammar do
+      ignore :spacing
+      rule(:top) { seq(nocase("select"), commit, nocase("from")) }
+    end
+    f = g.parse("select x")
+    assert f.committed
+    assert_equal ['"from"i'], f.expected
+
+    g = grammar do
+      ignore :spacing
+      rule(:top) { either(seq(top, nocase("or"), term), term) }
+      lexeme(:term) { match(/[a-z]+/).label("term") }
+    end
+    assert_equal [%w[a or b], "or", "c"], g.parse!("a OR b Or c")
+  end
+
   def test_lexemes_ignore_trailing_spacing
     g = Class.new do
       include Birman::Grammar

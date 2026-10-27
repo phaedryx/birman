@@ -58,6 +58,18 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["let = if", "let=if  ", "letx = if", "let", "let =", "", "let = iffy"]
   end
 
+  def test_nocase_with_and_without_ignore
+    g = grammar(ignore: :spacing) { rule(:top) { seq(nocase("select"), nocase("<="), nocase("straße"), nocase("")) } }
+    assert_same_results g, ["SELECT <= STRASSE", "select<=straße  ", "Selectx <= straße", "SELECT <=",
+                            "select <= STRASSEN", "", "é"]
+
+    g = grammar { rule(:top) { either(nocase("if"), "if") >> match(/\w*/) } }
+    assert_same_results g, ["IFx", "if", "If ", "iffy", "x"]
+
+    g = grammar { rule(:top) { either(nocase("a.b"), nocase("(?x)"), nocase("c d"), nocase("#"), nocase("\\")) } }
+    assert_same_results g, ["A.B", "axb", "(?X)", "C D", "#", "\\", ""]
+  end
+
   def test_lit_without_ignore
     g = grammar { rule(:top) { seq("let", "=") } }
     assert_same_results g, ["let=", "let =", "lets="]

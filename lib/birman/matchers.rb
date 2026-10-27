@@ -177,6 +177,15 @@ module Birman
     def to_ast = text.empty? ? [:lexeme, [:str, text]] : [:str, text]
   end
 
+  # A literal in any case (see Combinators#nocase). As with Lit, the
+  # grammar running it supplies the real matcher.
+  Nocase = Data.define(:text) do
+    include Matcher
+
+    def match(ctx, pos) = ctx.grammar.nocase_matcher(text).match(ctx, pos)
+    def to_ast = text.empty? ? [:lexeme, [:istr, text]] : [:istr, text]
+  end
+
   # Exact string, nothing skipped (see Combinators#str).
   Str = Data.define(:str) do
     include Matcher
