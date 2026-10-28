@@ -32,7 +32,7 @@ module Birman
     # or copied constant with one of these names would sit in the same
     # lexical scope and shadow it, so it's refused.
     RESERVED_CONSTANTS = %w[
-      BirmanRT Parser Node Span Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
+      BirmanRT Parser Node Span Spanned Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
       CHUNK_LIMIT FLOAT_CHUNK LOOKAHEAD_DEPTH
       StringScanner Hash Array String Integer Float Symbol Regexp Kernel Encoding
       StandardError ArgumentError RangeError TypeError FloatDomainError SystemStackError

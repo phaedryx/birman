@@ -146,6 +146,8 @@ module Birman
         when Check then check(matcher, want, name)
         when Named then compile_matcher(matcher.inner, want, name)
         when To then to(matcher, want, name)
+        when Text then text(matcher, want, name)
+        when SpannedMatcher then spanned(matcher, want, name)
         when Infix then infix(matcher, want, name)
         when Lexeme then lexeme(matcher, want, name)
         when Quiet then quiet(matcher, want, name)
@@ -251,8 +253,8 @@ module Birman
       # exact string, then the ignore rule), resolved now.
       def lit(matcher, want)
         outer = @prefix
-        @prefix = "lit_#{slug(matcher.text)}"
-        compile_matcher(@grammar.literal_matcher(matcher.text), want, @prefix)
+        @prefix = "lit_#{slug(matcher.str)}"
+        compile_matcher(@grammar.literal_matcher(matcher.str), want, @prefix)
       ensure
         @prefix = outer
       end
@@ -260,8 +262,8 @@ module Birman
       # A case-insensitive literal, likewise (see Combinators#nocase_matcher).
       def nocase(matcher, want)
         outer = @prefix
-        @prefix = "nocase_#{slug(matcher.text)}"
-        compile_matcher(@grammar.nocase_matcher(matcher.text), want, @prefix)
+        @prefix = "nocase_#{slug(matcher.str)}"
+        compile_matcher(@grammar.nocase_matcher(matcher.str), want, @prefix)
       ensure
         @prefix = outer
       end
@@ -543,6 +545,27 @@ module Birman
         end
       end
 
+      # The source text from p to where a node's span would end. Unread,
+      # it's just the inner match, whose actions still run.
+      def text(matcher, want, name)
+        return compile_matcher(matcher.inner, false, name) unless want
+
+        define(:text, matcher, true, name) do |v|
+          inner = compile_matcher(matcher.inner, false)
+          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{v} = @input.byteslice(p, span_end(p, q) - p)\nq"
+        end
+      end
+
+      # The inner value with the span a node would get.
+      def spanned(matcher, want, name)
+        return compile_matcher(matcher.inner, false, name) unless want
+
+        define(:spanned, matcher, true, name) do |v|
+          inner = compile_matcher(matcher.inner, true)
+          "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{v} = Spanned.new(#{inner.value}, span(p, q))\nq"
+        end
+      end
+
       # A seq of named parts builds the node from its locals, no Hash.
       def seq_node(matcher, node, name)
         fields = hash_keys(matcher.inner).to_h { [_1, nil] }
@@ -575,7 +598,7 @@ module Birman
         when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
-        when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To then nil
+        when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher then nil
         when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown
         when Const then matcher.constant.is_a?(Hash) ? matcher.constant.keys : nil

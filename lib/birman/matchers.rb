@@ -172,6 +172,21 @@ module Birman
       Birman.parse(self, input).success?
     end
 
+    # Keep the source text instead of the value: what self consumed, as
+    # a String, ending where a node's span would (before the spacing
+    # ignored after its last token). Actions inside still run.
+    # [method.text]
+    # returns = "Matcher whose value is the source text self consumed (self's .as name is kept)"
+    # value = "String: the input from where self began to where its last token ended"
+    def text = Text.new(self)
+
+    # Keep the value and where it came from: a Spanned(value, span),
+    # with the Span a node would get.
+    # [method.spanned]
+    # returns = "Matcher whose value is Birman::Spanned(value:, span:) (self's .as name is kept)"
+    # value = "Spanned(self's value, its Span); a maybe that matched nothing gives Spanned(nil, an empty span)"
+    def spanned = SpannedMatcher.new(self)
+
     # The name given by #as, seen through wrappers like labels.
     def capture_key = nil
 
@@ -184,22 +199,23 @@ module Birman
 
   # A bare string: a literal (see Combinators#literal_matcher). What a
   # literal matches depends on the grammar's ignore rule, so the grammar
-  # supplies the real matcher when this one runs.
-  Lit = Data.define(:text) do
+  # supplies the real matcher when this one runs. The member is str, as
+  # Str's: a member named text would hide Matcher#text.
+  Lit = Data.define(:str) do
     include Matcher
 
-    def match(ctx, pos) = ctx.grammar.literal_matcher(text).match(ctx, pos)
+    def match(ctx, pos) = ctx.grammar.literal_matcher(str).match(ctx, pos)
     # Its spacing comes after the text, so it's a lexeme only when empty.
-    def to_ast = text.empty? ? [:lexeme, [:str, text]] : [:str, text]
+    def to_ast = str.empty? ? [:lexeme, [:str, str]] : [:str, str]
   end
 
   # A literal in any case (see Combinators#nocase). As with Lit, the
   # grammar running it supplies the real matcher.
-  Nocase = Data.define(:text) do
+  Nocase = Data.define(:str) do
     include Matcher
 
-    def match(ctx, pos) = ctx.grammar.nocase_matcher(text).match(ctx, pos)
-    def to_ast = text.empty? ? [:lexeme, [:istr, text]] : [:istr, text]
+    def match(ctx, pos) = ctx.grammar.nocase_matcher(str).match(ctx, pos)
+    def to_ast = str.empty? ? [:lexeme, [:istr, str]] : [:istr, str]
   end
 
   # Exact string, nothing skipped (see Combinators#str).
@@ -622,6 +638,33 @@ module Birman
     end
 
     def to_ast = [:action, inner.to_ast]
+    def capture_key = inner.capture_key
+  end
+
+  # See Matcher#text. The text ends where a node's span would.
+  Text = Data.define(:inner) do
+    include Matcher
+
+    def match(ctx, pos)
+      r = inner.match(ctx, pos) or return nil
+      Match.new(r.pos, ctx.span(pos, r.pos).text)
+    end
+
+    def to_ast = [:text, inner.to_ast]
+    def capture_key = inner.capture_key
+  end
+
+  # See Matcher#spanned. Named for the matcher, since Spanned (nodes.rb)
+  # is the value it produces.
+  SpannedMatcher = Data.define(:inner) do
+    include Matcher
+
+    def match(ctx, pos)
+      r = inner.match(ctx, pos) or return nil
+      Match.new(r.pos, Spanned.new(r.value, ctx.span(pos, r.pos)))
+    end
+
+    def to_ast = [:spanned, inner.to_ast]
     def capture_key = inner.capture_key
   end
 

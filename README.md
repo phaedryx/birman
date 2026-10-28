@@ -125,6 +125,8 @@ puts Lists.parse("[1, [2, x], []]").message
 | `nocase("select")`            | a literal in any case (`SELECT`, `Select`); value `"select"` |
 | `x.as(:key)`                  | name a part; the sequence's value becomes a hash     |
 | `x.to(Node)`                  | build a node from that hash (or from a single value) |
+| `x.text`                      | the source text `x` consumed, as a String            |
+| `x.spanned`                   | `Spanned(value:, span:)`: `x`'s value with its span   |
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
@@ -450,6 +452,34 @@ The parser and `with` set the span without going through it. (Passing
 `span:` to `new` by hand only works for nodes without their own
 `initialize`.) `span` can't be a field name, since every node already
 has one.
+
+## Text and spans
+
+A span isn't only for nodes. `.text` keeps the source text a matcher
+consumed instead of its value, and `.spanned` keeps the value and its
+span together:
+
+```ruby
+rule(:version) { seq(integer, ".", integer).text }   # "3.14", not [3, ".", 14]
+rule(:name)    { identifier.spanned }                 # Spanned("x", span)
+
+case grammar.parse!("x")
+in Birman::Spanned(value:, span:) then puts "#{span}: #{value}"   # line 1, column 1: x
+end
+```
+
+Both end where a node's span would, before the spacing ignored after
+the last token: `seq("let", identifier).text` on `let  x   =` is
+`"let  x"`. `nocase("select").text` is the input as typed. A `rep`
+spans every repetition. A `maybe` that matched nothing gives `""`, or
+`Spanned(nil, span)` with an empty span where it looked; put `.spanned`
+inside `.maybe` to get `nil` instead. Actions inside still run.
+
+`Spanned` is a `Data`, so `in Spanned(value:, span:)` and
+`in Spanned[value, span]` both match it, and `==` compares the span
+too (a node's `==` ignores its span). `.text` and `.spanned` keep a
+`.as` name from inside and take one from outside, are left out of
+`to_ebnf`, and generated parsers give the same values.
 
 ## Pieces
 

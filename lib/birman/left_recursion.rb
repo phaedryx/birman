@@ -86,6 +86,7 @@ module Birman
       in [:label, _, inner]      then nullable_node?(inner)
       in [:check, _, inner]      then nullable_node?(inner) # it may reject, but it can match empty
       in [:lexeme, inner]        then nullable_node?(inner)
+      in [:text | :spanned, inner] then nullable_node?(inner)
       else false
       end
     end
@@ -122,6 +123,7 @@ module Birman
       in [:label, _, inner]    then calls(inner)
       in [:check, _, inner]    then calls(inner)
       in [:lexeme, inner]      then calls(inner) + (@ignore && nullable_node?(inner) ? [@ignore] : [])
+      in [:text | :spanned, inner] then calls(inner)
       else []
       end
     end

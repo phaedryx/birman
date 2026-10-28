@@ -83,6 +83,24 @@
   no root lists everything in declaration order instead of raising.
   Both work on an instance (`to_ebnf` didn't). Generated parsers are
   unchanged: `to_ruby` still compiles only what its roots reach.
+- `x.text` and `x.spanned`, the source text or the span of any
+  sub-match, without a node. `x.text`'s value is the text `x` consumed,
+  as a String, ending where a node's span would: before the spacing
+  ignored after its last token (`seq("let", name).text` on `let  x   =`
+  is `"let  x"`), trailing whitespace trimmed as a span's is.
+  `x.spanned`'s is `Birman::Spanned(value:, span:)`, a `Data` pairing
+  `x`'s value with the `Birman::Span` a node would get, matchable as
+  `in Spanned(value:, span:)` or `in Spanned[value, span]`; its `==`
+  compares the span too. Each keeps `x`'s `.as` name and takes one after
+  it. A `rep` spans every repetition; a `maybe` that matched nothing
+  gives `""`, or `Spanned(nil, span)` with an empty span where it looked
+  (`x.spanned.maybe` gives `nil` instead). Actions inside still run,
+  read or not. `to_ast` has `[:text, inner]` and `[:spanned, inner]`
+  nodes, `to_ebnf` shows neither, `Birman.parse` runs them, and
+  `to_ruby` generates them, with a `Spanned` class in the runtime (so a
+  node class can't be named `Spanned`, as it couldn't be `Span`). The
+  internal `Birman::Lit` and `Birman::Nocase` now name their member
+  `str`, as `Str` does: a member named `text` hid `.text` on literals.
 
 ### Fixed
 
@@ -93,6 +111,11 @@
   passing from `define_method`. `super()` works as before, in the
   interpreter and in a generated parser, and the README now says to
   write it that way.
+- A node built from a match that consumed nothing just after a lexeme's
+  spacing (`seq(num, seq.to(Empty))` on `1 `) raised `NoMethodError` in
+  the interpreter, and had a span ending before it began in a generated
+  parser. Its span is now empty, where the match was made.
+
 - A generated parser's Spinel binary no longer raises `TypeError`
   ("cannot store Integer into an Array[String]") when an action, check,
   or a method they call indexes a seq's value whose parts have different

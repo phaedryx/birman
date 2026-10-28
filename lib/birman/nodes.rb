@@ -25,6 +25,15 @@ module Birman
     def before = input.byteslice(0, byte_from)
   end
 
+  # A value with its span (see Matcher#spanned): the value any matcher
+  # produces, and the Span a node would get for the same match. Pattern
+  # matchable by name or position: `in Spanned(value:, span:)`,
+  # `in Spanned[value, span]`.
+  # [class.Spanned]
+  # purpose = "A sub-match's value paired with where it came from"
+  # fields = ["value: whatever the inner matcher produced", "span: Birman::Span"]
+  Spanned = Data.define(:value, :span)
+
   # Mixed into every class made with Nodes#node. Adds an optional
   # source span that the parser fills in. The span is deliberately
   # not a Data member, so equality and pattern matching ignore it:
@@ -93,15 +102,10 @@ module Birman
   extend Nodes
 
   # Build a node (or any Data class) from a hash of fields, attaching a
-  # span when the class supports one. The span ends where the last
-  # token did, leaving out spacing the ignore rule consumed after it;
-  # any whitespace consumed some other way (Rules' token helper, say)
-  # is trimmed too.
+  # span (see Context#span) when the class supports one.
   def self.build(node, fields, ctx, from, to)
     return node.new(**fields) unless node.include?(Node)
 
-    to = ctx.token_end(to)
-    span = Span.new(ctx.input, from, from + ctx.input.byteslice(from, to - from).rstrip.bytesize)
-    Node.new_with_span(node, span, fields)
+    Node.new_with_span(node, ctx.span(from, to), fields)
   end
 end
