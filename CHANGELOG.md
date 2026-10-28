@@ -48,6 +48,14 @@
   `root:` (the grammar's root or one of `roots:`; anything else raises
   `ArgumentError`), `consume:` and `offset:`, giving the interpreter's
   results, `Success#pos` included.
+- `parse` takes an IO-like input besides a String (as Citrus does):
+  anything with `read` (an IO, a StringIO, a File) is read once, from
+  where it is, and left open, and a Pathname's file is read as UTF-8,
+  so invalid bytes in it are a `Failure` as in a String. `parse!`,
+  `Birman.parse`, `Birman.parse!` and a generated parser's `new` take
+  the same, and `Failure#input`, `Success#pos` and the positions are in
+  terms of the String read. Anything else raises `ArgumentError` naming
+  it, where a StringIO raised `NoMethodError` before.
 
 ### Fixed
 

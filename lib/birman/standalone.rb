@@ -15,18 +15,20 @@ module Birman
   # there is no grammar here for a name to refer to. Literals skip it
   # after themselves, and it's skipped at the start of input.
   #
-  # consume: false and offset: are Grammar#parse's. There is no root:
+  # input, consume: false and offset: are Grammar#parse's. There is no root:
   # option, since matcher is the only rule; passing one raises
   # ArgumentError (unknown keyword).
   # [method."Birman.parse"]
   # params = [
-  #   "matcher: String | Regexp | Matcher", "input: String", "ignore: String | Regexp | Matcher | nil",
+  #   "matcher: String | Regexp | Matcher", "input: String | #read | #to_path, as Grammar#parse",
+  #   "ignore: String | Regexp | Matcher | nil",
   #   "consume: Boolean = true (false: a prefix of input may match)",
   #   "offset: Integer = 0 (the character offset to start at; positions still count from 0)"
   # ]
   # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
   # raises = [
   #   "ArgumentError if matcher or ignore refers to a rule, or an .action/.check method Birman lacks",
+  #   "ArgumentError for an input that isn't a String and has neither read nor to_path, naming it",
   #   "ArgumentError for an offset: that isn't an Integer, or is negative or past the end of input"
   # ]
   def self.parse(matcher, input, ignore: nil, consume: true, offset: 0)

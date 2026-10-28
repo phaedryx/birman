@@ -69,14 +69,15 @@ module Birman
       # rather than on every parse. Defining a rule or changing a
       # setting starts a fresh one.
       # [method."Grammar.parse"]
-      # params = ["input: String", "root:, consume:, offset: as Grammar#parse"]
+      # params = ["input: String | #read | #to_path, as Grammar#parse", "root:, consume:, offset: as Grammar#parse"]
       # returns = "Success(value) or Failure; see Grammar#parse"
       # notes = "Uses one cached instance; defining a rule or changing a setting resets it"
       def parse(input, **) = instance.parse(input, **)
 
       # [method."Grammar.parse!"]
       # params = [
-      #   "input: String", "root:, consume:, offset: as parse", "formatter: #call(failure) = ErrorFormatter.new"
+      #   "input: String | #read | #to_path, as parse", "root:, consume:, offset: as parse",
+      #   "formatter: #call(failure) = ErrorFormatter.new"
       # ]
       # returns = "The parsed value"
       # raises = ["Birman::ParseError", "ArgumentError, as parse"]
@@ -129,6 +130,11 @@ module Birman
 
     # Returns Success(value) or Failure(...). Never raises on bad input.
     #
+    # input is a String, or anything with read (an IO, a StringIO, a
+    # File), read once from where it is and left open, or anything with
+    # to_path (a Pathname), whose file is read as UTF-8; see
+    # Birman.read_input. The result is in terms of the String read.
+    #
     # root: starts the parse at that rule instead of the grammar's root;
     # the rule needn't be reachable from it. Its left recursion is
     # checked, and grown, as the root's is (see left_recursion).
@@ -146,13 +152,14 @@ module Birman
     # are a Failure, since a regexp would refuse the whole string.
     # [method.parse]
     # params = [
-    #   "input: String",
+    #   "input: String | #read | #to_path (see Birman.read_input)",
     #   "root: Symbol | nil = nil (the rule to start at; nil: the grammar's root)",
     #   "consume: Boolean = true (false: a prefix of input may match)",
     #   "offset: Integer = 0 (the character offset to start at; positions still count from 0)"
     # ]
     # returns = "Birman::Success(value) when all of input parses (or a prefix, with consume: false), else Birman::Failure"
     # raises = [
+    #   "ArgumentError for an input that isn't a String and has neither read nor to_path, naming it",
     #   "ArgumentError on the first parse, whatever the input, for no root rule (and no root:)",
     #   "ArgumentError for a root: that isn't a rule of the grammar, naming it",
     #   "ArgumentError for an offset: that isn't an Integer, or is outside the input (checked after the encoding)",
@@ -166,6 +173,7 @@ module Birman
     #   "\"The first parse\" is per root: a root: is checked on its first parse, for what it reaches"
     # ]
     def parse(input, root: nil, consume: true, offset: 0)
+      input = Birman.read_input(input)
       analysis = left_recursion(root)
       if (bad = Birman.invalid_byte(input))
         return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
@@ -176,7 +184,10 @@ module Birman
 
     # Returns the value or raises ParseError, worded by formatter.
     # [method."parse!"]
-    # params = ["input: String", "root:, consume:, offset: as parse", "formatter: #call(failure) = ErrorFormatter.new"]
+    # params = [
+    #   "input: String | #read | #to_path, as parse", "root:, consume:, offset: as parse",
+    #   "formatter: #call(failure) = ErrorFormatter.new"
+    # ]
     # returns = "The parsed value"
     # raises = ["Birman::ParseError (message from formatter)", "ArgumentError, as parse"]
     def parse!(input, formatter: ErrorFormatter.new, **) = parse(input, **).value!(formatter)
