@@ -217,4 +217,75 @@ class OperatorsTest < Minitest::Test
     assert_equal old.parse("1 2").expected, g.parse("1 2").expected
     assert_equal ["number"], g.parse("1 +").expected
   end
+
+  # --- to_ast, to_ebnf, left recursion ---
+
+  def test_ast_of_one_left_level_equals_infix
+    g = Class.new { include Birman::Combinators }.new
+    num = g.match(/\d/)
+    assert_equal g.infix(num, "+", "-", node: Bin).to_ast, g.operators(num, { left: ["+", "-"], node: Bin }).to_ast
+  end
+
+  def test_ast_is_flat
+    g = Class.new { include Birman::Combinators }.new
+    g.singleton_class.send(:define_method, :num) { Birman::Ref.new(:num) }
+    op = g.operators(g.num, { postfix: "!", node: Un }, { prefix: "-", node: Un }, { left: "+", node: Bin })
+    pre = [:quiet, g.lit("-").to_ast]
+    bang = g.lit("!").to_ast
+    plus = g.lit("+").to_ast
+    want = [:seq, nil, [[:rep, 0, nil, pre], %i[ref num],
+                        [:rep, 0, nil, [:label, "operator",
+                                        [:choice, [bang, [:seq, nil, [plus, [:rep, 0, nil, pre], %i[ref num]]]]]]]]]
+    assert_equal want, op.to_ast
+  end
+
+  def test_ast_of_a_prefix_only_table_has_no_operator_loop
+    g = Class.new { include Birman::Combinators }.new
+    op = g.operators(g.match(/\d/), { prefix: ["-", "+"], node: Un })
+    pre = [:quiet, [:choice, [g.lit("-").to_ast, g.lit("+").to_ast]]]
+    assert_equal [:seq, nil, [[:rep, 0, nil, pre], g.match(/\d/).to_ast]], op.to_ast
+  end
+
+  def test_ast_of_a_postfix_only_table_has_no_prefix_rep
+    g = Class.new { include Birman::Combinators }.new
+    op = g.operators(g.match(/\d/), { postfix: "!", node: Un })
+    want = [:seq, nil, [g.match(/\d/).to_ast, [:rep, 0, nil, [:label, "operator", g.lit("!").to_ast]]]]
+    assert_equal want, op.to_ast
+  end
+
+  def test_ebnf
+    g = grammar do
+      rule(:top) do
+        operators(num, { prefix: "-", node: Un }, { left: ["*", "/"], node: Bin }, { left: ["+", "-"], node: Bin })
+      end
+      rule(:num) { match(/\d+/) }
+    end
+    assert_includes g.new.to_ebnf, %(top = "-"* num (("*" / "/" / "+" / "-") "-"* num)* ;)
+  end
+
+  def test_nullability_and_left_calls
+    build = lambda do |operand|
+      grammar do
+        rule(:top) { operators(send(operand), { prefix: sign, node: Un }, { left: "+", node: Bin }) }
+        rule(:sign) { "-" }
+        rule(:num) { match(/\d+/) }
+        rule(:opt) { match(/a?/) }
+      end.new.left_recursion
+    end
+    with_num = build.call(:num)
+    assert_includes with_num.left_calls(:top), :sign
+    assert_includes with_num.left_calls(:top), :num
+    refute with_num.nullable?(:top)
+    assert build.call(:opt).nullable?(:top)
+  end
+
+  def test_operand_left_recursion_is_reported
+    message = "left-recursive rule :top has no alternative that doesn't start with :top, so it can never " \
+              "match; add one that doesn't, as a base case"
+    klass = grammar { rule(:top) { operators(top, { left: "+", node: Bin }) } }
+    ["x", "1", ""].each do |input|
+      error = assert_raises(ArgumentError, input.inspect) { klass.parse(input) }
+      assert_equal message, error.message
+    end
+  end
 end

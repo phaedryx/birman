@@ -774,13 +774,33 @@ module Birman
       Match.new(pos, left)
     end
 
+    # PRE* operand (POST / IN PRE* operand)*, with PRE and the whole
+    # suffix loop left out when the table has none. Without postfix
+    # operators the binary ones are grouped: (IN) PRE* operand, as
+    # infix's AST.
     def to_ast
-      matchers = suffixes.map(&:matcher)
-      ops = (matchers.size == 1 ? matchers.first : Choice.new(matchers)).label("operator")
-      [:seq, nil, [operand.to_ast, [:rep, 0, nil, [:seq, nil, [ops.to_ast, operand.to_ast]]]]]
+      pre = prefixes.empty? ? [] : [[:rep, 0, nil, [:quiet, choice_ast(prefixes)]]]
+      post = suffixes.empty? ? [] : [[:rep, 0, nil, suffix_ast(pre)]]
+      [:seq, nil, [*pre, operand.to_ast, *post]]
     end
 
     private
+
+    def choice_ast(entries)
+      matchers = entries.map(&:matcher)
+      (matchers.size == 1 ? matchers.first : Choice.new(matchers)).to_ast
+    end
+
+    # One trip round the suffix loop, under the "operator" label.
+    def suffix_ast(pre)
+      tail = [*pre, operand.to_ast]
+      return [:seq, nil, [labelled(choice_ast(suffixes)), *tail]] if suffixes.none? { _1.fixity == :postfix }
+
+      alts = suffixes.map { _1.fixity == :postfix ? _1.matcher.to_ast : [:seq, nil, [_1.matcher.to_ast, *tail]] }
+      labelled(alts.size == 1 ? alts.first : [:choice, alts])
+    end
+
+    def labelled(ast) = [:label, "operator", ast]
 
     # The operand slot: a prefix operator and its operand at the
     # operator's rank, else the bare operand (also when the prefixed
