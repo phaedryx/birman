@@ -150,6 +150,7 @@ module Birman
         when Upto then upto(matcher, want, name)
         when SpannedMatcher then spanned(matcher, want, name)
         when Infix then infix(matcher, want, name)
+        when Operators then operators(matcher, want, name)
         when Lexeme then lexeme(matcher, want, name)
         when Quiet then quiet(matcher, want, name)
         when Ref then ref(matcher, want)
@@ -163,16 +164,18 @@ module Birman
       # --- Methods ---
 
       # Defines a method for matcher, its body from the block (given the
-      # value variable, or nil if no value is kept), and returns its Call.
-      # The slot is taken first, so a method comes before those it calls.
-      def define(kind, matcher, keep, name = nil, value: nil)
+      # value variable, or nil if no value is kept, and the method's name),
+      # and returns its Call. The slot is taken first, so a method comes
+      # before those it calls. extra names a second, Integer, parameter.
+      def define(kind, matcher, keep, name = nil, value: nil, extra: nil) # rubocop:disable Metrics/ParameterLists
         name = claim(name || "#{@prefix}_#{kind}")
         ivar = "@v_#{name}" if keep
         @values[ivar] = @types.initial(matcher) if ivar
         slot = @methods.size
         @methods << nil
-        body = yield(ivar).gsub(/^[ \t]+$/, "").gsub(/\n{3,}/, "\n\n")
-        @methods[slot] = "# #{describe(matcher)}\n#{POSITION}def #{name}(p)\n#{indent(body.chomp)}\nend\n"
+        body = yield(ivar, name).gsub(/^[ \t]+$/, "").gsub(/\n{3,}/, "\n\n")
+        signature = extra ? "#: (Integer, Integer) -> Integer\ndef #{name}(p, #{extra})" : "#{POSITION}def #{name}(p)"
+        @methods[slot] = "# #{describe(matcher)}\n#{signature}\n#{indent(body.chomp)}\nend\n"
         Call.new(name, value || ivar)
       end
 
@@ -640,7 +643,7 @@ module Birman
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
         when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher, Upto then nil
-        when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
+        when Infix, Operators then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown
         when Const then matcher.constant.is_a?(Hash) ? matcher.constant.keys : nil
         when Choice
@@ -725,6 +728,83 @@ module Birman
           q
         RUBY
       end
+
+      # A precedence table: name(p) climbs from the loosest rank, and
+      # name_climb(p, min) is Operators#climb, recursing for prefix
+      # operands and right sides. Each entry is numbered from 1 in its
+      # choice, and k is the one that matched (0: none). Sub-matchers'
+      # values are copied to locals before any recursion overwrites them.
+      def operators(matcher, want, name)
+        climb = nil
+        call = define(:operators, matcher, false, name) do |_, own|
+          climb = @compiled[[matcher, :climb]] ||=
+            define(:climb, matcher, true, "#{own}_climb", extra: "min") { |v, me| climb_body(matcher, v, me) }
+          "#{climb.name}(p, 1)"
+        end
+        Call.new(call.name, want ? climb.value : nil)
+      end
+
+      def climb_body(matcher, value, climb)
+        operand = compile_matcher(matcher.operand, true)
+        bare = "q = #{operand.name}(p)\nreturn FAIL if q == FAIL\n\nleft = #{operand.value}\n"
+        slot = if matcher.prefixes.empty? then bare
+               else "#{prefix_slot(matcher.prefixes, climb, "@v_#{climb}")}if q == FAIL\n#{indent(bare)}end\n"
+               end
+        "#{slot}#{suffix_loop(matcher.suffixes, climb, "@v_#{climb}")}#{value} = left\nq"
+      end
+
+      # The first entry matching at at sets k and op, as Operators'
+      # prefix_at and suffix_at do: later ones aren't tried.
+      def entry_choice(entries, at)
+        entries.each_with_index.map do |entry, i|
+          op = compile_matcher(entry.matcher, true)
+          try = "o = #{op.name}(#{at})\nif o != FAIL\n  k = #{i + 1}\n  op = #{op.value}\nend\n"
+          i.zero? ? try : "if k == 0\n#{indent(try)}end\n"
+        end.join
+      end
+
+      # The operand slot's prefixed form: the quiet prefix choice (one that
+      # consumes nothing is no match), then the operand at its rank. q is
+      # FAIL if there's none, for the bare operand to try.
+      def prefix_slot(entries, climb, right)
+        branches = entries.each_with_index.map do |entry, i|
+          node = @nodes.name_for(entry.node, @rule)
+          args = operator_fields(entry, "op" => "op", "operand" => right)
+          "#{i.zero? ? "if" : "elsif"} k == #{i + 1}\n  r = #{climb}(o, #{entry.rank})\n  " \
+            "if r != FAIL\n    left = #{node}.new(#{args}, span(p, r))\n    q = r\n  end\n"
+        end
+        "k = 0\n#{SAVE}#{entry_choice(entries, "p")}@furthest = of\n@expected = oe\nk = 0 if k != 0 && o == p\n" \
+          "q = FAIL\n#{branches.join}end\n"
+      end
+
+      # The operator loop: the suffix choice under the "operator" label,
+      # then the winner's rank and fixity, as Operators#suffix_step.
+      def suffix_loop(entries, climb, right)
+        return "" if entries.empty?
+
+        branches = entries.each_with_index.map { |entry, i| suffix_branch(entry, i, climb, right) }
+        save = "of = @furthest\noe = @expected\n@furthest = q\n@expected = NONE\nk = 0\n"
+        body = "#{save}#{entry_choice(entries, "q")}label_end(q, k == 0 ? FAIL : o, of, oe, \"operator\")\n" \
+               "break if k == 0\n\ns = q\n#{branches.join}end\nq = s\n"
+        "while true\n#{indent(body)}end\n"
+      end
+
+      def suffix_branch(entry, index, climb, right)
+        node = @nodes.name_for(entry.node, @rule)
+        head = "#{index.zero? ? "if" : "elsif"} k == #{index + 1}\n  break if min > #{entry.rank}\n"
+        if entry.fixity == :postfix
+          args = operator_fields(entry, "op" => "op", "operand" => "left")
+          return "#{head}  break if o == q\n\n  left = #{node}.new(#{args}, span(p, o))\n  s = o\n"
+        end
+
+        rank = entry.fixity == :left ? entry.rank + 1 : entry.rank
+        args = operator_fields(entry, "op" => "op", "left" => "left", "right" => "right")
+        "#{head}  r = #{climb}(o, #{rank})\n  break if r == FAIL || r == q\n\n  right = #{right}\n  " \
+          "left = #{node}.new(#{args}, span(p, r))\n  s = r\n"
+      end
+
+      # The node's field arguments in its members' order.
+      def operator_fields(entry, sources) = entry.node.members.map { sources.fetch(_1.to_s) }.join(", ")
 
       # --- Diagnostics, tokens, rules ---
 

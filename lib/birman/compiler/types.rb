@@ -39,7 +39,7 @@ module Birman
         when Send then SENDS.fetch(matcher.method_name, :poly)
         when To then :node
         when SpannedMatcher then :spanned
-        when Infix then infix(of(matcher.operand))
+        when Infix, Operators then infix(of(matcher.operand))
         when Ref then rules.fetch(matcher.name, :poly)
         when Label, Check, Quiet, Named, Lexeme then of(matcher.inner)
         else :poly

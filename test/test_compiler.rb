@@ -11,6 +11,7 @@ class CompilerTest < Minitest::Test
   Pair = Birman.node(:left, :right)
   Wrap = Birman.node(:value)
   Bin = Birman.node(:op, :left, :right)
+  Un = Birman.node(:op, :operand)
   Moment = Birman.node(:date, :time, :offset)
   Empty = Birman.node
   Call = Birman.node(:name, :args) { def initialize(name:, args: []) = super }
@@ -437,6 +438,69 @@ class CompilerTest < Minitest::Test
       rule(:top) { infix(match(/\d+/).to(Wrap), "+", "-", node: Bin) }
     end
     assert_same_results g, ["1", "1 + 2 - 3", "1 +", "1 + + 2", ""]
+  end
+
+  def test_operators
+    g = grammar(ignore: :spacing) do
+      rule(:top) do
+        operators(match(/\d+/).to(Wrap), { postfix: "!", node: Un }, { right: "**", node: Bin },
+                  { prefix: "-", node: Un }, { left: ["*", "/"], node: Bin }, { left: ["+", "-"], node: Bin },
+                  { right: "=", node: Bin })
+      end
+    end
+    assert_same_results g, ["1", "1 + 2 * 3", "-2 ** 2", "2 ** -3 ** 2", "- - 1 !", "1 = 2 = 3 + 4", "1 +",
+                            "1 + + 2", "- ", "2 **", "", "3!! * -4!", "1 2", "1 * * 2"]
+  end
+
+  # Longer operators are tried first: || before |.
+  def test_operators_munch
+    g = grammar { rule(:top) { operators(match(/[a-z]/), { left: "|", node: Bin }, { left: "||", node: Bin }) } }
+    assert_same_results g, ["a||b|c", "a|b", "a||", "a|", "a|||b"]
+  end
+
+  # Operators that match nothing fold nothing, and don't loop.
+  def test_operators_nullable
+    g = grammar do
+      rule(:top) { operators(match(/a*/), { postfix: match(/!*/), node: Un }, { prefix: match(/~*/), node: Un }) }
+    end
+    assert_same_results g, ["", "!", "a!!", "~~a", "~"]
+  end
+
+  # Right chains, prefix chains and parentheses recurse; values stay put.
+  def test_operators_deep
+    g = grammar do
+      rule(:top) do
+        operators(either(match(/\d/).to(Wrap), parens(top)), { right: "**", node: Bin }, { prefix: "-", node: Un },
+                  { left: "+", node: Bin })
+      end
+    end
+    assert_same_results g, ["#{"-" * 100}1", (["2"] * 100).join("**"), "#{"(" * 100}1#{")" * 100}", "#{"(" * 100}1"]
+  end
+
+  # A prefix operator that matches nothing stops the prefix choice, as in
+  # the interpreter: "-" is never tried.
+  def test_operators_empty_prefix
+    g = grammar do
+      rule(:top) { operators(match(/a/), { prefix: match(/~*/), node: Un }, { prefix: "-", node: Un }) }
+    end
+    assert_same_results g, ["-a", "~-a", "~a", "a"]
+  end
+
+  # A suffix that wins without consuming, after one that failed there:
+  # the label keeps the failure rather than saying "operator".
+  def test_operators_empty_suffix
+    g = grammar do
+      rule(:top) { operators(match(/a/), { left: "+", node: Bin }, { postfix: match(/!*/), node: Un }) }
+    end
+    assert_same_results g, ["a", "ab", "a!b", "a+a", "a+", "b"]
+  end
+
+  # operators checks its nodes when it's called, so to_ruby meets the
+  # ArgumentError while reading the rule, before compiling anything.
+  def test_operators_wrong_node
+    g = grammar { rule(:top) { operators(match(/\d/), { left: "+", node: Un }) } }
+    error = assert_raises(ArgumentError) { g.to_ruby(namespace: "CompilerTestRefused") }
+    assert_match(/op, left and right/, error.message)
   end
 
   # A node whose initialize gives fields defaults, and only calls super,
