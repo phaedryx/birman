@@ -720,35 +720,6 @@ module Birman
     def capture_key = inner.capture_key
   end
 
-  # Left-associative binary operators: operand (op operand)*, folded
-  # into nodes built as node.new(op:, left:, right:), so the node needs
-  # exactly those fields, in any order.
-  # Each node's span covers its whole subexpression.
-  Infix = Data.define(:operand, :op, :node) do
-    include Matcher
-
-    def match(ctx, pos)
-      start = pos
-      r = operand.match(ctx, pos) or return nil
-      left = r.value
-      pos = r.pos
-
-      loop do
-        o = op.match(ctx, pos) or break
-        right = operand.match(ctx, o.pos) or break
-        fields = { op: o.value, left:, right: right.value }
-        left = Birman.build(node, fields, ctx, start, right.pos)
-        pos = right.pos
-      end
-
-      Match.new(pos, left)
-    end
-
-    def to_ast
-      [:seq, nil, [operand.to_ast, [:rep, 0, nil, [:seq, nil, [op.to_ast, operand.to_ast]]]]]
-    end
-  end
-
   # A precedence table (see Combinators#operators): prefix, postfix and
   # left/right binary operators, climbed by rank. Rank 1 is the loosest
   # level, the highest the tightest. prefixes and suffixes are Entry

@@ -3,7 +3,7 @@
 # [file]
 # purpose = "The combinators available inside every rule body"
 # responsibility = "Building matchers: raw strings and patterns, literals, sequences, choices, lists, wrappers"
-# dependencies = ["Birman::Matcher", "matchers.rb (Seq, Choice, Pick, SepBy, Infix, Lexeme)"]
+# dependencies = ["Birman::Matcher", "matchers.rb (Seq, Choice, Pick, SepBy, Operators, Lexeme)"]
 # pattern = "Parser combinators (PEG)"
 module Birman
   # Marker for seq: everything after it is committed (see Matcher#>).
@@ -184,8 +184,11 @@ module Birman
     # params = ["operand: Matcher", "*ops: String literals", "node: node class with op, left, right fields"]
     # returns = "Matcher for operand (op operand)*, folded left-associatively"
     # value = "operand's value, or nested node instances with spans"
-    # raises = ["ArgumentError at parse time if node lacks op/left/right"]
-    def infix(operand, *ops, node:) = Infix.new(Birman.coerce(operand), either(*ops).label("operator"), node)
+    # raises = ["ArgumentError if node lacks op/left/right"]
+    def infix(operand, *ops, node:)
+      _, ops, node = Operators.level({ left: ops, node: })
+      Operators.new(Birman.coerce(operand), [], ops.map { Operators::Entry.new(_1, lit(_1), :left, 1, node) })
+    end
 
     # A precedence table of prefix, postfix and left/right binary
     # operators, tightest level first. Each level is a

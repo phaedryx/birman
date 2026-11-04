@@ -149,7 +149,6 @@ module Birman
         when Text then text(matcher, want, name)
         when Upto then upto(matcher, want, name)
         when SpannedMatcher then spanned(matcher, want, name)
-        when Infix then infix(matcher, want, name)
         when Operators then operators(matcher, want, name)
         when Lexeme then lexeme(matcher, want, name)
         when Quiet then quiet(matcher, want, name)
@@ -643,7 +642,7 @@ module Birman
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
         when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher, Upto then nil
-        when Infix, Operators then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
+        when Operators then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown
         when Const then matcher.constant.is_a?(Hash) ? matcher.constant.keys : nil
         when Choice
@@ -689,44 +688,6 @@ module Birman
         end
 
         node.members.map { |member| given.fetch(member) { defaults.fetch(member) } }
-      end
-
-      def infix(matcher, want, name)
-        node = @nodes.name_for(matcher.node, @rule)
-        members = matcher.node.members
-        unless members.sort == %i[left op right]
-          raise Error, "rule :#{@rule}: infix needs a node with fields op, left and right"
-        end
-
-        define(:infix, matcher, want, name) do |v|
-          infix_body(matcher, node, members, v)
-        end
-      end
-
-      def infix_body(matcher, node, members, value)
-        operand = compile_matcher(matcher.operand, true)
-        op = compile_matcher(matcher.op, true)
-        fields = { op: "op", left: "left", right: operand.value }
-        <<~RUBY
-          r = #{operand.name}(p)
-          return FAIL if r == FAIL
-
-          left = #{operand.value}
-          q = r
-          while true
-            o = #{op.name}(q)
-            break if o == FAIL
-
-            op = #{op.value}
-            r = #{operand.name}(o)
-            break if r == FAIL
-
-            left = #{node}.new(#{members.map { fields.fetch(_1) }.join(", ")}, span(p, r))
-            q = r
-          end
-          #{"#{value} = left" if value}
-          q
-        RUBY
       end
 
       # A precedence table: name(p) climbs from the loosest rank, and
