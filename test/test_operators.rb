@@ -288,4 +288,19 @@ class OperatorsTest < Minitest::Test
       assert_equal message, error.message
     end
   end
+
+  # A right operator that can match nothing, on an operand that can too,
+  # used to recurse at its own start until "nested too deeply".
+  def test_nullable_right_operator_with_nullable_operand
+    g = grammar { rule(:top) { operators(match(/a*/), { right: match(/=*/), node: Bin }) } }
+    assert_equal "", g.parse("").value
+    assert_equal "a", g.parse("a").value
+    assert_equal bin("=", "a", "a"), g.parse("a=a").value
+    assert g.parse("a==a=a").success?
+  end
+
+  def test_nullable_right_operator_juxtaposes
+    g = grammar { rule(:top) { operators(match(/a/), { right: match(/=*/), node: Bin }) } }
+    assert_equal bin("", "a", bin("", "a", "a")), g.parse("aaa").value
+  end
 end

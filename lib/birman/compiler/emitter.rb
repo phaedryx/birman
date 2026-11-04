@@ -759,6 +759,7 @@ module Birman
         end
 
         rank = entry.fixity == :left ? entry.rank + 1 : entry.rank
+        head += "  break if o == p\n" if entry.fixity == :right
         args = operator_fields(entry, "op" => "op", "left" => "left", "right" => "right")
         "#{head}  r = #{climb}(o, #{rank})\n  break if r == FAIL || r == q\n\n  right = #{right}\n  " \
           "left = #{node}.new(#{args}, span(p, r))\n  s = r\n"

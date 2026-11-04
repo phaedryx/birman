@@ -18,7 +18,8 @@
   binary or postfix operator could go the error says "operator"
   (`(1 + 2` expects "operator or `)`"). A prefix operator that
   matches nothing counts as no match, and a postfix or binary step
-  that consumes nothing ends the loop. A table with no levels, a level
+  that consumes nothing ends the loop, and so does a right-associative
+  one that matches nothing where its climb began. A table with no levels, a level
   that isn't a Hash, has an unknown key, has none or more than one of
   the four fixities, no operators or no `node:`, or a node whose
   fields aren't the ones above, raises `ArgumentError` when `operators`

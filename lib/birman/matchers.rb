@@ -803,10 +803,13 @@ module Birman
 
     # One more operator folded onto left, as [node, end], or nil to
     # stop before the operator (rank too loose, no right side, or
-    # nothing consumed).
+    # nothing consumed). A right fold whose operator matched nothing
+    # where the climb began would recurse at its own start forever, so
+    # it stops too.
     def suffix_step(ctx, pos, min, left, start)
       entry, o = suffix_at(ctx, pos)
       return if entry.nil? || entry.rank < min
+      return if entry.fixity == :right && o.pos == start
 
       fields, stop = suffix_fields(ctx, entry, o, left)
       return if stop.nil? || stop == pos

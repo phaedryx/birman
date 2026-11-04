@@ -452,6 +452,16 @@ class CompilerTest < Minitest::Test
                             "1 + + 2", "- ", "2 **", "", "3!! * -4!", "1 2", "1 * * 2"]
   end
 
+  def test_operators_nullable_right_operator
+    g = grammar { rule(:top) { operators(match(/a*/), { right: match(/=*/), node: Bin }) } }
+    assert_same_results g, ["", "a", "a=a", "a==a=a", "="]
+  end
+
+  def test_operators_right_juxtaposition
+    g = grammar { rule(:top) { operators(match(/a/), { right: match(/=*/), node: Bin }) } }
+    assert_same_results g, ["a", "aa", "aaa", "a=a"]
+  end
+
   # Longer operators are tried first: || before |.
   def test_operators_munch
     g = grammar { rule(:top) { operators(match(/[a-z]/), { left: "|", node: Bin }, { left: "||", node: Bin }) } }

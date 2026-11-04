@@ -349,8 +349,9 @@ A prefix operator is quiet: when it doesn't match, errors don't say
 place where a binary or postfix operator could go is "operator"
 instead: `(1 + 2` expects "operator or `)`". A prefix operator that
 matches nothing counts as no match, and a binary or postfix operator
-that consumes nothing ends the loop, so an empty operator can't loop
-forever.
+that consumes nothing ends the loop, as does a right-associative
+operator that matches nothing where its climb began, so an empty
+operator can't loop forever.
 
 A table is checked when `operators` is called, and a bad one raises
 `ArgumentError`: no levels, a level that isn't a Hash, one with an
@@ -362,8 +363,8 @@ aren't the ones above.
 precedence: `PRE* operand (POST / IN PRE* operand)*`, built from the
 existing node types (`calc`'s `sum` above is
 `"-"* atom (("**" / "*" / "/" / "+" / "-") "-"* atom)*`). A table with no
-postfix level groups the binary choice, `(IN) PRE* operand`, as `infix`
-always did. For contrived tables the EBNF is approximate: a postfix and
+postfix level groups the binary choice, `(IN) PRE* operand` (`(IN) operand`
+with no prefix level, as `infix` always did). For contrived tables the EBNF is approximate: a postfix and
 a binary operator that share text (`!` and `!=`), or an operand that can
 itself start with a prefix token.
 
