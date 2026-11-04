@@ -855,6 +855,67 @@ module Birman
   # fixity is :prefix, :postfix, :left or :right.
   Operators::Entry = Data.define(:source, :matcher, :fixity, :rank, :node)
 
+  # Table checking and ordering, kept here so Combinators gains no
+  # private names a rule could collide with.
+  Operators::FIXITIES = %i[prefix postfix left right].freeze
+  Operators::NODE_FIELDS = { prefix: %i[op operand], postfix: %i[op operand], left: %i[op left right],
+                             right: %i[op left right] }.freeze
+
+  class << Operators
+    # [fixity, operators, node] from one level of an operators table.
+    def level(level)
+      fixity = fixity_of(level)
+      ops = level[fixity].is_a?(Array) ? level[fixity] : [level[fixity]]
+      raise ArgumentError, "#{fixity}: needs at least one operator" if ops.empty?
+
+      [fixity, ops, node_of(level, fixity)]
+    end
+
+    # Maximal munch: a String operator comes after every longer String
+    # operator it is a prefix of. Otherwise entries keep their order,
+    # matchers included.
+    def munch_order(entries)
+      rest = entries.dup
+      ordered = []
+      until rest.empty?
+        pick = rest.index { |e| rest.none? { |o| shadows?(o, e) } } || 0
+        ordered << rest.delete_at(pick)
+      end
+      ordered
+    end
+
+    private
+
+    def shadows?(longer, entry)
+      longer.source.is_a?(String) && entry.source.is_a?(String) &&
+        longer.source.size > entry.source.size && longer.source.start_with?(entry.source)
+    end
+
+    def fixity_of(level)
+      unless level.is_a?(Hash)
+        raise ArgumentError, "an operators level is a Hash, like { left: \"+\", node: Node }: #{level.inspect}"
+      end
+
+      unknown = level.keys - [*Operators::FIXITIES, :node]
+      raise ArgumentError, "unknown key #{unknown.first.inspect} in operators level #{level.inspect}" if unknown.any?
+
+      fixities = level.keys & Operators::FIXITIES
+      return fixities.first if fixities.size == 1
+
+      raise ArgumentError, "an operators level needs exactly one of #{Operators::FIXITIES.join(", ")}: #{level.inspect}"
+    end
+
+    def node_of(level, fixity)
+      node = level[:node] or raise ArgumentError, "an operators level needs a node: #{level.inspect}"
+      want = Operators::NODE_FIELDS[fixity]
+      unless node.respond_to?(:members) && node.members.sort == want.sort
+        raise ArgumentError, "a #{fixity}: node needs exactly the fields #{want[0..-2].join(", ")} and #{want.last}, " \
+                             "not #{node.respond_to?(:members) ? node.members.join(", ") : node.inspect}"
+      end
+      node
+    end
+  end
+
   # See Matcher#quiet.
   Quiet = Data.define(:inner) do
     include Matcher

@@ -203,11 +203,11 @@ module Birman
       prefixes = []
       suffixes = []
       levels.each_with_index do |level, i|
-        fixity, ops, node = operator_level(level)
+        fixity, ops, node = Operators.level(level)
         entries = ops.map { Operators::Entry.new(_1, lit(_1), fixity, levels.size - i, node) }
         (fixity == :prefix ? prefixes : suffixes).concat(entries)
       end
-      Operators.new(Birman.coerce(operand), prefixes, suffixes)
+      Operators.new(Birman.coerce(operand), Operators.munch_order(prefixes), Operators.munch_order(suffixes))
     end
 
     # One or more items separated by sep; value is an array of items.
@@ -246,44 +246,6 @@ module Birman
       raise ArgumentError, "a seq can have only one only(...)" if indexes.size > 1
 
       indexes.first
-    end
-
-    FIXITIES = %i[prefix postfix left right].freeze
-    NODE_FIELDS = { prefix: %i[op operand], postfix: %i[op operand], left: %i[op left right],
-                    right: %i[op left right] }.freeze
-    private_constant :FIXITIES, :NODE_FIELDS
-
-    # [fixity, operators, node] from one level of an operators table.
-    def operator_level(level)
-      fixity = operator_fixity(level)
-      ops = level[fixity].is_a?(Array) ? level[fixity] : [level[fixity]]
-      raise ArgumentError, "#{fixity}: needs at least one operator" if ops.empty?
-
-      [fixity, ops, operator_node(level, fixity)]
-    end
-
-    def operator_fixity(level)
-      unless level.is_a?(Hash)
-        raise ArgumentError, "an operators level is a Hash, like { left: \"+\", node: Node }: #{level.inspect}"
-      end
-
-      unknown = level.keys - [*FIXITIES, :node]
-      raise ArgumentError, "unknown key #{unknown.first.inspect} in operators level #{level.inspect}" if unknown.any?
-
-      fixities = level.keys & FIXITIES
-      return fixities.first if fixities.size == 1
-
-      raise ArgumentError, "an operators level needs exactly one of #{FIXITIES.join(", ")}: #{level.inspect}"
-    end
-
-    def operator_node(level, fixity)
-      node = level[:node] or raise ArgumentError, "an operators level needs a node: #{level.inspect}"
-      want = NODE_FIELDS[fixity]
-      unless node.respond_to?(:members) && node.members.sort == want.sort
-        raise ArgumentError, "a #{fixity}: node needs exactly the fields #{want[0..-2].join(", ")} and #{want.last}, " \
-                             "not #{node.respond_to?(:members) ? node.members.join(", ") : node.inspect}"
-      end
-      node
     end
 
     def ignore_rule = self.class.respond_to?(:ignore) ? self.class.ignore : nil

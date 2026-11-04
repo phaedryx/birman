@@ -181,4 +181,40 @@ class OperatorsTest < Minitest::Test
     assert_equal want.pos, got.pos
     assert_equal want.expected, got.expected
   end
+
+  def test_longer_operator_wins_across_levels
+    g = grammar do
+      ignore :spacing
+      rule(:top) { operators(id, { left: "|", node: Bin }, { left: "||", node: Bin }) }
+      lexeme(:id) { match(/[a-z]/) }
+    end
+    assert_equal bin("||", "a", bin("|", "b", "c")), g.parse!("a || b | c")
+    g = grammar do
+      ignore :spacing
+      rule(:top) { operators(id, { left: "&", node: Bin }, { left: "&&", node: Bin }) }
+      lexeme(:id) { match(/[a-z]/) }
+    end
+    assert_equal bin("&&", "a", bin("&", "b", "c")), g.parse!("a && b & c")
+  end
+
+  def test_munch_order_is_stable_and_leaves_matchers
+    g = Class.new { include Birman::Combinators }.new
+    op = g.operators(g.match(/\d/), { left: ["*", "**"], node: Bin }, { left: [g.match(/<>/), "<", "<="], node: Bin })
+    assert_equal ["**", "*", g.match(/<>/), "<=", "<"], op.suffixes.map(&:source)
+  end
+
+  def test_errors_say_operator_and_hide_prefix
+    g = grammar do
+      ignore :spacing
+      rule(:top) { operators(num.label("number"), { prefix: "-", node: Un }, { left: "+", node: Bin }) }
+      lexeme(:num) { match(/\d+/).map(:to_i).to(Leaf) }
+    end
+    old = grammar do
+      ignore :spacing
+      rule(:top) { infix(num.label("number"), "+", node: Bin) }
+      lexeme(:num) { match(/\d+/).map(:to_i).to(Leaf) }
+    end
+    assert_equal old.parse("1 2").expected, g.parse("1 2").expected
+    assert_equal ["number"], g.parse("1 +").expected
+  end
 end
