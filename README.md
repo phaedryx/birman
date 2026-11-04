@@ -129,6 +129,7 @@ puts Lists.parse("[1, [2, x], []]").message
 | `x.spanned`                   | `Spanned(value:, span:)`: `x`'s value with its span   |
 | `upto("*/")`                  | the text before the first `"*/"`, which it leaves for what comes next (see [Up to a terminator](#up-to-a-terminator)) |
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
+| `operators(atom, { prefix: "-", node: Neg }, { left: ["*", "/"], node: BinOp }, ...)` | a precedence table: prefix, postfix, left and right levels, tightest first |
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
 | `sep_by(x, ",", trailing: true)` | and one more `","` may end the list (not an empty one) |
@@ -312,6 +313,62 @@ far it has got.
   supported: :a -> :a; :b -> :b`.
 - Left recursion through a custom matcher, which Birman can't see into,
   is caught only when the parse gets there.
+
+## Operator precedence
+
+`operators` takes an operand and a table of levels, tightest first.
+Each level is a Hash with one of `prefix:`, `postfix:`, `left:` or
+`right:` (an operator or an Array of them, anything `lit` takes) and a
+`node:` class. It's how calc writes its arithmetic:
+
+```ruby
+rule(:sum) do
+  operators(atom, { right: "**", node: BinOp }, { prefix: "-", node: Neg },
+            { left: ["*", "/"], node: BinOp }, { left: ["+", "-"], node: BinOp })
+end
+```
+
+It climbs by precedence (Pratt's method), so there's no rule per level
+and `1 + 2 * 3` is `1 + (2 * 3)`. A prefix operator takes an operand
+at its own level or tighter, so `-2 ** 2` is `-(2 ** 2)`, because `**`
+is tighter than the `-`, while `2 ** -3` still parses: `**` takes a
+prefix on its right. `left:` levels group to the left (`1 - 2 - 3` is
+`(1 - 2) - 3`) and `right:` levels to the right (`2 ** 3 ** 2` is
+`2 ** (3 ** 2)`). A postfix level (`{ postfix: "!", node: Fact }`)
+wraps what's before it: `3! * 2` is `(3!) * 2`.
+
+Binary levels build nodes with exactly the fields `op`, `left` and
+`right`; prefix and postfix levels, `op` and `operand`. A node's span
+covers its whole subexpression, `-2 ** 2` included. The operators in
+one table are matched by maximal munch: a String operator that is a
+prefix of another is tried after it, so `["|", "||"]` reads `||` as
+one operator, not two `|`.
+
+A prefix operator is quiet: when it doesn't match, errors don't say
+"expected `-`", only what the operand needs (`expected expression`). A
+place where a binary or postfix operator could go is "operator"
+instead: `(1 + 2` expects "operator or `)`". A prefix operator that
+matches nothing counts as no match, and a binary or postfix operator
+that consumes nothing ends the loop, so an empty operator can't loop
+forever.
+
+A table is checked when `operators` is called, and a bad one raises
+`ArgumentError`: no levels, a level that isn't a Hash, one with an
+unknown key or not exactly one of `prefix:`, `postfix:`, `left:` and
+`right:`, one with no operators or no `node:`, or a node whose fields
+aren't the ones above.
+
+`to_ast` and `to_ebnf` show which tokens may appear, not their
+precedence: `PRE* operand (POST / IN PRE* operand)*`, built from the
+existing node types (`calc`'s `sum` above is
+`"-"* atom (("**" / "*" / "/" / "+" / "-") "-"* atom)*`). A table with no
+postfix level groups the binary choice, `(IN) PRE* operand`, as `infix`
+always did. For contrived tables the EBNF is approximate: a postfix and
+a binary operator that share text (`!` and `!=`), or an operand that can
+itself start with a prefix token.
+
+`infix(operand, "+", "-", node: BinOp)` is the one-level shorthand for
+`operators(operand, { left: ["+", "-"], node: BinOp })`.
 
 ## Checks
 
@@ -773,7 +830,7 @@ to ss), and the same goes for `match(/straße/i)`.
 
 - Left recursion through cycles with no rule in common (see
   [Left recursion](#left-recursion)); give them a rule in common, or
-  use `infix`.
+  use `infix` or `operators`.
 - Railroad diagrams from `to_ast`
 
 ## Development
