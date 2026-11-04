@@ -487,7 +487,7 @@ class CompilerTest < Minitest::Test
   end
 
   # A suffix that wins without consuming, after one that failed there:
-  # the label keeps the failure rather than saying "operator".
+  # the label says "operator", so "ab" fails expecting operator or end of input.
   def test_operators_empty_suffix
     g = grammar do
       rule(:top) { operators(match(/a/), { left: "+", node: Bin }, { postfix: match(/!*/), node: Un }) }

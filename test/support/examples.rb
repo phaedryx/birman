@@ -271,7 +271,7 @@ module Examples
   end
 
   # examples/calc.rb with its arithmetic left-recursive instead of
-  # infix (examples/leftcalc.rb): the same trees, grown from a seed.
+  # an operator table (examples/leftcalc.rb): the same trees, grown from a seed.
   module LeftCalc
     # print 1 - 2 - 3
     Grammar = ::LeftCalc::Grammar
@@ -720,13 +720,14 @@ module Examples
     "print 1.5 * 2.25", "print 1.", "print .5", "print 007", "print 9223372036854775808",
     "print 123456789012345678901234567890123456789 + 1",
     "print ((((((((((1))))))))))", "print \"\\", "print \"a\\\"b\"", ")", "let x = 1 )",
-    "print -1", "print x→", "print let→", "print é", "print 1 ++ 2",
+    "print -1", "print -2 ** 2", "print 2 ** -3", "print - - 1", "print 2 **", "print -", "print 1 * * 2",
+    "print x→", "print let→", "print é", "print 1 ++ 2",
     # Deep nesting: Spinel allows 64 active begin/rescue/ensure blocks.
     "print #{"(" * 200}1#{")" * 200}", "print #{"(" * 200}1#{")" * 199}",
     "print #{"if 1 then " * 100}1#{" else 2" * 100}"
   ].freeze
 
-  CALC_TOKENS = ["let", "print", "if", "then", "else", "x", "y1", "_z", "letter", "=", "+", "-", "*", "/",
+  CALC_TOKENS = ["let", "print", "if", "then", "else", "x", "y1", "_z", "letter", "=", "+", "-", "*", "/", "**",
                  "(", ")", "1", "42", "2.5", "1.", " ", " ", " ", "\n", "\t", "# c\n", "\"", "\"s\"",
                  "\"a\\n\"", "\\", "é", "→", "ä"].freeze
 
@@ -937,6 +938,8 @@ module Examples
     def name(rng) = %w[x y total _t1 letter iffy].sample(random: rng)
 
     def atom(rng, depth)
+      return "-#{atom(rng, depth)}" if rng.rand(8).zero?
+
       case rng.rand(depth > 3 ? 3 : 5)
       when 0 then [rng.rand(1000).to_s, "#{rng.rand(100)}.#{rng.rand(100)}"].sample(random: rng)
       when 1 then name(rng)
@@ -952,7 +955,7 @@ module Examples
 
       parts = Array.new(rng.rand(1..4)) { atom(rng, depth) }
       parts.each_with_index.map do |a, i|
-        i.zero? ? a : "#{sp(rng)}#{%w[+ - * /].sample(random: rng)}#{sp(rng)}#{a}"
+        i.zero? ? a : "#{sp(rng)}#{%w[+ - * / **].sample(random: rng)}#{sp(rng)}#{a}"
       end.join
     end
 

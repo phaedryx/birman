@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 # A tiny language that exercises most Birman features: nodes with source
-# spans, rule modules, ignored spacing and keywords, commit points, named captures, infix
-# operators, a pattern-matching interpreter, and EBNF output.
+# spans, rule modules, ignored spacing and keywords, commit points, named
+# captures, an operator table, a pattern-matching interpreter, and EBNF output.
 #
 #   ruby examples/calc.rb
 
 require_relative "../lib/birman"
 
 module Calc
-  # Statements (let, print) and expressions (if, + - * /, numbers,
+  # Statements (let, print) and expressions (if, ** - * / +, unary -, numbers,
   # strings, variables), with # comments.
   class Grammar
     include Birman::Grammar
@@ -22,6 +22,7 @@ module Calc
     Text  = node(:value)
     Var   = node(:name)
     BinOp = node(:op, :left, :right)
+    Neg   = node(:op, :operand)
     If    = node(:cond, :then_branch, :else_branch)
     Let   = node(:name, :value)
     Print = node(:value)
@@ -43,10 +44,14 @@ module Calc
           "else", expr.as(:else_branch)).to(If)
     end
 
-    rule(:sum)     { infix(product, "+", "-", node: BinOp) }
-    rule(:product) { infix(atom, "*", "/", node: BinOp) }
-    rule(:atom)    { either(number.to(Num), string.to(Text), name.to(Var), parens(expr)).label("expression") }
-    rule(:name)    { identifier.map(:to_sym) }
+    # Tightest first: ** (right-associative), unary -, * /, then + -.
+    # So -2 ** 2 is -(2 ** 2), while 2 ** -3 still parses: ** takes a prefix on its right.
+    rule(:sum) do
+      operators(atom, { right: "**", node: BinOp }, { prefix: "-", node: Neg },
+                { left: ["*", "/"], node: BinOp }, { left: ["+", "-"], node: BinOp })
+    end
+    rule(:atom) { either(number.to(Num), string.to(Text), name.to(Var), parens(expr)).label("expression") }
+    rule(:name) { identifier.map(:to_sym) }
   end
 
   # An error while running a program, located by the node's span.
@@ -79,6 +84,11 @@ module Calc
         end
 
         lhs.public_send(op, rhs)
+      in Grammar::Neg(_, operand)
+        value = evaluate(operand)
+        raise RuntimeError.new("can't negate #{value.inspect}", node) unless value.is_a?(Numeric)
+
+        -value
       in Grammar::If(cond, then_branch, else_branch)
         truthy?(evaluate(cond)) ? evaluate(then_branch) : evaluate(else_branch)
       end
@@ -97,6 +107,7 @@ if __FILE__ == $PROGRAM_NAME
     let height = (1 + 2) * 4   # twelve
     print "area: "
     print width * height
+    print -2 ** 2
     print if width - 3 then "wide" else "narrow"
   CALC
 

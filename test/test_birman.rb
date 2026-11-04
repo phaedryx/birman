@@ -1495,4 +1495,22 @@ class BirmanTest < Minitest::Test
       assert_includes Calc::Grammar.parse(source).message, message, source
     end
   end
+
+  def test_calc_operator_table
+    {
+      "print -2 ** 2" => "-4\n",
+      "print 2 ** 3 ** 2" => "512\n",
+      "print 1 - -2" => "3\n",
+      "print 2 * -3 + 1" => "-5\n"
+    }.each { |source, output| assert_equal output, run_calc(source), source }
+  end
+
+  def test_calc_errors_unchanged
+    assert_equal <<~MESSAGE.chomp, Calc::Grammar.parse("print 1 +").message
+      line 1, column 10: expected expression, found end of input
+        print 1 +
+                 ^
+    MESSAGE
+    assert_equal ["expression"], Calc::Grammar.parse("print -").expected
+  end
 end
