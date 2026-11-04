@@ -582,13 +582,7 @@ module Birman
 
     def match(ctx, pos)
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
-      furthest = ctx.isolated_furthest
-      expected = ctx.isolated_expected
-      if furthest == pos && (result.nil? || (result.pos == pos && expected.any?))
-        ctx.fail_at(pos, name)
-      else
-        ctx.merge(furthest, expected)
-      end
+      ctx.settle_label(pos, name, result)
       result
     end
 
@@ -754,6 +748,73 @@ module Birman
       [:seq, nil, [operand.to_ast, [:rep, 0, nil, [:seq, nil, [op.to_ast, operand.to_ast]]]]]
     end
   end
+
+  # A precedence table (see Combinators#operators): prefix, postfix and
+  # left/right binary operators, climbed by rank. Rank 1 is the loosest
+  # level, the highest the tightest. prefixes and suffixes are Entry
+  # lists in the order they're tried; suffixes holds the postfix and
+  # binary operators. Prefix and postfix entries are validated but not
+  # matched yet.
+  Operators = Data.define(:operand, :prefixes, :suffixes) do
+    include Matcher
+
+    def match(ctx, pos) = climb(ctx, pos, 1)
+
+    # operand, then operators of rank min or tighter, folded by fixity.
+    def climb(ctx, pos, min)
+      start = pos
+      r = operand.match(ctx, pos) or return nil
+      left = r.value
+      pos = r.pos
+
+      while (step = binary_step(ctx, pos, min, left, start))
+        left, pos = step
+      end
+
+      Match.new(pos, left)
+    end
+
+    def to_ast
+      matchers = suffixes.map(&:matcher)
+      ops = (matchers.size == 1 ? matchers.first : Choice.new(matchers)).label("operator")
+      [:seq, nil, [operand.to_ast, [:rep, 0, nil, [:seq, nil, [ops.to_ast, operand.to_ast]]]]]
+    end
+
+    private
+
+    # One more operator and its right side folded onto left, as
+    # [node, end], or nil to stop before the operator (rank too loose,
+    # no right side, or nothing consumed).
+    def binary_step(ctx, pos, min, left, start)
+      entry, o = suffix_at(ctx, pos)
+      return if entry.nil? || entry.rank < min || entry.fixity == :postfix
+
+      right = climb(ctx, o.pos, entry.fixity == :left ? entry.rank + 1 : entry.rank) or return
+      return if right.pos == pos
+
+      fields = { op: o.value, left:, right: right.value }
+      [Birman.build(entry.node, fields, ctx, start, right.pos), right.pos]
+    end
+
+    # The first suffix operator matching at pos, as [entry, match], with
+    # the failures a Label named "operator" around their choice records.
+    def suffix_at(ctx, pos)
+      found = nil
+      ctx.isolate(pos) do
+        suffixes.each do |entry|
+          m = entry.matcher.match(ctx, pos) or next
+          found = [entry, m]
+          break
+        end
+      end
+      ctx.settle_label(pos, "operator", found&.last)
+      found
+    end
+  end
+
+  # source is the operator as given, matcher its coercion to a matcher;
+  # fixity is :prefix, :postfix, :left or :right.
+  Operators::Entry = Data.define(:source, :matcher, :fixity, :rank, :node)
 
   # See Matcher#quiet.
   Quiet = Data.define(:inner) do
