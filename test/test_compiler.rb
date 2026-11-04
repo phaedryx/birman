@@ -378,6 +378,35 @@ class CompilerTest < Minitest::Test
     assert_same_results g, ["let a = 1 ; 2 3 4 x", "let  a  =  b c  ;  5  ", "let a = 1 ;", "let a =", "let", "", "x"]
   end
 
+  # upto: a String or Regexp terminator is found with one byteindex,
+  # anything else is tried at each character; unterminated, it fails at
+  # the end expecting the terminator. Read and unread, raw and after a
+  # literal's spacing.
+  def test_upto_with_exact_text
+    g = grammar(ignore: :spacing) do
+      rule(:top) { seq(str("/*"), upto("*/").as(:body), "*/", seq(only(str("x")), upto(";"), ";").maybe.as(:rest)) }
+    end
+    assert_same_results g, ["/* a */x b;", "/**/", "/* é * / */  x;", "/* never", "/*", "", "/* a */x", "/* a */y"]
+  end
+
+  def test_upto_with_a_regexp_seeing_the_whole_input
+    g = grammar do
+      rule(:top) { seq(str("<<"), upto(/^EOS$/), str("EOS"), upto(/(?<=b)c|\z/).spanned, match(/.*/m)) }
+    end
+    assert_same_results g, ["<<a\nEOS\nabc", "<<EOS", "<<aEOS\nEOS", "<<é\nEOS", "<<\nEOS\nbc", "<<x", "<<", ""]
+  end
+
+  def test_upto_with_any_other_terminator
+    g = grammar(ignore: :spacing, keywords: ["end"]) do
+      rule(:top) { seq(upto(stop).text, stop, upto(lit("end")), "end", upto(lit("*/").label("close")), match(/.*/m)) }
+      rule(:stop) { either(str("STOP"), seq(str("*"), commit, str("/"))) }
+    end
+    inputs = ["a STOP endless end x */ y", "é*/b end*/", "a *b STOP end", "a * STOP", "STOP", "a", "", "*",
+              "STOP end é"]
+    assert_same_results g, inputs
+    assert_same_results g, inputs.map(&:b)
+  end
+
   def test_spanned_values_are_pattern_matchable_in_generated_parsers
     g = grammar { rule(:top) { match(/\d+/).map(:to_i).spanned } }
     parser = Differential.load(g, "CompilerTestParser")

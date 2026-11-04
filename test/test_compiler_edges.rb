@@ -337,6 +337,15 @@ class CompilerEdgesTest < Minitest::Test
     assert_same_results g, ["abc123xyab", "#{"a" * 31}1xyab", "a1xyz", "a1xyabcdefghijkl"]
   end
 
+  # An upto searches the whole input, so what sees before the position
+  # compiles; Spinel's backtracking limit still applies.
+  def test_upto_regexps_may_look_behind_but_not_backtrack_widely
+    g = grammar { rule(:top) { upto(/\A|^a|(?<=x)b|\bc/) >> match(/.*/m) } }
+    assert_same_results g, ["xb", "c", "q\nab", "xc", ""]
+
+    assert_refused grammar { rule(:top) { upto(/(?=a)[a-z]{1,30}/) } }, /rule :top.*\{/
+  end
+
   def test_refuses_captures_that_see_before_the_scan_position
     assert_refused grammar { rule(:top) { str("a") >> match(/(?<=a)(?<b>b)/).captures } }, /rule :top.*lookbehind/
   end

@@ -202,6 +202,22 @@ class TestLeftRecursion < Minitest::Test
     assert_direct g
   end
 
+  # upto can match nothing, and tries its terminator where it starts.
+  def test_left_recursion_behind_upto_and_through_its_terminator
+    g = grammar { rule(:top) { either(seq(upto(";"), top, "!"), "x") } }
+    assert_direct g
+
+    g = grammar { rule(:top) { either(seq(upto(top), "!"), "x") } }
+    assert_direct g
+
+    # Like a negative lookahead, upto matches while its terminator's
+    # call fails (it looks further on), so it's a seed on its own. This
+    # one never matches anything, and says so rather than looping.
+    g = grammar { rule(:top) { seq(upto(top), str("!")) } }
+    assert_direct g
+    assert_equal "line 1, column 3: expected top, found end of input", g.parse("a!").message.lines.first.chomp
+  end
+
   # Inside a lookahead the rule's own call sees the seed too: a failure
   # first, then each match so far. An odd grammar; the results are
   # pinned, not designed.
@@ -558,7 +574,7 @@ class TestLeftRecursion < Minitest::Test
       [:rep, 0, nil, [:str, "a"]], [:rep, 0, 1, [:str, "a"]], [:rep, 2, nil, [:pat, "/a*/"]],
       [:not, [:str, "a"]], [:and, [:str, "a"]], [:both, [:str, "a"], [:str, ""]],
       [:action, [:str, ""]], [:label, "x", [:str, ""]], [:check, "x", [:str, ""]], [:quiet, [:str, ""]],
-      [:lexeme, [:str, ""]], [:istr, ""]
+      [:lexeme, [:str, ""]], [:istr, ""], [:upto, [:str, "a"]], [:upto, [:pat, "/a+/"]]
     ]
     non_nullable = [
       [:str, "a"], [:istr, "a"], [:pat, "/a+/"], [:pat, "/a/x"], [:pat, "/\\/+/"],
