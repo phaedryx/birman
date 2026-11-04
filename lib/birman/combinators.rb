@@ -187,8 +187,8 @@ module Birman
     # raises = ["ArgumentError at parse time if node lacks op/left/right"]
     def infix(operand, *ops, node:) = Infix.new(Birman.coerce(operand), either(*ops).label("operator"), node)
 
-    # A precedence table: binary operators (prefix and postfix are
-    # checked but not matched yet), tightest level first. Each level is a
+    # A precedence table of prefix, postfix and left/right binary
+    # operators, tightest level first. Each level is a
     # Hash with one of prefix:, postfix:, left: or right: (an operator or
     # an Array of them, anything lit takes) and a node: class.
     #   operators(atom, { right: "**", node: BinOp }, { left: ["*", "/"], node: BinOp })

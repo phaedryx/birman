@@ -753,21 +753,21 @@ module Birman
   # left/right binary operators, climbed by rank. Rank 1 is the loosest
   # level, the highest the tightest. prefixes and suffixes are Entry
   # lists in the order they're tried; suffixes holds the postfix and
-  # binary operators. Prefix and postfix entries are validated but not
-  # matched yet.
+  # binary operators.
   Operators = Data.define(:operand, :prefixes, :suffixes) do
     include Matcher
 
     def match(ctx, pos) = climb(ctx, pos, 1)
 
-    # operand, then operators of rank min or tighter, folded by fixity.
+    # An operand (with any prefix operators), then operators of rank
+    # min or tighter, folded by fixity.
     def climb(ctx, pos, min)
       start = pos
-      r = operand.match(ctx, pos) or return nil
+      r = operand_at(ctx, pos) or return nil
       left = r.value
       pos = r.pos
 
-      while (step = binary_step(ctx, pos, min, left, start))
+      while (step = suffix_step(ctx, pos, min, left, start))
         left, pos = step
       end
 
@@ -782,23 +782,62 @@ module Birman
 
     private
 
-    # One more operator and its right side folded onto left, as
-    # [node, end], or nil to stop before the operator (rank too loose,
-    # no right side, or nothing consumed).
-    def binary_step(ctx, pos, min, left, start)
+    # The operand slot: a prefix operator and its operand at the
+    # operator's rank, else the bare operand (also when the prefixed
+    # form fails).
+    def operand_at(ctx, pos)
+      entry, o = prefix_at(ctx, pos)
+      if entry && (right = climb(ctx, o.pos, entry.rank))
+        node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
+        return Match.new(right.pos, node)
+      end
+
+      operand.match(ctx, pos)
+    end
+
+    # The first prefix operator matching at pos, as [entry, match]; one
+    # that consumes nothing counts as no match. Failures are dropped, as
+    # if the choice were quiet.
+    def prefix_at(ctx, pos)
+      found = nil
+      ctx.isolate(pos) do
+        prefixes.each do |entry|
+          m = entry.matcher.match(ctx, pos) or next
+          found = [entry, m] if m.pos > pos
+          break
+        end
+      end
+      found
+    end
+
+    # One more operator folded onto left, as [node, end], or nil to
+    # stop before the operator (rank too loose, no right side, or
+    # nothing consumed).
+    def suffix_step(ctx, pos, min, left, start)
       entry, o = suffix_at(ctx, pos)
-      return if entry.nil? || entry.rank < min || entry.fixity == :postfix
+      return if entry.nil? || entry.rank < min
 
-      right = climb(ctx, o.pos, entry.fixity == :left ? entry.rank + 1 : entry.rank) or return
-      return if right.pos == pos
+      fields, stop = suffix_fields(ctx, entry, o, left)
+      return if stop.nil? || stop == pos
 
-      fields = { op: o.value, left:, right: right.value }
-      [Birman.build(entry.node, fields, ctx, start, right.pos), right.pos]
+      [Birman.build(entry.node, fields, ctx, start, stop), stop]
+    end
+
+    # The node fields for the operator match hit folded onto left, and
+    # where the node ends; nil if a binary operator has no right side.
+    def suffix_fields(ctx, entry, hit, left)
+      return [{ op: hit.value, operand: left }, hit.pos] if entry.fixity == :postfix
+
+      right = climb(ctx, hit.pos, entry.fixity == :left ? entry.rank + 1 : entry.rank) or return
+      [{ op: hit.value, left:, right: right.value }, right.pos]
     end
 
     # The first suffix operator matching at pos, as [entry, match], with
     # the failures a Label named "operator" around their choice records.
+    # With no suffixes there is no choice to fail.
     def suffix_at(ctx, pos)
+      return if suffixes.empty?
+
       found = nil
       ctx.isolate(pos) do
         suffixes.each do |entry|
