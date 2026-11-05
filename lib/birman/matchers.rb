@@ -582,13 +582,7 @@ module Birman
 
     def match(ctx, pos)
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
-      furthest = ctx.isolated_furthest
-      expected = ctx.isolated_expected
-      if furthest == pos && (result.nil? || (result.pos == pos && expected.any?))
-        ctx.fail_at(pos, name)
-      else
-        ctx.merge(furthest, expected)
-      end
+      ctx.settle_label(pos, name, result)
       result
     end
 
@@ -726,32 +720,193 @@ module Birman
     def capture_key = inner.capture_key
   end
 
-  # Left-associative binary operators: operand (op operand)*, folded
-  # into nodes built as node.new(op:, left:, right:), so the node needs
-  # exactly those fields, in any order.
-  # Each node's span covers its whole subexpression.
-  Infix = Data.define(:operand, :op, :node) do
+  # A precedence table (see Combinators#operators): prefix, postfix and
+  # left/right binary operators, climbed by rank. Rank 1 is the loosest
+  # level, the highest the tightest. prefixes and suffixes are Entry
+  # lists in the order they're tried; suffixes holds the postfix and
+  # binary operators.
+  Operators = Data.define(:operand, :prefixes, :suffixes) do
     include Matcher
 
-    def match(ctx, pos)
+    def match(ctx, pos) = climb(ctx, pos, 1)
+
+    # An operand (with any prefix operators), then operators of rank
+    # min or tighter, folded by fixity.
+    def climb(ctx, pos, min)
       start = pos
-      r = operand.match(ctx, pos) or return nil
+      r = operand_at(ctx, pos) or return nil
       left = r.value
       pos = r.pos
 
-      loop do
-        o = op.match(ctx, pos) or break
-        right = operand.match(ctx, o.pos) or break
-        fields = { op: o.value, left:, right: right.value }
-        left = Birman.build(node, fields, ctx, start, right.pos)
-        pos = right.pos
+      while (step = suffix_step(ctx, pos, min, left, start))
+        left, pos = step
       end
 
       Match.new(pos, left)
     end
 
+    # PRE* operand (POST / IN PRE* operand)*, with PRE and the whole
+    # suffix loop left out when the table has none. Without postfix
+    # operators the binary ones are grouped: (IN) PRE* operand, as
+    # infix's AST.
     def to_ast
-      [:seq, nil, [operand.to_ast, [:rep, 0, nil, [:seq, nil, [op.to_ast, operand.to_ast]]]]]
+      pre = prefixes.empty? ? [] : [[:rep, 0, nil, [:quiet, choice_ast(prefixes)]]]
+      post = suffixes.empty? ? [] : [[:rep, 0, nil, suffix_ast(pre)]]
+      [:seq, nil, [*pre, operand.to_ast, *post]]
+    end
+
+    private
+
+    def choice_ast(entries)
+      matchers = entries.map(&:matcher)
+      (matchers.size == 1 ? matchers.first : Choice.new(matchers)).to_ast
+    end
+
+    # One trip round the suffix loop, under the "operator" label.
+    def suffix_ast(pre)
+      tail = [*pre, operand.to_ast]
+      return [:seq, nil, [labelled(choice_ast(suffixes)), *tail]] if suffixes.none? { _1.fixity == :postfix }
+
+      alts = suffixes.map { _1.fixity == :postfix ? _1.matcher.to_ast : [:seq, nil, [_1.matcher.to_ast, *tail]] }
+      labelled(alts.size == 1 ? alts.first : [:choice, alts])
+    end
+
+    def labelled(ast) = [:label, "operator", ast]
+
+    # The operand slot: a prefix operator and its operand at the
+    # operator's rank, else the bare operand (also when the prefixed
+    # form fails).
+    def operand_at(ctx, pos)
+      entry, o = prefix_at(ctx, pos)
+      if entry && (right = climb(ctx, o.pos, entry.rank))
+        node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
+        return Match.new(right.pos, node)
+      end
+
+      operand.match(ctx, pos)
+    end
+
+    # The first prefix operator matching at pos, as [entry, match]; one
+    # that consumes nothing counts as no match. Failures are dropped, as
+    # if the choice were quiet.
+    def prefix_at(ctx, pos)
+      found = nil
+      ctx.isolate(pos) do
+        prefixes.each do |entry|
+          m = entry.matcher.match(ctx, pos) or next
+          found = [entry, m] if m.pos > pos
+          break
+        end
+      end
+      found
+    end
+
+    # One more operator folded onto left, as [node, end], or nil to
+    # stop before the operator (rank too loose, no right side, or
+    # nothing consumed). A right fold whose operator matched nothing
+    # where the climb began would recurse at its own start forever, so
+    # it stops too.
+    def suffix_step(ctx, pos, min, left, start)
+      entry, o = suffix_at(ctx, pos)
+      return if entry.nil? || entry.rank < min
+      return if entry.fixity == :right && o.pos == start
+
+      fields, stop = suffix_fields(ctx, entry, o, left)
+      return if stop.nil? || stop == pos
+
+      [Birman.build(entry.node, fields, ctx, start, stop), stop]
+    end
+
+    # The node fields for the operator match hit folded onto left, and
+    # where the node ends; nil if a binary operator has no right side.
+    def suffix_fields(ctx, entry, hit, left)
+      return [{ op: hit.value, operand: left }, hit.pos] if entry.fixity == :postfix
+
+      right = climb(ctx, hit.pos, entry.fixity == :left ? entry.rank + 1 : entry.rank) or return
+      [{ op: hit.value, left:, right: right.value }, right.pos]
+    end
+
+    # The first suffix operator matching at pos, as [entry, match], with
+    # the failures a Label named "operator" around their choice records.
+    # With no suffixes there is no choice to fail.
+    def suffix_at(ctx, pos)
+      return if suffixes.empty?
+
+      found = nil
+      ctx.isolate(pos) do
+        suffixes.each do |entry|
+          m = entry.matcher.match(ctx, pos) or next
+          found = [entry, m]
+          break
+        end
+      end
+      ctx.settle_label(pos, "operator", found&.last)
+      found
+    end
+  end
+
+  # source is the operator as given, matcher its coercion to a matcher;
+  # fixity is :prefix, :postfix, :left or :right.
+  Operators::Entry = Data.define(:source, :matcher, :fixity, :rank, :node)
+
+  # Table checking and ordering, kept here so Combinators gains no
+  # private names a rule could collide with.
+  Operators::FIXITIES = %i[prefix postfix left right].freeze
+  Operators::NODE_FIELDS = { prefix: %i[op operand], postfix: %i[op operand], left: %i[op left right],
+                             right: %i[op left right] }.freeze
+
+  class << Operators
+    # [fixity, operators, node] from one level of an operators table.
+    def level(level)
+      fixity = fixity_of(level)
+      ops = level[fixity].is_a?(Array) ? level[fixity] : [level[fixity]]
+      raise ArgumentError, "#{fixity}: needs at least one operator" if ops.empty?
+
+      [fixity, ops, node_of(level, fixity)]
+    end
+
+    # Maximal munch: a String operator comes after every longer String
+    # operator it is a prefix of. Otherwise entries keep their order,
+    # matchers included.
+    def munch_order(entries)
+      rest = entries.dup
+      ordered = []
+      until rest.empty?
+        pick = rest.index { |e| rest.none? { |o| shadows?(o, e) } } || 0
+        ordered << rest.delete_at(pick)
+      end
+      ordered
+    end
+
+    private
+
+    def shadows?(longer, entry)
+      longer.source.is_a?(String) && entry.source.is_a?(String) &&
+        longer.source.size > entry.source.size && longer.source.start_with?(entry.source)
+    end
+
+    def fixity_of(level)
+      unless level.is_a?(Hash)
+        raise ArgumentError, "an operators level is a Hash, like { left: \"+\", node: Node }: #{level.inspect}"
+      end
+
+      unknown = level.keys - [*Operators::FIXITIES, :node]
+      raise ArgumentError, "unknown key #{unknown.first.inspect} in operators level #{level.inspect}" if unknown.any?
+
+      fixities = level.keys & Operators::FIXITIES
+      return fixities.first if fixities.size == 1
+
+      raise ArgumentError, "an operators level needs exactly one of #{Operators::FIXITIES.join(", ")}: #{level.inspect}"
+    end
+
+    def node_of(level, fixity)
+      node = level[:node] or raise ArgumentError, "an operators level needs a node: #{level.inspect}"
+      want = Operators::NODE_FIELDS[fixity]
+      unless node.respond_to?(:members) && node.members.sort == want.sort
+        raise ArgumentError, "a #{fixity}: node needs exactly the fields #{want[0..-2].join(", ")} and #{want.last}, " \
+                             "not #{node.respond_to?(:members) ? node.members.join(", ") : node.inspect}"
+      end
+      node
     end
   end
 

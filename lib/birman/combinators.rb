@@ -3,7 +3,7 @@
 # [file]
 # purpose = "The combinators available inside every rule body"
 # responsibility = "Building matchers: raw strings and patterns, literals, sequences, choices, lists, wrappers"
-# dependencies = ["Birman::Matcher", "matchers.rb (Seq, Choice, Pick, SepBy, Infix, Lexeme)"]
+# dependencies = ["Birman::Matcher", "matchers.rb (Seq, Choice, Pick, SepBy, Operators, Lexeme)"]
 # pattern = "Parser combinators (PEG)"
 module Birman
   # Marker for seq: everything after it is committed (see Matcher#>).
@@ -184,8 +184,34 @@ module Birman
     # params = ["operand: Matcher", "*ops: String literals", "node: node class with op, left, right fields"]
     # returns = "Matcher for operand (op operand)*, folded left-associatively"
     # value = "operand's value, or nested node instances with spans"
-    # raises = ["ArgumentError at parse time if node lacks op/left/right"]
-    def infix(operand, *ops, node:) = Infix.new(Birman.coerce(operand), either(*ops).label("operator"), node)
+    # raises = ["ArgumentError if node lacks op/left/right"]
+    def infix(operand, *ops, node:)
+      _, ops, node = Operators.level({ left: ops, node: })
+      Operators.new(Birman.coerce(operand), [], ops.map { Operators::Entry.new(_1, lit(_1), :left, 1, node) })
+    end
+
+    # A precedence table of prefix, postfix and left/right binary
+    # operators, tightest level first. Each level is a
+    # Hash with one of prefix:, postfix:, left: or right: (an operator or
+    # an Array of them, anything lit takes) and a node: class.
+    #   operators(atom, { right: "**", node: BinOp }, { left: ["*", "/"], node: BinOp })
+    # [method.operators]
+    # params = ["operand: Matcher", "*levels: Hash of fixity => operator(s), node: node class"]
+    # returns = "Matcher for operand with the levels' operators folded by rank and associativity"
+    # value = "operand's value, or nested node instances with spans"
+    # raises = ["ArgumentError if the table is malformed or a node has the wrong fields"]
+    def operators(operand, *levels)
+      raise ArgumentError, "operators needs at least one level" if levels.empty?
+
+      prefixes = []
+      suffixes = []
+      levels.each_with_index do |level, i|
+        fixity, ops, node = Operators.level(level)
+        entries = ops.map { Operators::Entry.new(_1, lit(_1), fixity, levels.size - i, node) }
+        (fixity == :prefix ? prefixes : suffixes).concat(entries)
+      end
+      Operators.new(Birman.coerce(operand), Operators.munch_order(prefixes), Operators.munch_order(suffixes))
+    end
 
     # One or more items separated by sep; value is an array of items.
     # With trailing: true, one separator may follow the last item:

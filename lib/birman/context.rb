@@ -117,6 +117,18 @@ module Birman
       @expected = outer_expected
     end
 
+    # What a Label does with the isolated run of its inner matcher (see
+    # Label): name the failure if nothing got past pos, else keep inner's.
+    def settle_label(pos, name, result)
+      furthest = isolated_furthest
+      expected = isolated_expected
+      if furthest == pos && (result.nil? || (result.pos == pos && expected.any?))
+        fail_at(pos, name)
+      else
+        merge(furthest, expected)
+      end
+    end
+
     def commit_failure! = raise(Committed.new(@furthest, @expected.dup))
 
     # A positive lookahead: does matcher match at pos? Nothing is

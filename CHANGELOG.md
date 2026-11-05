@@ -2,6 +2,36 @@
 
 ### Added
 
+- `operators(operand, *levels)`, a precedence table (Citrus has none;
+  Pratt's method): each level is a Hash with exactly one of `prefix:`,
+  `postfix:`, `left:` or `right:` (an operator or an Array of them,
+  anything `lit` takes) and a `node:` class, tightest level first.
+  `operators(atom, { right: "**", node: BinOp }, { prefix: "-", node: Neg }, { left: ["*", "/"], node: BinOp })`
+  parses `-2 ** 2` as `-(2 ** 2)` and `2 ** -3` as `2 ** (-3)`, since
+  a prefix operator takes an operand at its own level or tighter, and
+  `2 ** 3 ** 2` as `2 ** (3 ** 2)`. Binary nodes have exactly the
+  fields `op`, `left` and `right`, prefix and postfix ones `op` and
+  `operand`, and each node's span covers its whole subexpression. The
+  operators of one table are tried by maximal munch (a String operator
+  after every longer one it is a prefix of, so `["|", "||"]` reads
+  `||` whole). A prefix operator is quiet in errors, and where a
+  binary or postfix operator could go the error says "operator"
+  (`(1 + 2` expects "operator or `)`"). A prefix operator that
+  matches nothing counts as no match, and a postfix or binary step
+  that consumes nothing ends the loop, and so does a right-associative
+  one that matches nothing where its climb began. A table with no levels, a level
+  that isn't a Hash, has an unknown key, has none or more than one of
+  the four fixities, no operators or no `node:`, or a node whose
+  fields aren't the ones above, raises `ArgumentError` when `operators`
+  is called. `to_ast` shows which tokens may appear, not precedence,
+  as `PRE* operand (POST / IN PRE* operand)*` with no new node types
+  (a table without postfix levels groups the binary choice, as
+  `infix`'s did), and `to_ebnf` shows the same. It's approximate for a
+  contrived table: a postfix and a binary operator sharing text (`!`
+  and `!=`), or an operand that can itself start with a prefix token.
+  `to_ruby` generates it.
+- `examples/calc.rb` has unary minus and right-associative `**`,
+  written with `operators`: `-2 ** 2` is `-(2 ** 2)`, a `Neg` node.
 - `Matcher#===`, so a matcher works in `case` (Citrus's `Rule#===`):
   `case input when date then ...` parses the input with the matcher as
   the whole grammar, as `Birman.parse` does with no `ignore:`, true
@@ -121,8 +151,21 @@
   the whole input. `upto` is now a method the grammar relies on, so a
   rule can't take that name.
 
+### Changed
+
+- `infix` is now a one-level `operators` table, so the two agree.
+  Values, spans, errors, `to_ast` and `to_ebnf` are as they were, but
+  `infix` with no operators now raises `ArgumentError` when the rule is
+  built, and so does a node without `op`, `left` and `right` fields (or
+  `nil`), with a new message (`a left: node needs exactly the fields
+  op, left and right`, or `an operators level needs a node` for
+  `nil`); `to_ruby` raises that `ArgumentError` where it raised an
+  error of its own.
+
 ### Fixed
 
+- `infix` with an operator and an operand that both match nothing
+  looped forever; the step that consumes nothing now ends the loop.
 - A rule that overrides an included one and calls it with a bare
   `super` now raises `ArgumentError`, `rule :number calls super
   without parentheses, ... write super() to call the rule it

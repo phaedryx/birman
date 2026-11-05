@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # examples/calc.rb with its arithmetic written as left recursion instead
-# of infix: each rule calls itself first, `expr op term | term`, and
+# of an operator table: each rule calls itself first, `expr op term | term`, and
 # Birman grows the match from a seed. The trees, and the interpreter
 # that runs them, are calc's own.
 #
@@ -34,7 +34,7 @@ if __FILE__ == $PROGRAM_NAME
   puts "\n--- AST ---"
   statements.each { p _1 }
 
-  puts "\n--- Same trees as calc's infix ---"
+  puts "\n--- Same trees as calc's operator table ---"
   p(statements == Calc::Grammar.parse!(source))
 
   puts "\n--- Spans: each level covers its subexpression ---"
