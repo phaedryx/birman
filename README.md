@@ -428,6 +428,116 @@ end
 #   ^
 ```
 
+## Tracing a parse
+
+A `Failure` says where the input went wrong and what would have fit
+there. When the question is why the *grammar* went the way it did
+(which alternative was tried, which won, what a memo hit replayed, how
+a left-recursive rule grew), parse with `trace: true` and print the
+result's `trace`:
+
+```ruby
+result = Lists.parse("[1, [2, x], []]", trace: true)
+puts result.trace
+```
+
+```
+list 1:1 ✗ committed at 1:9: expected /\d+/ or "[", found "x"
+├─ "[" 1:1 ✓ → 1:2
+└─ sep_by(item, ",") 1:2 ✗ unwound by commit
+   ├─ item 1:2 ✓ → 1:3
+   ├─ "," 1:3 ✓ → 1:5
+   └─ item 1:5 ✗ unwound by commit
+      ├─ /\d+/ 1:5 ✗ found "["
+      └─ list 1:5 ✗ unwound by commit
+         ├─ "[" 1:5 ✓ → 1:6
+         ├─ sep_by(item, ",") 1:6 ✓ → 1:7
+         │  ├─ item 1:6 ✓ → 1:7
+         │  ├─ "," 1:7 ✓ → 1:9
+         │  └─ item 1:9 ✗
+         │     ├─ /\d+/ 1:9 ✗ found "x"
+         │     └─ list 1:9 ✗
+         │        └─ "[" 1:9 ✗ found "x"
+         └─ "]" 1:7 ✗ committed: expected /\d+/ or "[" at 1:9
+```
+
+Each line is one attempt: a rule call, an `either` alternative, a
+`seq` part, a repetition's item or separator, or a literal, with where
+it began and, if it matched, where it ended (`→`, after any spacing the
+ignore rule skipped). A rule whose body is a `seq` or `either` has its
+parts or alternatives as its children; wrappers that only change the
+value (`.as`, `.map`, `.action`, `.means`, `.to`, `.text`, `.spanned`)
+get no line of their own. A literal is one line, its spacing included.
+The top line is the root rule's, with the parse's result.
+
+The result is the one `parse` gives without `trace:` (`==`, `inspect`
+and pattern matching ignore the trace, as they ignore `Success#pos`),
+and `parse!`, `Grammar#parse` and `Birman.parse` take `trace:` too;
+`parse!` puts the trace on `error.failure.trace`. `trace` is `nil` on
+an untraced result, and Marshal drops it. `trace.root` is the tree
+itself, `Birman::Trace::Node`s (`kind`, `rule`, `description`, `from`,
+`to`, `furthest`, `expected`, `notes`, `children`, `origin`), with
+character offsets.
+
+What the labels mean:
+
+- **found "x"**: a literal or pattern that didn't match; its line
+  already says what it wanted.
+- **expected …**: what a label, check or memo hit reports.
+- **committed: expected … at L:C**: the part after a commit (`>`) whose
+  failure stopped the parse, with what it carried: here `"]"` failed at
+  1:7, but the `sep_by` before it had already failed further on, at 1:9.
+- **unwound by commit**: an attempt the commit failure ended on its way
+  out.
+- **rejected by :method**: a `.check` that turned its match down.
+- **(memo)**: a rule already tried at that position, answered from the
+  memo; it has no children, since the first try is drawn elsewhere.
+  When that first try isn't drawn (it was inside a lookahead, say),
+  it's drawn under the hit, headed "first tried here, under &word".
+- **(lookahead)**: an attempt made inside `absent`, `present` or the
+  guard of `&`. Its failures don't count as getting anywhere.
+  **(caught a commit)**: a lookahead whose inside failed after a
+  commit, which a lookahead treats as an ordinary failure.
+- **round n (seed fails)**, **round n (seed ends at L:C)**: the rounds
+  of a left-recursive rule's growth (see
+  [Left recursion](#left-recursion)), each matched with the rule's call
+  to itself returning the last round's match, the seed. The last round
+  says **no further: stops (keeps round n - 1)**.
+- **(seed)**, **(seed fails)**: such a call to itself, answered with
+  the seed.
+- **(this round)**: in indirect left recursion, a rule of the cycle
+  already tried in the current round, answered from the round's table.
+- **(took the longest from :leader's rounds)**: a rule of a cycle
+  entered from outside, which took the longest match the leader's
+  rounds gave it; its line shows that match, and the attempt it made
+  itself is below.
+- **stack ran out**: an attempt open when the input nested too deeply.
+
+`to_s` takes filters, so the tree stays readable on a real grammar:
+
+- `at:` a character offset. Every attempt that reached it (began at or
+  before it and matched to it or failed at or past it, lookaheads not
+  counting) is expanded, and the other attempts beside it are one line
+  each, so the alternatives tried before the one that got there stay
+  visible. The default for a `Failure` is its `pos`.
+- `all: true` expands everything. For a `Success` the default is
+  everything to `depth: 4`, which is usually enough to see why the
+  wrong alternative won.
+- `depth:` how many levels are expanded; below that, `… (n nodes)`.
+- `hide:` rules whose calls aren't drawn at all. The default is the
+  grammar's ignore rule; `hide: []` shows the spacing too.
+
+Input nested too deeply shows its outermost 5 and innermost 20 levels,
+with `… (n levels)` between, unless you pass `all:` or `depth:`.
+`inspect` is short: `#<Birman::Trace 35 nodes, failed at 1:9>`.
+
+A traced parse is slower and keeps every attempt in memory, so it's
+for finding out why, not for production. It also uses more stack per
+level of nesting: the JSON example nests about 220 levels traced, on
+the main thread, against about 400 untraced. Untraced parses are
+unaffected: `trace: true` picks a different context class once per
+parse, and nothing in the untraced path checks for it.
+
 ## Without a grammar
 
 For a one-off pattern, skip the class: the combinators are on `Birman`
@@ -638,9 +748,12 @@ own.
   offset that's negative or past the end raises `ArgumentError`. Invalid
   UTF-8 anywhere in the input is a `Failure`, before the offset too,
   since a regexp would refuse the whole string.
+- `parse(input, trace: true)` attaches a trace of every attempt to the
+  result (see [Tracing a parse](#tracing-a-parse)).
 - `parse!`, the instance methods, `Birman.parse` (which takes
-  `consume:` and `offset:` but not `root:`, since its matcher is the
-  only rule) and generated parsers take the same options.
+  `consume:`, `offset:` and `trace:` but not `root:`, since its matcher
+  is the only rule) and generated parsers take the same options, except
+  that generated parsers don't take `trace:`.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
 - `rules` lists a grammar's rule names, as Symbols, in declaration
   order: an included module's rules first, in the order the modules
@@ -709,6 +822,13 @@ source = Calc::Grammar.to_ruby(namespace: "CalcParser", roots: [:sum])
 CalcParser::Parser.new("1 + 2").parse(root: :sum)   # => Success
 CalcParser::Parser.new("1 + 2").parse(root: :atom)  # ArgumentError
 ```
+
+It doesn't take `trace:` (`parse(trace: true)` raises `ArgumentError`,
+as any unknown option does). Its results are `Grammar.parse`'s, so trace
+a failure it reports with `Grammar.parse(input, trace: true)` on the
+grammar it came from. Tracing in the generated code would mean an
+instrumented copy of every rule, or a check in every one, costing the
+size and speed a generated parser is for.
 
 Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,
 with the same fields, `span`, `==` and `inspect`. Values transformed
@@ -816,7 +936,9 @@ to ss), and the same goes for `match(/straße/i)`.
 
   That took the same grammar to about 12,000 levels on a thread. The
   main thread gets less (about 2,000), because its machine stack comes
-  from the operating system (`ulimit -s`).
+  from the operating system (`ulimit -s`). A traced parse (see
+  [Tracing a parse](#tracing-a-parse)) nests less deeply: the JSON
+  example about 220 levels on the main thread, against about 400.
 - **Left recursion on both sides.** `expr op expr` groups to the right
   (see [Left recursion](#left-recursion)); write `expr op term` for
   left-associative operators.
