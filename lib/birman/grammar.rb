@@ -234,6 +234,12 @@ module Birman
       end
     end
 
+    # Internal: the rule's matcher with Trace::Probes in it, for a traced
+    # parse (see TracingContext). Built once, apart from matcher_for's.
+    def __traced_matcher_for(name)
+      (@traced_matchers ||= {})[name] ||= Trace::Instrument.call(matcher_for(name), fold: true)
+    end
+
     # { rule_name => ast } for every rule: those reachable from the root
     # (and the ignore rule) first, in first-use order, then the rest in
     # declaration order (see rules).

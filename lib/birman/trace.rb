@@ -55,6 +55,19 @@ module Birman
 
       def note(key, value) = @notes[key] = value
 
+      # As it closes: its furthest becomes the furthest of its own
+      # failures and its children's, leaving out lookaheads' and, under
+      # quiet, everything.
+      def reach
+        return if kind == :quiet
+
+        children.each do |child|
+          next if child.furthest.nil? || child.notes[:in_lookahead]
+
+          @furthest = child.furthest if @furthest.nil? || child.furthest > @furthest
+        end
+      end
+
       # Something this frame itself expected at pos; only the furthest
       # position's are kept, as Context#fail_at keeps them.
       def fail(pos, what)
@@ -86,8 +99,25 @@ module Birman
 
       def node(chars, children)
         Node.new(kind:, rule:, description:, from: chars[from], to: to && chars[to],
-                 furthest: furthest && chars[furthest], expected: expected.uniq.freeze, notes: notes.freeze,
-                 children:, origin: nil)
+                 furthest: furthest && chars[furthest], expected: expected.uniq.freeze,
+                 notes: char_notes(chars).freeze, children:, origin: nil)
+      end
+
+      # The byte offsets the notes hold.
+      def note_offsets
+        [notes[:unwound_by_commit], notes[:seed_end], notes.dig(:committed, :pos)].compact
+      end
+
+      private
+
+      def char_notes(chars)
+        notes.to_h do |key, value|
+          case key
+          when :unwound_by_commit, :seed_end then [key, value && chars[value]]
+          when :committed then [key, { pos: chars[value[:pos]], expected: value[:expected].uniq.freeze }.freeze]
+          else [key, value]
+          end
+        end
       end
     end
 
@@ -125,6 +155,7 @@ module Birman
         out << f.from
         out << f.to if f.to
         out << f.furthest if f.furthest
+        out.concat(f.note_offsets)
         stack.concat(f.children)
       end
       out
