@@ -212,6 +212,71 @@ class TraceTest < Minitest::Test
     assert(nodes_of(result.trace.root).any? { _1.notes[:stack_ran_out] })
   end
 
+  def test_memo_hit_is_a_labeled_leaf_with_its_origin
+    g = grammar do
+      rule(:r) { either(seq(word, "!"), seq(word, "?")) }
+      rule(:word) { match(/[a-z]+/) }
+    end
+    r = root_rule(g.parse("hi.", trace: true))
+    first, again = nodes_of(r).select { _1.rule == :word }
+    assert_nil first.notes[:memo]
+    assert again.notes[:memo]
+    assert_empty again.children
+    assert_same first, again.origin
+    assert_equal [2, 2], [first.to, again.to]
+  end
+
+  def test_memo_hit_replays_what_it_expected
+    g = grammar do
+      rule(:r) { either(seq(word, "!"), seq(word, "?")) }
+      rule(:word) { match(/[a-z]+/) }
+    end
+    again = nodes_of(root_rule(g.parse("1", trace: true))).select { _1.rule == :word }.last
+    assert again.notes[:memo]
+    assert_equal [0, ["/[a-z]+/"]], [again.furthest, again.expected]
+  end
+
+  def test_direct_left_recursion_rounds
+    g = grammar do
+      include Birman::Rules::Numbers
+
+      rule(:r) { either(seq(r, "-", integer), integer) }
+    end
+    r = root_rule(g.parse("1-2-3", trace: true))
+    rounds = r.children.select { _1.kind == :round }
+    assert_equal r.children, rounds
+    assert_equal([1, 2, 3, 4], rounds.map { _1.notes[:round] })
+    assert_equal([nil, 1, 3, 5], rounds.map { _1.notes[:seed_end] })
+    assert_equal [1, 3, 5, 1], rounds.map(&:to) # the last got no further; the third's is kept
+    assert rounds.last.notes[:stopped]
+    assert_equal([false, false, false], rounds[0..2].map { _1.notes.key?(:stopped) })
+    seed = nodes_of(rounds[1]).find { _1.rule == :r && _1.notes[:seed] }
+    assert_equal [0, 1], [seed.from, seed.to]
+    failed_seed = nodes_of(rounds[0]).find { _1.rule == :r && _1.notes[:seed] }
+    assert_nil failed_seed.to
+    assert_equal 5, r.to
+  end
+
+  # r and b call each other before consuming anything, a cycle led by r;
+  # both of r's alternatives call b where r starts.
+  def indirect
+    grammar do
+      include Birman::Rules::Numbers
+
+      rule(:r) { either(seq(b, "+", integer), seq(b, "-", integer), integer) }
+      rule(:b) { r }
+    end
+  end
+
+  def test_indirect_left_recursion_labels
+    all = nodes_of(indirect.parse("1-2", trace: true).trace.root)
+    again = all.find { _1.rule == :b && _1.notes[:this_round] }
+    assert_equal [0, nil], [again.from, again.to]
+    assert again.origin.notes.empty?
+    b = root_rule(indirect.parse("1+2", root: :b, trace: true))
+    assert_equal [:b, :r, 3], [b.rule, b.notes[:took_longest], b.to]
+  end
+
   # The guard against TracingContext drifting from Context and Ref: a
   # traced parse gives exactly the untraced result, except on input
   # nested deeper than a traced parse can go, which fails as too deep.

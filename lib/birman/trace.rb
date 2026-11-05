@@ -82,25 +82,28 @@ module Birman
       # The frame's Node and every one below it, built bottom-up with an
       # explicit stack: a trace of deeply nested input is as deep as
       # Ruby's stack was. chars maps byte offsets to character offsets.
+      #
+      # Children are built in order, first to last, so a memo hit's origin
+      # (made earlier in the parse, and never above it) is built before it.
       def freeze_tree(chars)
         built = {}.compare_by_identity
         stack = [[self, false]]
         until stack.empty?
           frame, ready = stack.pop
           if ready
-            built[frame] = frame.node(chars, frame.children.map { built.delete(_1) }.freeze)
+            built[frame] = frame.node(chars, frame.children.map { built[_1] }.freeze, built)
           else
             stack << [frame, true]
-            frame.children.each { stack << [_1, false] }
+            frame.children.reverse_each { stack << [_1, false] }
           end
         end
         built[self]
       end
 
-      def node(chars, children)
+      def node(chars, children, built)
         Node.new(kind:, rule:, description:, from: chars[from], to: to && chars[to],
                  furthest: furthest && chars[furthest], expected: expected.uniq.freeze,
-                 notes: char_notes(chars).freeze, children:, origin: nil)
+                 notes: char_notes(chars).freeze, children:, origin: @origin && built[@origin])
       end
 
       # The byte offsets the notes hold.

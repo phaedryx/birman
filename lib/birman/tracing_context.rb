@@ -8,25 +8,33 @@ module Birman
   # each call records a Trace::Frame. Frames close in an ensure, so a
   # commit failure or a stack overflow unwinding through leaves none
   # open.
-  class TracingContext < Context
+  class TracingContext < Context # rubocop:disable Metrics/ClassLength
     def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0)
       super
       @top = @frame = Trace::Frame.new(:parse, nil, nil, from)
       @parents = []
       @lookaheads = 0
+      @first_calls = {}
     end
 
     # Context#memoize, with Ref#match's block run on the rule's
     # instrumented matcher instead: the same two steps, so the memo entry
-    # is the same.
-    def memoize(name, pos)
+    # is the same. A call that doesn't run the block was answered from a
+    # table: the memo, a growth round's (in_round sets @hit) or the seed
+    # (seed sets it).
+    def memoize(name, pos) # rubocop:disable Metrics/MethodLength
       frame = open_frame(:rule, name, name.to_s, pos)
+      computed = false
+      @hit = :memo
       recording(frame) do
         entry = super(name, pos) do
+          computed = true
+          @first_calls[[name, pos]] ||= frame
           r = isolate(pos) { grammar.__traced_matcher_for(name).match(self, pos) }
           [r, isolated_furthest, isolated_expected]
         end
         frame.to = entry[0]&.pos
+        answered(frame, name, pos, entry) unless computed
         entry
       end
     end
@@ -87,6 +95,55 @@ module Birman
     def trace = Trace.build(@top, input, ignore_ref&.name)
 
     private
+
+    # One frame per growth round, numbered, with where the seed it
+    # started from ended (nil: the first round's seed fails). The last
+    # round is the one that got no further.
+    def grow(name, table, pos)
+      round = 0
+      last = nil
+      entry = super do
+        round += 1
+        last = open_frame(:round, nil, "round #{round}", pos)
+        last.note(:round, round)
+        last.note(:seed_end, @seeds[name][pos][0]&.pos)
+        recording(last) { yield.tap { last.to = _1[0]&.pos } }
+      end
+      last&.note(:stopped, true)
+      entry
+    end
+
+    def in_round(round, name, pos, &)
+      entry = round[name]
+      @hit = :this_round if entry && !entry.equal?(IN_PROGRESS)
+      super
+    end
+
+    def seed(name, pos)
+      @hit = :seed
+      super
+    end
+
+    # A rule of a cycle entered from outside: whether it took the longest
+    # match its leader's rounds kept, rather than the one it computed.
+    def outside(leader, name, table, pos, &)
+      entry = super
+      @frame.note(:took_longest, leader) if entry.equal?(@longest[leader][pos]&.[](name))
+      entry
+    end
+
+    # A call answered without computing: labeled with what answered it,
+    # and with what it replays expecting.
+    def answered(frame, name, pos, entry)
+      if @hit == :seed
+        frame.note(:seed, true)
+        frame.note(:seed_end, entry[0]&.pos)
+      else
+        frame.note(@hit, true)
+        frame.origin = @first_calls[[name, pos]]
+      end
+      entry[2].each { frame.fail(entry[1], _1) }
+    end
 
     def open_frame(kind, rule, description, pos)
       frame = Trace::Frame.new(kind, rule, description, pos)
