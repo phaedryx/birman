@@ -25,7 +25,7 @@ module Birman
 
       def of(matcher) # rubocop:disable Metrics
         case matcher
-        when Str, Pat, Text then :str
+        when Str, Pat, Text, Upto then :str
         when Lit then of(@grammar.literal_matcher(matcher.str))
         when Nocase then of(@grammar.nocase_matcher(matcher.str))
         when Seq then seq(matcher)

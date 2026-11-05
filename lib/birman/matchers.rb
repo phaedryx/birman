@@ -654,6 +654,41 @@ module Birman
     def capture_key = inner.capture_key
   end
 
+  # See Combinators#upto. An exact string or a regexp is found with one
+  # byteindex, which sees the whole input as the scanner does; any other
+  # terminator is tried as a lookahead at each character, its failures
+  # dropped. Either way it's tried once more at the end of the input, as
+  # a lookahead that records what it expected there when it fails.
+  Upto = Data.define(:terminator) do
+    include Matcher
+
+    def match(ctx, pos)
+      input = ctx.input
+      stop = find(ctx, pos, input) || (input.bytesize if ctx.peek?(terminator, input.bytesize)) or return nil
+      Match.new(stop, input.byteslice(pos, stop - pos))
+    end
+
+    def to_ast = [:upto, terminator.to_ast]
+
+    private
+
+    # Where the terminator first matches before the end, or nil.
+    def find(ctx, pos, input)
+      case terminator
+      when Str then input.byteindex(terminator.str, pos)
+      when Pat then input.byteindex(terminator.re, pos)
+      else
+        bytes = input.encoding == Encoding::BINARY # a character per byte, as any matches
+        while pos < input.bytesize
+          return pos if ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
+
+          pos += 1
+          pos += 1 while !bytes && pos < input.bytesize && input.getbyte(pos).between?(0x80, 0xBF)
+        end
+      end
+    end
+  end
+
   # See Matcher#spanned. Named for the matcher, since Spanned (nodes.rb)
   # is the value it produces.
   SpannedMatcher = Data.define(:inner) do

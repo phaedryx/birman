@@ -52,6 +52,18 @@ module Birman
     # returns = "Matcher that always fails (a placeholder for an empty choice)"
     def never = Pat.new(/(?!)/)
 
+    # Everything before the first place terminator matches, for block
+    # comments and raw blocks: seq(str("/*"), upto("*/"), str("*/")).
+    # The terminator is left for what comes next, and with none before
+    # the end of the input it fails there, expecting the terminator.
+    # [method.upto]
+    # params = ["terminator: String (exact text, as str) | Regexp | Matcher"]
+    # returns = "Matcher for the text before terminator; raw, nothing skipped, terminator not consumed"
+    # value = "the text before the terminator (\"\" if it's right here)"
+    # raises = ["ArgumentError (anything else)"]
+    # notes = "A String or Regexp is found with one byteindex; any other matcher is tried at each character"
+    def upto(terminator) = Upto.new(terminator.is_a?(String) ? str(terminator) : Birman.coerce(terminator))
+
     # A whole word: "if" matches in "if x" but not in "iffy".
     # [method.keyword]
     # params = ["word: String"]

@@ -111,6 +111,39 @@ module Examples
     TOKENS = ["2", "3", "*", "(", ")", " ", "x", "\n"].freeze
   end
 
+  # upto with each kind of terminator: exact text (byteindex), a regexp
+  # anchored at a line start, and a choice tried at each character, one
+  # with a commit inside it, past multibyte text. Unterminated ones fail
+  # at the end.
+  module Upto
+    # /* a */ <<EOS\nbody\nEOS {{ raw }} ; rest
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      Comment = node(:body)
+      Heredoc = node(:body)
+      Raw = node(:body)
+      Statement = node(:body)
+
+      root :items
+      ignore :spacing
+
+      rule(:items) { item.rep }
+      rule(:item) { either(comment, heredoc, raw, statement) }
+      rule(:comment) { seq(str("/*"), commit, upto("*/").as(:body), "*/").to(Comment) }
+      rule(:heredoc) { seq(str("<<EOS"), commit, upto(/^EOS$/).as(:body), "EOS").to(Heredoc) }
+      rule(:raw) { seq(str("{{"), commit, upto(close).text.as(:body), close).to(Raw) }
+      rule(:close) { either(str("}}"), seq(str("%"), commit, str("}"))) }
+      rule(:statement) { seq(upto(either(";", eof)).as(:body), ";").to(Statement) }
+    end
+
+    FIXED = ["/* a */", "/**/ /* é * / */", "/* never", "<<EOS\nbody\nEOS", "<<EOS\nx EOS\nEOS ;",
+             "<<EOS\nunterminated", "{{ a }}", "{{ é %} }}", "{{ a %", "{{", "a b;", "a b", ";;", "", " "].freeze
+    TOKENS = ["/*", "*/", "*", "/", "<<EOS", "\nEOS", "EOS", "\n", "{{", "}}", "%", "%}", "}", ";", " ", "a",
+              "é"].freeze
+  end
+
   # Keywords in any case (nocase), with a commit after the first, a
   # keyword boundary (SELECTED is a name) and a non-ASCII literal
   # (ÉCOLE matches école). Not straße: Ruby's /i folds ß to ss, Spinel's
@@ -474,6 +507,7 @@ module Examples
     [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), lvalues(count),
      json(count), email(count), toml(count),
      numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), select(count),
+     upto(count),
      *one_type(count),
      *entries(count)]
   end
@@ -600,6 +634,12 @@ module Examples
     soup = Differential.fuzz(Cycles::TOKENS, rng, count, 8)
     inputs = ["!(5)7", "!x(#{"9" * 25})", "!((#{"9" * 25}))1", "!1", "(7)", "!", ""] + soup + soup.map { "!#{_1}" }
     Example.new("cycles", Cycles::Grammar, "CyclesCompiled", inputs)
+  end
+
+  def upto(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    inputs = Upto::FIXED + Differential.fuzz(Upto::TOKENS, rng, count, 8)
+    Example.new("upto", Upto::Grammar, "UptoCompiled", inputs)
   end
 
   def mixed(count)

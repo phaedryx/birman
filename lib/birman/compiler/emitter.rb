@@ -147,6 +147,7 @@ module Birman
         when Named then compile_matcher(matcher.inner, want, name)
         when To then to(matcher, want, name)
         when Text then text(matcher, want, name)
+        when Upto then upto(matcher, want, name)
         when SpannedMatcher then spanned(matcher, want, name)
         when Infix then infix(matcher, want, name)
         when Lexeme then lexeme(matcher, want, name)
@@ -243,8 +244,48 @@ module Birman
         end
       end
 
+      # Everything up to the terminator, as the interpreter's Upto.
+      def upto(matcher, want, name)
+        define(:upto, matcher, want, name) do |v|
+          "#{find(matcher.terminator)}\n#{"#{v} = @input.byteslice(p, q - p)\n" if v}q"
+        end
+      end
+
+      # Sets q to where stop first matches at or after p, or returns FAIL
+      # having recorded what it expected at the end. Exact text or a
+      # regexp is one byteindex, which would have found a match at the
+      # end, so a miss is recorded as the terminator's own would be. Else
+      # a negative lookahead at each character, and at the end a positive
+      # one, which records what the terminator expected there.
+      def find(stop)
+        case stop
+        when Str then "q = @input.byteindex(#{stop.str.inspect}, p)\n#{missing(stop.str.inspect)}"
+        when Pat then "q = @input.byteindex(#{searched(stop.re)}, p)\n#{missing(stop.source)}"
+        else
+          miss = compile_matcher(Not.new(stop), false)
+          at_end = compile_matcher(And.new(stop), false)
+          <<~RUBY
+            bytes = BirmanRT.single_byte?(@input)
+            q = p
+            while q < @len && #{miss.name}(q) != FAIL
+              q += bytes ? 1 : BirmanRT.char_width(@input.getbyte(q))
+            end
+            q = #{at_end.name}(q) if q == @len
+            return FAIL if q == FAIL
+          RUBY
+        end
+      end
+
+      def missing(expected) = "return fail_at(@len, #{expected.inspect}) if q.nil?\n"
+
       def anchored(re)
         Regexps.anchored(re)
+      rescue Error => e
+        raise Error, "rule :#{@rule}: #{e.message}"
+      end
+
+      def searched(re)
+        Regexps.searched(re)
       rescue Error => e
         raise Error, "rule :#{@rule}: #{e.message}"
       end
@@ -598,7 +639,7 @@ module Birman
         when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
-        when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher then nil
+        when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher, Upto then nil
         when Infix then hash_keys(matcher.operand, seen) && :unknown # with no operator, the operand's value
         when Send then Types::SENDS.key?(matcher.method_name) && matcher.method_name != :to_h ? nil : :unknown
         when Const then matcher.constant.is_a?(Hash) ? matcher.constant.keys : nil

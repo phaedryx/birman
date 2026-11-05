@@ -101,6 +101,25 @@
   node class can't be named `Spanned`, as it couldn't be `Span`). The
   internal `Birman::Lit` and `Birman::Nocase` now name their member
   `str`, as `Str` does: a member named `text` hid `.text` on literals.
+- `upto(t)`, the text before the first place `t` matches (Citrus's
+  `~"end"`), for block comments, raw blocks and heredoc bodies:
+  `seq(str("/*"), upto("*/"), "*/")`. It leaves `t` for what comes
+  next and skips no spacing, as `str` and `match` don't. A String is
+  exact text, as `str` takes it (no keyword boundary), and a String or
+  Regexp is found with one `byteindex`, so on a long comment it's about
+  a thousand times faster than `seq(t.absent, any).rep`; a regexp sees
+  the whole input, so `^` and lookbehind work. Any other matcher is
+  tried at each character as a lookahead, where a commit only means
+  "not here". Unlike Citrus's, it matches nothing when `t` is right
+  there (`/**/`), and where `t` never matches it fails at the end of
+  the input, as `t` would there (`expected "*/", found end of input`),
+  rather than taking the rest. `to_ast` has a new `[:upto, t]` node,
+  nullable, calling what `t` calls where it starts; `to_ebnf` shows
+  `(!"*/" /./m)* &"*/"`; `Birman.upto` works without a grammar; and
+  `to_ruby` generates it, allowing in its regexp the `\A`, `^`,
+  lookbehind and leading `\b` it refuses in `match`, since both search
+  the whole input. `upto` is now a method the grammar relies on, so a
+  rule can't take that name.
 
 ### Fixed
 

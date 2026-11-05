@@ -127,6 +127,7 @@ puts Lists.parse("[1, [2, x], []]").message
 | `x.to(Node)`                  | build a node from that hash (or from a single value) |
 | `x.text`                      | the source text `x` consumed, as a String            |
 | `x.spanned`                   | `Spanned(value:, span:)`: `x`'s value with its span   |
+| `upto("*/")`                  | the text before the first `"*/"`, which it leaves for what comes next (see [Up to a terminator](#up-to-a-terminator)) |
 | `infix(operand, "+", "-", node: BinOp)` | left-associative binary operators; `BinOp` needs `op`, `left`, `right` fields |
 | `parens(x)`, `between(o, c, x)` | wrapped                                            |
 | `sep_by(x, ",")`, `sep_by1`   | separated lists                                      |
@@ -177,7 +178,8 @@ Declare `ignore :spacing` and whitespace (and comments, with
   `either`, `parens` and friends, as a rule body (`rule(:semi) { ";" }`),
   or after `>>`, `|`, `&` and `>`. They skip trailing spacing, and
   word-like ones (`"let"`) are keywords, so `"let"` won't match the
-  start of `letter`.
+  start of `letter`. One exception: the String in `upto("*/")` is exact
+  text (see [Up to a terminator](#up-to-a-terminator)).
 - `nocase("select")` is a literal matched in any case: `SELECT`,
   `Select` and `select` all match, and its value is `"select"` as
   written in the grammar, so the rest of the grammar compares against
@@ -481,6 +483,42 @@ too (a node's `==` ignores its span). `.text` and `.spanned` keep a
 `.as` name from inside and take one from outside, are left out of
 `to_ebnf`, and generated parsers give the same values.
 
+## Up to a terminator
+
+`upto(t)` matches everything before the first place `t` matches, for
+block comments, raw blocks and heredoc bodies. Its value is that text,
+and `t` is left for what comes next:
+
+```ruby
+rule(:comment) { seq(str("/*"), commit, upto("*/"), "*/") }   # ["/*", " a * b ", "*/"]
+rule(:heredoc) { seq(str("<<EOS\n"), upto(/^EOS$/), "EOS") }
+```
+
+It's `seq(t.absent, any).rep` (as Citrus's `~"*/"` is), without trying
+`t` as a matcher at every character:
+
+- A String is the exact text, as `str` takes it, not a literal: no
+  keyword boundary, no spacing. A String or a Regexp is found with one
+  search (about a thousand times faster on a long comment). A regexp
+  sees the whole input, so `^` and lookbehind work.
+- Any other matcher (`keyword("end")`, a rule, an `either`) is tried
+  at each character, as a lookahead: a commit inside it only means
+  "not here".
+- It's raw, like `str` and `match`, skipping no spacing. Whatever comes
+  next decides: the literal `"*/"` skips spacing after it, `str("*/")`
+  doesn't (inside a `spacing` rule's comment, use `str`).
+- It matches nothing when `t` is right there (`/**/`), where Citrus's
+  fails.
+- Where `t` never matches, it fails at the end of the input, as `t`
+  would there: `expected "*/", found end of input`. (Citrus's
+  succeeds, taking the rest of the input.) A `commit` before it makes
+  that the parse's error. For a line comment that may end the input,
+  write `upto(/\n|\z/)`.
+
+`to_ebnf` shows it as what it means: `(!"*/" /./m)* &"*/"`. It finds
+the first `t`, so nested comments (`/* /* */ */`) need a rule of their
+own.
+
 ## Pieces
 
 - `Birman::Rules`: `Whitespace`, `Comments`, `Numbers`, `Strings`,
@@ -629,7 +667,8 @@ the rule, for what it can't translate faithfully:
 - `.map { }` blocks (their source is lost) and custom matcher classes
 - regexps using `\A`, `^`, lookbehind, or `\b`/`\B` at their start:
   the generated parser scans from the current position, where those
-  would see less of the input than the interpreter's do
+  would see less of the input than the interpreter's do (not `upto`'s,
+  which both search the whole input for)
 - regexps with a wide `{m,n}` (more than 16 apart) alongside a
   lookaround, atomic group, backreference or lazy interval: Spinel's
   regexp engine tries every length on those, exponentially. Making the

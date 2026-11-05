@@ -75,6 +75,7 @@ module Birman
       in [:not, inner]        then wrap("!#{expr(inner, ATOM)}", prec > PREFIX)
       in [:and, inner]        then wrap("&#{expr(inner, ATOM)}", prec > PREFIX)
       in [:rep, min, max, inner] then "#{expr(inner, ATOM)}#{suffix(min, max)}"
+      in [:upto, stop] then wrap("(!#{expr(stop, ATOM)} /./m)* &#{expr(stop, ATOM)}", prec > SEQ)
       end
     end
 

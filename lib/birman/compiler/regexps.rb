@@ -8,7 +8,9 @@ module Birman
     # the generated parser's scanner starts its subject at the position,
     # where they would silently mean something else. Those are refused.
     # Everything else gets a leading \A: in Spinel an unanchored miss
-    # searches the rest of the input.
+    # searches the rest of the input. An upto's terminator is searched for
+    # with byteindex over the whole input instead, as in the interpreter,
+    # so there they're faithful and only Spinel's backtracking is refused.
     # [module.Compiler.Regexps]
     # purpose = "Checking and anchoring the grammar's regexps"
     module Regexps
@@ -22,6 +24,14 @@ module Birman
 
         # With /x, a trailing comment would swallow the closing paren.
         Regexp.new("\\A(?:#{re.source}#{"\n" if extended})", re.options).inspect
+      end
+
+      # The regexp literal to emit for re, searched for (upto's terminator).
+      def searched(re)
+        problem = Check.new(re.source, re.options.anybits?(Regexp::EXTENDED), searching: true).problem
+        raise Error, "#{re.inspect} can't be compiled: it uses #{problem}" if problem
+
+        re.inspect
       end
 
       # Walks a regexp's source, tracking whether something is certain to
@@ -46,9 +56,12 @@ module Birman
         OPTIONAL = /[?*]|\{,|\{0+[,}]/
         QUANTIFIER = /(?:[?*+]|\{\d*,?\d*\})[?+]?/
 
-        def initialize(source, extended)
+        # searching: the regexp is searched for over the whole input, so
+        # what sees before the position is faithful.
+        def initialize(source, extended, searching: false)
           @scanner = StringScanner.new(source)
           @extended = extended
+          @searching = searching
           @frames = [Frame.new(false, true, false, false, false, 0)]
           @backtracks = false
           @wide = []
@@ -66,6 +79,8 @@ module Birman
 
         def frame = @frames.last
 
+        def unless_searching(what) = @searching ? nil : what
+
         # Spinel runs a regexp on its backtracking engine if it has any of
         # these, and there a wide {m,n} goes exponential when every length
         # fails. Only a group that is (?>x{m,n}) and nothing else is safe.
@@ -76,12 +91,12 @@ module Birman
 
         def step # rubocop:disable Metrics
           s = @scanner
-          if s.skip(/\\A/) then "\\A"
-          elsif s.skip(/\\[bB]/) then frame.now ? nil : "\\b or \\B before anything is matched"
+          if s.skip(/\\A/) then unless_searching("\\A")
+          elsif s.skip(/\\[bB]/) then frame.now ? nil : unless_searching("\\b or \\B before anything is matched")
           elsif s.skip(/\\[zZG]/) then nil
           elsif s.skip(/\\(?:\d|k<\w+>|k'\w+')/) then backreference
           elsif s.skip(/\\[pPu]\{[^}]*\}|\\./m) then atom
-          elsif s.skip(/\(\?<[=!]/) then "lookbehind"
+          elsif s.skip(/\(\?<[=!]/) then @searching ? open_group(lookaround: true) : "lookbehind"
           elsif s.skip(/\(\?#[^)]*\)/) then nil
           elsif s.skip(/\(\?[=!]/) then open_group(lookaround: true)
           elsif s.skip(/\(\?>/) then open_group(lookaround: false, atomic: true)
@@ -89,7 +104,7 @@ module Birman
           elsif s.skip(/\((?:\?(?:[imx]*(?:-[imx]*)?:|>|<\w+>|'\w+'))?/) then open_group(lookaround: false)
           elsif s.skip(/\|/) then alternative
           elsif s.skip(/\)/) then close
-          elsif s.skip(/\^/) then "^"
+          elsif s.skip(/\^/) then unless_searching("^")
           elsif s.skip(/\[/) then character_class
           elsif @extended && s.skip(/\s+|#[^\n]*/) then nil
           else
