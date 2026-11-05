@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "pp"
 require_relative "support/examples"
 
 # parse(input, trace: true): the same result, with a Trace of the
@@ -389,6 +390,40 @@ class TraceTest < Minitest::Test
     assert_equal "#<Birman::Trace #{lists_trace.size} nodes, failed at 1:9>", lists_trace.inspect
     assert_equal "#<Birman::Trace #{Lists.parse("[]", trace: true).trace.size} nodes, succeeded>",
                  Lists.parse("[]", trace: true).trace.inspect
+  end
+
+  def test_a_custom_matchers_unknown_ast_doesnt_break_a_traced_parse
+    custom = Class.new do
+      include Birman::Matcher
+
+      def match(ctx, pos) = ctx.fail_at(pos, "custom")
+      def to_ast = [:weird, 1]
+    end.new
+    g = grammar { rule(:r) { either(custom, "(") } }
+    assert_equal g.parse("x"), g.parse("x", trace: true)
+    assert_equal :leaf, root_rule(g.parse("x", trace: true)).children.first.kind
+  end
+
+  def test_leftover_input_puts_the_result_on_the_root_rules_line
+    out = Lists.parse("[1] x", trace: true).trace.to_s
+    assert_equal "list 1:1 ✓ → 1:5 at 1:5: expected end of input, found \"x\"\n", out.lines.first
+    assert_equal "end of input 1:5 ✗\n", out.lines.last
+  end
+
+  def test_pretty_printing_a_node_is_short
+    root = JSONExample::Grammar.parse("[" * 200, trace: true).trace.root
+    assert_equal "#{root.inspect}\n", root.pretty_inspect
+  end
+
+  def test_a_rejecting_check_ignores_what_its_inner_match_expected
+    g = grammar do
+      rule(:r) { seq(match(/\d+/), match(/x/).maybe).check(:even?, "an even number") }
+      define_method(:even?) { |parts| parts[0].to_i.even? }
+    end
+    check = root_rule(g.parse("3y", trace: true)).children.first
+    assert_equal [0, ["an even number"]], [check.furthest, check.expected]
+    assert_match(/check :even\? 1:1 ✗ expected an even number rejected by :even\?$/,
+                 g.parse("3y", trace: true).trace.to_s)
   end
 
   # The guard against TracingContext drifting from Context and Ref: a

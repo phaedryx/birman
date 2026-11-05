@@ -54,10 +54,12 @@ module Birman
       # line and each of its ancestors, whether it was the last child.
       def lines(top)
         out = []
-        last_top = top.last
+        # The result goes on the root rule's line: the last top-level
+        # node but for an end of input after it.
+        result_top = top.reject { _1.node.kind == :end_of_input }.last || top.last
         stack = top.reverse.map { [_1, []] }
         while (item, flags = stack.pop)
-          out << [flags, text(item, top: item.equal?(last_top))]
+          out << [flags, text(item, top: item.equal?(result_top))]
           kids = children(item, flags.size)
           kids.each_with_index.reverse_each { |kid, i| stack << [kid, flags + [i == kids.size - 1]] }
         end
@@ -157,7 +159,7 @@ module Birman
 
       # What went wrong, for a failed node.
       def notes(node) # rubocop:disable Metrics
-        return "" if node.to
+        return "" if node.to || node.kind == :end_of_input # its description says what it expected
         return " stack ran out" if node.notes[:stack_ran_out]
 
         notes = node.notes

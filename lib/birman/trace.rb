@@ -31,6 +31,10 @@ module Birman
         to_part = to ? " → #{to}" : " ✗"
         "#<Birman::Trace::Node #{kind} #{description} #{from}#{to_part} #{children.size} children>"
       end
+
+      # pp (and so IRB) would print every member, recursing through the
+      # whole subtree.
+      def pretty_print(q) = q.text(inspect)
     end
 
     # A node while the parse is running: opened when an attempt begins,
@@ -58,8 +62,11 @@ module Birman
       # As it closes: its furthest becomes the furthest of its own
       # failures and its children's, leaving out lookaheads' and, under
       # quiet, everything.
+      #
+      # A check that rejected its match drops what the match expected, as
+      # Context does, so only its own rejection counts.
       def reach
-        return if kind == :quiet
+        return if kind == :quiet || notes[:rejected_by]
 
         children.each do |child|
           next if child.furthest.nil? || child.notes[:in_lookahead]

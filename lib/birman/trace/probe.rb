@@ -68,26 +68,36 @@ module Birman
 
       # The text a node is shown as: its EBNF, but sep_by and operators
       # as written, since their EBNF is long, and label, check and quiet
-      # as themselves. A matcher with no to_ast is
-      # shown by its class.
-      def describe(matcher) # rubocop:disable Metrics
+      # as themselves.
+      def describe(matcher)
         case matcher
         when SepBy
-          args = [matcher.item, matcher.sep].map { EBNF.expr(_1.to_ast, EBNF::CHOICE) }
+          args = [matcher.item, matcher.sep].map { ebnf(_1) }
           args << "trailing: true" if matcher.trailing
           "#{matcher.min.zero? ? "sep_by" : "sep_by1"}(#{args.join(", ")})"
-        when Operators then "operators(#{EBNF.expr(matcher.operand.to_ast, EBNF::CHOICE)})"
+        when Operators then "operators(#{ebnf(matcher.operand)})"
         # These three get a node of their own over their inner matcher's,
         # so they're shown as what they add to it.
         when Label then "label #{matcher.name.inspect}"
         when Check then "check :#{matcher.method_name}"
         when Quiet then "quiet"
-        else EBNF.expr(matcher.to_ast, EBNF::CHOICE)
+        else ebnf(matcher)
         end
-      rescue NoMethodError => e
-        raise unless e.name == :to_ast
+      end
 
-        matcher.class.name || matcher.class.inspect
+      # A custom matcher may have no to_ast, or one EBNF can't read; it's
+      # shown by its class then. to_ast's own errors still raise, as they
+      # do untraced (the left-recursion analysis calls it); only EBNF's,
+      # which run just for the trace, are caught.
+      def ebnf(matcher)
+        return matcher.class.name || matcher.class.inspect unless matcher.respond_to?(:to_ast)
+
+        ast = matcher.to_ast
+        begin
+          EBNF.expr(ast, EBNF::CHOICE)
+        rescue NoMatchingPatternError, NoMethodError, TypeError
+          matcher.class.name || matcher.class.inspect
+        end
       end
     end
   end
