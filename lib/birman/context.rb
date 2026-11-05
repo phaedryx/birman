@@ -129,6 +129,12 @@ module Birman
       end
     end
 
+    # Input was left over after the root rule matched up to pos.
+    def end_of_input(pos) = fail_at(pos, "end of input")
+
+    # An untraced parse has no Trace (see TracingContext#trace).
+    def trace = nil
+
     def commit_failure! = raise(Committed.new(@furthest, @expected.dup))
 
     # A positive lookahead: does matcher match at pos? Nothing is

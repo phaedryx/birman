@@ -33,13 +33,19 @@ module Birman
   Success = Data.define(:value) do
     # input and byte_pos: where the match ended, for pos, which converts
     # to characters only when asked. Set before super, which freezes it.
-    def initialize(value:, input: nil, byte_pos: nil)
+    def initialize(value:, input: nil, byte_pos: nil, trace: nil)
       @input = input
       @byte_pos = byte_pos
+      @trace = trace
       super(value:)
+      trace&.__finish(self)
     end
 
     def pos = @input && Birman.char_offset(@input, @byte_pos)
+
+    # The Trace of a parse made with trace: true, else nil. Not a member,
+    # so == and inspect leave it out, and Marshal drops it.
+    attr_reader :trace
 
     # Data's own Marshal support would set the ivars after freezing.
     def marshal_dump = [value, @input, @byte_pos]
@@ -78,7 +84,18 @@ module Birman
   Failure = Data.define(:input, :pos, :expected, :committed, :reason) do
     def self.at(span, reason) = new(input: span.input, pos: span.from, expected: [], committed: true, reason:)
 
-    def initialize(input:, pos:, expected:, committed:, reason: nil) = super
+    def initialize(input:, pos:, expected:, committed:, reason: nil, trace: nil) # rubocop:disable Metrics/ParameterLists
+      @trace = trace
+      super(input:, pos:, expected:, committed:, reason:)
+      trace&.__finish(self)
+    end
+
+    # As Success#trace.
+    attr_reader :trace
+
+    # Data's own Marshal support would set @trace after freezing.
+    def marshal_dump = to_h
+    def marshal_load(fields) = initialize(**fields)
 
     def success? = false
     def failure? = true

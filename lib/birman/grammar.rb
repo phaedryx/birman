@@ -197,14 +197,15 @@ module Birman
     #   "Bad input never raises: invalid UTF-8 and too-deep nesting are Failures with reason set",
     #   "\"The first parse\" is per root: a root: is checked on its first parse, for what it reaches"
     # ]
-    def parse(input, root: nil, consume: true, offset: 0)
+    def parse(input, root: nil, consume: true, offset: 0, trace: false)
       input = Birman.read_input(input)
       analysis = left_recursion(root)
       if (bad = Birman.invalid_byte(input))
-        return build_failure(input, bad, [], reason: "invalid #{input.encoding}")
+        traced = Trace.invalid_input(input, Birman.char_offset(input, bad), ignore_rule) if trace
+        return build_failure(input, bad, [], reason: "invalid #{input.encoding}", trace: traced)
       end
 
-      __match_all(input, root || root_rule, consume, analysis, Birman.byte_offset(input, offset))
+      __match_all(input, root || root_rule, consume, analysis, Birman.byte_offset(input, offset), trace)
     end
 
     # Returns the value or raises ParseError, worded by formatter.
@@ -287,19 +288,21 @@ module Birman
       LeftRecursion.new(__analyzable_asts(entries), ignore: ignore_rule).check!
     end
 
-    def __match_all(input, root, consume, analysis, from)
-      ctx = Context.new(input, self, ignore_rule, analysis, from)
+    # trace: true runs a TracingContext, chosen here once so that an
+    # untraced parse has no check for it anywhere.
+    def __match_all(input, root, consume, analysis, from, trace) # rubocop:disable Metrics
+      ctx = (trace ? TracingContext : Context).new(input, self, ignore_rule, analysis, from)
       result = Ref.new(root).match(ctx, ctx.start)
       if result && (!consume || result.pos == input.bytesize)
-        return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos))
+        return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos), trace: ctx.trace)
       end
 
-      ctx.fail_at(result.pos, "end of input") if result
-      build_failure(input, ctx.furthest, ctx.expected)
+      ctx.end_of_input(result.pos) if result
+      build_failure(input, ctx.furthest, ctx.expected, trace: ctx.trace)
     rescue Committed => e
-      build_failure(input, e.pos, e.expected, committed: true)
+      build_failure(input, e.pos, e.expected, committed: true, trace: ctx.trace)
     rescue SystemStackError
-      build_failure(input, ctx.position, [], reason: "input is nested too deeply")
+      build_failure(input, ctx.position, [], reason: "input is nested too deeply", trace: ctx.trace)
     end
 
     # As to_ast, leaving out what it can't describe: undefined rules
@@ -365,8 +368,9 @@ module Birman
       Integer(value, base)
     end
 
-    def build_failure(input, byte_pos, expected, committed: false, reason: nil)
-      Failure.new(input:, pos: Birman.char_offset(input, byte_pos), expected: expected.uniq, committed:, reason:)
+    def build_failure(input, byte_pos, expected, committed: false, reason: nil, trace: nil) # rubocop:disable Metrics/ParameterLists
+      Failure.new(input:, pos: Birman.char_offset(input, byte_pos), expected: expected.uniq, committed:, reason:,
+                  trace:)
     end
 
     def root_rule = self.class.root || raise(ArgumentError, "#{self.class} has no root rule")
