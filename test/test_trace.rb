@@ -277,6 +277,120 @@ class TraceTest < Minitest::Test
     assert_equal [:b, :r, 3], [b.rule, b.notes[:took_longest], b.to]
   end
 
+  # The spec's reference rendering: the README's Lists grammar, on input
+  # with a committed failure, with the default filters.
+  REFERENCE = <<~'TREE'
+    list 1:1 ✗ committed at 1:9: expected /\d+/ or "[", found "x"
+    ├─ "[" 1:1 ✓ → 1:2
+    └─ sep_by(item, ",") 1:2 ✗ unwound by commit
+       ├─ item 1:2 ✓ → 1:3
+       ├─ "," 1:3 ✓ → 1:5
+       └─ item 1:5 ✗ unwound by commit
+          ├─ /\d+/ 1:5 ✗ found "["
+          └─ list 1:5 ✗ unwound by commit
+             ├─ "[" 1:5 ✓ → 1:6
+             ├─ sep_by(item, ",") 1:6 ✓ → 1:7
+             │  ├─ item 1:6 ✓ → 1:7
+             │  ├─ "," 1:7 ✓ → 1:9
+             │  └─ item 1:9 ✗
+             │     ├─ /\d+/ 1:9 ✗ found "x"
+             │     └─ list 1:9 ✗
+             │        └─ "[" 1:9 ✗ found "x"
+             └─ "]" 1:7 ✗ committed: expected /\d+/ or "[" at 1:9
+  TREE
+
+  def lists_trace = Lists.parse("[1, [2, x], []]", trace: true).trace
+
+  def test_reference_rendering
+    assert_equal REFERENCE, lists_trace.to_s
+  end
+
+  def test_rendering_twice_gives_the_same_text
+    t = lists_trace
+    assert_equal t.to_s, t.to_s
+    t.to_s(all: true, hide: [])
+    t.to_s(at: 1, depth: 2)
+    assert_equal REFERENCE, t.to_s
+  end
+
+  def test_all_expands_every_node
+    t = lists_trace
+    assert_equal t.size - 1, t.to_s(all: true, hide: []).lines.size # every node but the top one
+    assert_operator t.to_s(all: true).lines.size, :<, t.size - 1 # spacing hidden
+    assert_includes t.to_s(all: true), "   ├─ item 1:2 ✓ → 1:3\n   │  └─ /\\d+/ 1:2 ✓ → 1:3\n"
+  end
+
+  def test_at_moves_the_expanded_path
+    out = lists_trace.to_s(at: 1)
+    assert_includes out, "   ├─ item 1:2 ✓ → 1:3\n   │  └─ /\\d+/ 1:2 ✓ → 1:3\n   ├─ \",\" 1:3 ✓ → 1:5\n"
+    assert out.end_with?("   └─ item 1:5 ✗ unwound by commit\n")
+  end
+
+  def test_depth_caps_and_summarizes
+    out = lists_trace.to_s(depth: 1)
+    assert_match(/\A#{Regexp.escape(REFERENCE.lines.first(3).join)}   └─ … \(\d+ nodes\)\n\z/, out)
+  end
+
+  def test_success_defaults_to_four_levels
+    out = Lists.parse("[[[[[[1]]]]]]", trace: true).trace.to_s
+    assert_match(/\Alist 1:1 ✓ → 1:14\n/, out)
+    depths = out.lines.map { _1[/\A[│ ├└─]*/].size / 3 }
+    assert_equal 5, depths.max
+    assert(out.lines.select { _1[/\A[│ ├└─]*/].size / 3 == 5 }.all? { _1.include?("… (") })
+  end
+
+  def test_hide_defaults_to_the_ignore_rule
+    t = JSONExample::Grammar.parse("[1, ]", trace: true).trace
+    refute_match(/\b#{JSONExample::Grammar.ignore}\b/, t.to_s)
+    refute_match(/\b#{JSONExample::Grammar.ignore}\b/, t.to_s(all: true))
+    assert_match(/\b#{JSONExample::Grammar.ignore}\b/, t.to_s(hide: [], all: true))
+  end
+
+  def test_memo_origin_hidden_in_a_lookahead_is_expanded_under_the_hit
+    g = grammar do
+      rule(:r) { seq(word.present, word, "!") }
+      rule(:word) { match(/[a-z]+/) }
+    end
+    out = g.parse("hi?", trace: true).trace.to_s
+    assert_match(/word 1:1 ✓ → 1:3 \(memo\)\n.*└─ first tried here, under &word\n.*└─ word 1:1 ✓ → 1:3\n/, out)
+  end
+
+  def test_left_recursion_renders_rounds
+    g = grammar do
+      include Birman::Rules::Numbers
+
+      rule(:r) { either(seq(r, "-", integer), integer) }
+    end
+    out = g.parse("1-2-3", trace: true).trace.to_s(all: true)
+    assert_includes out, "├─ round 1 (seed fails) ✓ → 1:2\n"
+    assert_includes out, "├─ round 2 (seed ends at 1:2) ✓ → 1:4\n"
+    assert_includes out, "└─ round 4 (seed ends at 1:6) ✓ → 1:2, no further: stops (keeps round 3)\n"
+    assert_includes out, "r 1:1 ✓ → 1:2 (seed)\n"
+    assert_includes out, "r 1:1 ✗ (seed fails)\n"
+  end
+
+  def test_too_deep_cuts_the_middle
+    out = JSONExample::Grammar.parse("[" * 3000, trace: true).trace.to_s
+    assert_match(/\Avalue 1:1 ✗ at 1:\d+: input is nested too deeply\n/, out)
+    assert_match(/… \(\d+ levels\)/, out)
+    assert_operator out.lines.size, :<, 80
+  end
+
+  def test_invalid_utf8_renders_one_line
+    t = Lists.parse("[1\xFF]".dup.force_encoding("UTF-8"), trace: true).trace
+    assert_equal "(input) ✗ invalid UTF-8 at 1:3\n", t.to_s
+  end
+
+  def test_standalone_root_renders_as_parse
+    assert_match(/\Aparse 1:1 ✗/, Birman.parse(Birman.seq("(", ")"), "(x", trace: true).trace.to_s)
+  end
+
+  def test_inspect_is_short
+    assert_equal "#<Birman::Trace #{lists_trace.size} nodes, failed at 1:9>", lists_trace.inspect
+    assert_equal "#<Birman::Trace #{Lists.parse("[]", trace: true).trace.size} nodes, succeeded>",
+                 Lists.parse("[]", trace: true).trace.inspect
+  end
+
   # The guard against TracingContext drifting from Context and Ref: a
   # traced parse gives exactly the untraced result, except on input
   # nested deeper than a traced parse can go, which fails as too deep.

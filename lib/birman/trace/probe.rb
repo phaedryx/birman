@@ -67,15 +67,21 @@ module Birman
       end
 
       # The text a node is shown as: its EBNF, but sep_by and operators
-      # as written, since their EBNF is long. A matcher with no to_ast is
+      # as written, since their EBNF is long, and label, check and quiet
+      # as themselves. A matcher with no to_ast is
       # shown by its class.
-      def describe(matcher)
+      def describe(matcher) # rubocop:disable Metrics
         case matcher
         when SepBy
           args = [matcher.item, matcher.sep].map { EBNF.expr(_1.to_ast, EBNF::CHOICE) }
           args << "trailing: true" if matcher.trailing
           "#{matcher.min.zero? ? "sep_by" : "sep_by1"}(#{args.join(", ")})"
         when Operators then "operators(#{EBNF.expr(matcher.operand.to_ast, EBNF::CHOICE)})"
+        # These three get a node of their own over their inner matcher's,
+        # so they're shown as what they add to it.
+        when Label then "label #{matcher.name.inspect}"
+        when Check then "check :#{matcher.method_name}"
+        when Quiet then "quiet"
         else EBNF.expr(matcher.to_ast, EBNF::CHOICE)
         end
       rescue NoMethodError => e

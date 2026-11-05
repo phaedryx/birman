@@ -186,6 +186,34 @@ module Birman
 
     def size = Trace.count(root)
 
+    # The tree, filtered:
+    #
+    # at: a character offset; every node that reached it (began at or
+    # before it and got to or failed at or past it, not counting
+    # lookaheads) is expanded, and its other children are shown on a
+    # line each. The default is a Failure's pos.
+    # all: true expands everything, whatever at: says. The default for a
+    # Success, with depth: 4.
+    # depth: how many levels below the top are expanded; the rest are
+    # counted on one line.
+    # hide: rules whose calls aren't shown at all. The default is the
+    # grammar's ignore rule.
+    # [method."Trace#to_s"]
+    # params = ["at: Integer (character offset)", "all: Boolean = false", "depth: Integer | nil",
+    #           "hide: Array of Symbol (default: the ignore rule)"]
+    # returns = "String: one node per line, as an ASCII tree"
+    def to_s(at: :default, all: false, depth: nil, hide: :default)
+      Renderer.new(self, at:, all:, depth:, hide:).call
+    end
+
+    def inspect
+      outcome = if result.nil? then "unfinished"
+                elsif result.success? then "succeeded"
+                else "failed at #{Renderer.new(self, at: 0, all: true, depth: nil, hide: []).position(result.pos)}"
+                end
+      "#<Birman::Trace #{size} nodes, #{outcome}>"
+    end
+
     def self.count(node)
       n = 0
       stack = [node]
