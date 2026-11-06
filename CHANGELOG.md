@@ -245,7 +245,7 @@
   neither rewound nor closed, and a StringIO is read as before.
 - `to_ebnf` quoted literals with `inspect`, which escapes non-ASCII
   when `Encoding.default_external` isn't Unicode, so the same grammar
-  printed `"école"` under a UTF-8 locale and `"école"` under
+  printed `"école"` under a UTF-8 locale and `"\u00E9cole"` under
   `LANG=C`. Literals (and `nocase`'s `"..."i`) now keep every printable
   character as itself, escaping only quotes, backslashes and
   unprintable characters as `inspect` does (`"\"\\\t"`), whatever the
