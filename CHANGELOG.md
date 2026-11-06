@@ -179,6 +179,46 @@
   lookbehind and leading `\b` it refuses in `match`, since both search
   the whole input. `upto` is now a method the grammar relies on, so a
   rule can't take that name.
+- Railroad diagrams, drawn from `to_ast` in plain Ruby (no JavaScript,
+  no new dependencies). `Grammar.to_svg(:rule)` is one rule's diagram
+  as a standalone SVG document with its own styles, the root's when no
+  rule is given. A name that isn't a rule raises `ArgumentError`,
+  `undefined rule :name`, as `parse(root:)` does, and so does a missing
+  argument on a grammar with no root (`no rule given, and the grammar
+  has no root`). `Grammar.to_html(title:)` is a page of every rule's
+  diagram, in `to_ast` order, under the grammar's class name (or
+  "Grammar" for an anonymous class) unless titled. The rules the root
+  doesn't reach follow a "Not reachable from the root" heading, which a
+  grammar with no root leaves out. Each rule is a `#rule-name` anchor,
+  and every rule reference in a diagram links to it. Literals
+  (`"select"i` for `nocase`) and regexps are rounded boxes, rules square
+  ones, and a commit point is an orange `~` on the track. A choice
+  stacks its alternatives in order, the first on the main line. `*`,
+  `+` and `?` are the usual loop and bypass, and other bounds note
+  their count under the loop ("2 to 3 times", "up to 4 times",
+  "exactly 1 time"). Lookaheads, guards (`x.absent & y` draws "not
+  followed by" x, then y), checks and labels inside a rule are dashed
+  boxes captioned with what they are. `upto(t)` is a "text up to" box
+  around `t`, dotted as a lookahead is, since `t` is found and not
+  taken: `seq("/*", upto("*/"), "*/")` draws `"*/"` twice, once in the
+  box and once after it. A rule's own label, under any
+  wrappers, isn't boxed, since it names the whole rule; the page shows
+  it beside the rule's name. Actions, `text`, `spanned`, `lexeme` and
+  `quiet` are drawn as what they wrap, as `to_ebnf` prints them. An AST
+  node type the renderer doesn't know is a box naming the type, without
+  its parts, so matchers added later draw without raising. Colors are
+  CSS custom properties set through `:where(:root)`, so a page's own
+  `:root` rule overrides them wherever it comes, with a
+  `prefers-color-scheme: dark` palette, and every `var()` also names
+  its light color for renderers without custom properties (librsvg).
+  Box widths come from character counts in a monospace font, so the
+  output is deterministic and in whole pixels; a wide character still
+  counts as one. Literals and labels are quoted as `inspect` would, but
+  with printable characters as themselves whatever
+  `Encoding.default_external` is (`"école"`, not `"\u00E9cole"` under
+  `LANG=C`). Both work on an instance too, and `to_svg` and
+  `to_html` are now methods the grammar relies on, so a rule can't take
+  those names. `examples/railroad.rb` draws every example grammar.
 
 ### Changed
 

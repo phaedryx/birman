@@ -83,7 +83,9 @@ recursion instead of `infix`, `examples/json.rb` for a full JSON parser (tested 
 official toml-test suite), `examples/query.rb` for a GitHub-style
 search query (lookahead, implicit AND, a custom error formatter) with
 an evaluator that filters records and a compiler to SQL for
-ActiveRecord's `where`, and `Grammar.to_ebnf` to print any grammar.
+ActiveRecord's `where`, `Grammar.to_ebnf` to print any grammar, and
+`examples/railroad.rb` to draw them all (see
+[Railroad diagrams](#railroad-diagrams)).
 
 ## Why not a regex?
 
@@ -776,6 +778,8 @@ own.
   first used, then the rest in declaration order. `to_ebnf` lists the
   rest after a blank line, so the rules nothing reaches are easy to
   spot. A grammar with no root lists everything in declaration order.
+- `Grammar.to_svg(:rule)` and `Grammar.to_html` draw railroad diagrams
+  (see [Railroad diagrams](#railroad-diagrams)).
 - Rules are methods, so they compose and override through `include`.
   Write your own rule module with `extend Birman::RuleSet`, or
   `include Birman::Grammar` in a module to share rules, nodes and
@@ -793,6 +797,45 @@ own.
   saying whose method it would replace, instead of silently breaking
   the grammar. Redefining a rule is fine, and so is replacing your
   grammar's own private helpers.
+
+## Railroad diagrams
+
+`Grammar.to_html` draws every rule as a railroad (syntax) diagram on
+one self-contained page, and `Grammar.to_svg(:rule)` draws one rule
+(the root by default) as a standalone SVG, for a README or docs. Both
+are plain Ruby (no JavaScript, no dependencies) and work on an
+instance too.
+
+```ruby
+File.write("calc.html", Calc::Grammar.to_html)   # to_html(title: "Calc") to name the page
+File.write("sum.svg", Calc::Grammar.to_svg(:sum))
+```
+
+Literals (`"let"`, `"select"i`) and regexps are rounded boxes, and rules
+are square boxes that link to their own diagrams. A commit point is an
+orange `~` on the track. Alternatives stack in order, the first on the
+main line. A repeat loops back under what it repeats, an optional item
+has a way over it, and a bounded repeat notes its count ("2 to 3
+times"). Lookaheads ("not followed by", "followed by"), checks
+("check :defined") and labels inside a rule are dashed boxes captioned
+with what they are. `upto("*/")` is a dashed "text up to" box around
+`"*/"`, drawn as a lookahead because it finds the terminator without
+taking it, so `seq("/*", upto("*/"), "*/")` shows `"*/"` twice. A
+node type the renderer doesn't know, such as one a newer matcher
+adds, is a box naming the type rather than an error. A rule's own label is its name in errors, so the
+page shows it beside the rule's name instead of boxing the whole
+diagram. Actions, `text`, `spanned`, `lexeme` and `quiet` don't change
+what's accepted, so only what they wrap is drawn, as in `to_ebnf`. The
+page lists the rules in `to_ast` order, with those the root doesn't
+reach under a heading of their own.
+
+Colors are CSS custom properties (`--rr-lit`, `--rr-ref`, `--rr-line`
+and the rest), with a dark scheme under `prefers-color-scheme`; a page
+that embeds a diagram can set its own in `:root { ... }`. Widths come
+from character counts in a monospace font, not from font metrics, so a
+grammar gives byte-for-byte the same output on any machine, fit to
+check in or snapshot. A wide character (CJK, most emoji) still counts
+as one, so a literal made of them gets a box that's too narrow.
 
 ## Generating a parser
 
@@ -959,7 +1002,6 @@ to ss), and the same goes for `match(/straße/i)`.
 - Left recursion through cycles with no rule in common (see
   [Left recursion](#left-recursion)); give them a rule in common, or
   use `infix` or `operators`.
-- Railroad diagrams from `to_ast`
 
 ## Development
 
@@ -974,6 +1016,7 @@ ruby examples/json.rb
 ruby examples/email.rb
 ruby examples/toml.rb
 ruby examples/query.rb
+ruby examples/railroad.rb  # diagrams of every example grammar, in tmp/railroad/
 ruby bench/json.rb  # vs JSON.parse, Parslet, Treetop, Citrus (installs them);
                     # also to_ruby, and its Spinel binary if Spinel is found
 ```
