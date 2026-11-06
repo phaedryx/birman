@@ -101,6 +101,17 @@ module Birman
       # returns = "String: the grammar in PEG-flavored EBNF; rules the root doesn't reach follow a blank line"
       def to_ebnf = instance.to_ebnf
 
+      # [method."Grammar.to_svg"]
+      # params = ["rule: Symbol = root"]
+      # returns = "String: the rule's railroad diagram, a standalone SVG document"
+      # raises = ["ArgumentError for an undefined rule, or none given without a root"]
+      def to_svg(rule = nil) = instance.to_svg(rule)
+
+      # [method."Grammar.to_html"]
+      # params = ["title: String = the grammar's class name"]
+      # returns = "String: an HTML page of every rule's railroad diagram, rule references linked"
+      def to_html(title: nil) = instance.to_html(title:)
+
       # A standalone parser for this grammar, as Ruby source: the same
       # results as parse, from code Spinel can compile to a native binary.
       # Its parse takes consume: and offset: as parse does, and root: for
@@ -250,6 +261,25 @@ module Birman
     # [method.to_ebnf]
     # returns = "String: one rule per line, the unreachable ones in a second block"
     def to_ebnf = __asts.reject(&:empty?).map { EBNF.call(_1) }.join("\n\n")
+
+    # A rule's railroad diagram (see Railroad), the root's by default.
+    # [method.to_svg]
+    # params = ["rule: Symbol = root"]
+    # returns = "String: a standalone SVG document"
+    # raises = ["ArgumentError for an undefined rule, or none given without a root"]
+    def to_svg(rule = nil)
+      rule ||= self.class.root or raise ArgumentError, "no rule given, and the grammar has no root"
+      raise ArgumentError, "undefined rule #{rule.inspect}" unless rule?(rule)
+
+      Railroad.svg(rule, matcher_for(rule).to_ast)
+    end
+
+    # Every rule's railroad diagram on one page, in to_ast order, with
+    # the rules the root doesn't reach under a heading of their own.
+    # [method.to_html]
+    # params = ["title: String = the grammar's class name"]
+    # returns = "String: an HTML document"
+    def to_html(title: nil) = Railroad.html(*__asts, title: title || self.class.name || "Grammar")
 
     # The grammar's left-call analysis (see LeftRecursion), built on the
     # first parse or to_ruby. It raises then, and every time after, if
