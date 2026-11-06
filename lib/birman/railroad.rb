@@ -12,14 +12,15 @@ module Birman
   # line. A repeat loops back under its item, an optional one has a way
   # over it, and a bounded one notes its count ("2 to 3 times").
   # Lookaheads, upto, checks and labels inside a rule are dashed boxes
-  # captioned with what they are ("not followed by", "text up to",
-  # "check :name", "operator"); upto's box holds its terminator, which
-  # it looks for but doesn't take. A rule's own label is its name for
-  # errors, so it isn't drawn (to_html shows it beside the rule's
-  # name). Actions, text,
-  # spanned, lexeme and quiet don't change what's accepted, so only what
-  # they wrap is drawn, as in EBNF. A node type this doesn't know is a
-  # box naming it, rather than an error.
+  # captioned with what they are: "not followed by", "text up to",
+  # check "a real date" (the check's phrase for errors), "operator".
+  # upto's box holds its terminator, which it looks for but doesn't
+  # take. A rule's own label is its name for errors, so it isn't drawn
+  # (to_html shows it beside the rule's name). Actions, text, spanned,
+  # lexeme and quiet don't change what's accepted, so only what they
+  # wrap is drawn, as in EBNF. A node type this doesn't know is a box
+  # naming it, and either() with no alternatives one saying it never
+  # matches, rather than an error.
   #
   # Widths come from character counts in a monospace font, not font
   # metrics, so the output is the same on every machine, in whole
@@ -206,19 +207,25 @@ module Birman
 
     module_function
 
-    # One rule's diagram as an SVG document; with style: false, without
-    # the stylesheet (STYLE), for a page that has it once (html).
+    # One rule's diagram as an SVG document. Standalone, it's an image
+    # with its own stylesheet (STYLE) and background, and its rules
+    # aren't links, having no #rule-name to go to; with page: true, it's
+    # for html's page, which has the styles once and an anchor per rule.
+    # Spaces are kept (xml:space), as the box widths count them.
     # [method."Railroad.svg"]
-    # params = ["name: Symbol, the rule", "ast: as Grammar.to_ast gives it", "style: Boolean = true"]
+    # params = ["name: Symbol, the rule", "ast: as Grammar.to_ast gives it", "page: Boolean = false"]
     # returns = "String: an <svg> element, ending in a newline"
-    def svg(name, ast, style: true)
+    def svg(name, ast, page: false)
       item = diagram(own(ast))
       width = item.width + (2 * PAD) + (2 * GAP)
       height = item.up + item.down + (2 * PAD)
       out = %(<svg xmlns="http://www.w3.org/2000/svg" class="railroad" width="#{width}" height="#{height}" )
-      out << %(viewBox="0 0 #{width} #{height}" role="img"><title>#{esc(name)}</title>)
-      out << "<style>#{STYLE}</style>" if style
-      out << track(item, PAD + item.up) << "</svg>\n"
+      out << %(viewBox="0 0 #{width} #{height}" xml:space="preserve"#{' role="img"' unless page}>)
+      out << "<title>#{esc(name)}</title>"
+      out << %(<style>#{STYLE}</style><rect class="bg" width="100%" height="100%"/>) unless page
+      drawn = track(item, PAD + item.up)
+      drawn = drawn.gsub(%r{<a href="[^"]*">|</a>}, "") unless page # Box#draw's links
+      out << drawn << "</svg>\n"
     end
 
     # A page of diagrams: reachable's rules, then, under a heading, the
@@ -261,18 +268,22 @@ module Birman
       in [:istr, s]          then Box.new("#{quote(s)}i", "lit", nil)
       in [:pat, source]      then Box.new(source, "pat", nil)
       in [:ref, name]        then Box.new(name.to_s, "ref", "#rule-#{name}")
-      in [:label, name, inner] then Group.new(diagram(inner), quote(name), "label")
-      in [:check, name, inner] then Group.new(diagram(inner), "check :#{name}", "check")
+      in [:label, name, inner] then Group.new(diagram(inner), quote(name.to_s), "label")
+      in [:check, name, inner] then Group.new(diagram(inner), "check #{quote(name.to_s)}", "check")
       in [:seq, commit_at, parts]
         items = parts.map { diagram(_1) }
         items.insert(commit_at, Commit.new) if commit_at
         seq(items)
+      in [:choice, []] then Box.new("never matches", "unknown", nil)
       in [:choice, alts] then Choice.new(alts.map { diagram(_1) })
       in [:both, [:not, guard], right] then seq([Group.new(diagram(guard), "not followed by", "look"), diagram(right)])
+      in [:both, [:and, look], right] then diagram([:both, look, right])
       in [:both, left, right] then seq([Group.new(diagram(left), "followed by", "look"), diagram(right)])
       in [:not, inner]       then Group.new(diagram(inner), "not followed by", "look")
       in [:and, inner]       then Group.new(diagram(inner), "followed by", "look")
       in [:upto, stop]       then Group.new(diagram(stop), "text up to", "look")
+      in [:rep, 0, 0, _]     then Skip.new # zero times: matches nothing, takes no input
+      in [:rep, 1, 1, inner] then diagram(inner)
       in [:rep, min, max, inner] then repeat(min, max, diagram(inner))
       in [Symbol => type, inner] if WRAPPERS.include?(type) then diagram(inner)
       in [Symbol => type, *] then Box.new(type.to_s, "unknown", nil)
@@ -320,8 +331,8 @@ module Birman
       asts.map do |name, ast|
         label = rule_label(ast)
         id = esc("rule-#{name}")
-        heading = %(<a href="##{id}">#{esc(name)}</a>#{%( <small>#{esc(quote(label))}</small>) if label})
-        %(<section id="#{id}">\n<h2>#{heading}</h2>\n#{svg(name, ast, style: false)}</section>\n)
+        heading = %(<a href="##{id}">#{esc(name)}</a>#{%( <small>#{esc(quote(label.to_s))}</small>) if label})
+        %(<section id="#{id}">\n<h2>#{heading}</h2>\n#{svg(name, ast, page: true)}</section>\n)
       end.join
     end
 
@@ -352,8 +363,9 @@ module Birman
           --rr-ref: #1b2a44; --rr-ref-stroke: #7aa7ff; --rr-group: #6b7280; --rr-commit: #fb923c; } }
       .railroad path { fill: none; stroke: var(--rr-line); stroke-width: 1.5; }
       .railroad text { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        fill: var(--rr-text); text-anchor: middle; }
+        fill: var(--rr-text); text-anchor: middle; white-space: pre; }
       .railroad rect { stroke-width: 1.5; }
+      .railroad rect.bg { fill: var(--rr-bg); stroke: none; }
       .railroad rect.lit { fill: var(--rr-lit); stroke: var(--rr-lit-stroke); }
       .railroad rect.pat { fill: var(--rr-pat); stroke: var(--rr-pat-stroke); }
       .railroad rect.ref { fill: var(--rr-ref); stroke: var(--rr-ref-stroke); }

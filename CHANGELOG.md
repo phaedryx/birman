@@ -181,8 +181,11 @@
   rule can't take that name.
 - Railroad diagrams, drawn from `to_ast` in plain Ruby (no JavaScript,
   no new dependencies). `Grammar.to_svg(:rule)` is one rule's diagram
-  as a standalone SVG document with its own styles, the root's when no
-  rule is given. A name that isn't a rule raises `ArgumentError`,
+  as a standalone SVG document, the root's when no rule is given: an
+  image (`role="img"`) with its own styles and a background in the
+  diagram's colors, so its dark-scheme lines stay legible on a light
+  page, and with rule boxes that aren't links, there being no other
+  diagrams to go to. A name that isn't a rule raises `ArgumentError`,
   `undefined rule :name`, as `parse(root:)` does, and so does a missing
   argument on a grammar with no root (`no rule given, and the grammar
   has no root`). `Grammar.to_html(title:)` is a page of every rule's
@@ -190,15 +193,25 @@
   "Grammar" for an anonymous class) unless titled. The rules the root
   doesn't reach follow a "Not reachable from the root" heading, which a
   grammar with no root leaves out. Each rule is a `#rule-name` anchor,
-  and every rule reference in a diagram links to it. Literals
-  (`"select"i` for `nocase`) and regexps are rounded boxes, rules square
-  ones, and a commit point is an orange `~` on the track. A choice
-  stacks its alternatives in order, the first on the main line. `*`,
-  `+` and `?` are the usual loop and bypass, and other bounds note
-  their count under the loop ("2 to 3 times", "up to 4 times",
-  "exactly 1 time"). Lookaheads, guards (`x.absent & y` draws "not
-  followed by" x, then y), checks and labels inside a rule are dashed
-  boxes captioned with what they are. `upto(t)` is a "text up to" box
+  and every rule reference in a diagram links to it; the page's
+  diagrams aren't `role="img"`, which would hide those links from
+  screen readers. Literals (`"select"i` for `nocase`) and regexps are
+  rounded boxes, rules square ones, and a commit point is an orange `~`
+  on the track. Runs of spaces in a box are kept (`xml:space` and
+  `white-space: pre`), not collapsed, since its width counts them, so
+  `"a   b"` and an `/x` regexp's indentation draw as written (a newline
+  as a space). A choice stacks its alternatives in order, the first on
+  the main line, and `either()` with none is a box saying it never
+  matches. `*`, `+` and `?` are the usual loop and bypass, and other
+  bounds note their count under the loop ("2 to 3 times", "up to 4
+  times", "exactly 3 times"), but `rep(1, 1)` is just its item and
+  `rep(0, 0)` draws nothing. Lookaheads, guards (`x.absent & y` draws
+  "not followed by" x, then y, and `x.present & y` one "followed by"
+  x, then y), checks and labels inside a rule are dashed boxes
+  captioned with what they are: a check by the phrase its errors use
+  (`check "a real date"`, from `.check(:real_date?, "a real date")`),
+  as `to_ast` has no method name, and a label by its name, a Symbol
+  one (`label(:op)`) as if a String. `upto(t)` is a "text up to" box
   around `t`, dotted as a lookahead is, since `t` is found and not
   taken: `seq("/*", upto("*/"), "*/")` draws `"*/"` twice, once in the
   box and once after it. A rule's own label, under any

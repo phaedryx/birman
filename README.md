@@ -802,29 +802,33 @@ own.
 
 `Grammar.to_html` draws every rule as a railroad (syntax) diagram on
 one self-contained page, and `Grammar.to_svg(:rule)` draws one rule
-(the root by default) as a standalone SVG, for a README or docs. Both
-are plain Ruby (no JavaScript, no dependencies) and work on an
-instance too.
+(the root by default) as a standalone SVG, for a README or docs: an
+image with its own styles and background, whose rule boxes don't link
+anywhere, having no other diagrams to link to. Both are plain Ruby (no
+JavaScript, no dependencies) and work on an instance too.
 
 ```ruby
 File.write("calc.html", Calc::Grammar.to_html)   # to_html(title: "Calc") to name the page
 File.write("sum.svg", Calc::Grammar.to_svg(:sum))
 ```
 
-Literals (`"let"`, `"select"i`) and regexps are rounded boxes, and rules
-are square boxes that link to their own diagrams. A commit point is an
-orange `~` on the track. Alternatives stack in order, the first on the
-main line. A repeat loops back under what it repeats, an optional item
-has a way over it, and a bounded repeat notes its count ("2 to 3
-times"). Lookaheads ("not followed by", "followed by"), checks
-("check :defined") and labels inside a rule are dashed boxes captioned
-with what they are. `upto("*/")` is a dashed "text up to" box around
-`"*/"`, drawn as a lookahead because it finds the terminator without
-taking it, so `seq("/*", upto("*/"), "*/")` shows `"*/"` twice. A
-node type the renderer doesn't know, such as one a newer matcher
-adds, is a box naming the type rather than an error. A rule's own label is its name in errors, so the
-page shows it beside the rule's name instead of boxing the whole
-diagram. Actions, `text`, `spanned`, `lexeme` and `quiet` don't change
+Literals (`"let"`, `"select"i`) and regexps are rounded boxes, with
+their spaces kept, and rules are square boxes that, on the page, link
+to their own diagrams. A commit point is an orange `~` on the track.
+Alternatives stack in order, the first on the main line. A repeat
+loops back under what it repeats, an optional item has a way over it,
+and a bounded repeat notes its count ("2 to 3 times"); `rep(1, 1)` is
+just its item, and `rep(0, 0)` draws nothing. Lookaheads ("not
+followed by", "followed by"), checks (`check "a real date"`, the
+phrase the check's errors use) and labels inside a rule are dashed
+boxes captioned with what they are. `upto("*/")` is a dashed "text up
+to" box around `"*/"`, drawn as a lookahead because it finds the
+terminator without taking it, so `seq("/*", upto("*/"), "*/")` shows
+`"*/"` twice. A node type the renderer doesn't know, such as one a
+newer matcher adds, is a box naming the type rather than an error, and
+`either()` with no alternatives is a box saying it never matches. A
+rule's own label is its name in errors, so the page shows it beside
+the rule's name instead of boxing the whole diagram. Actions, `text`, `spanned`, `lexeme` and `quiet` don't change
 what's accepted, so only what they wrap is drawn, as in `to_ebnf`. The
 page lists the rules in `to_ast` order, with those the root doesn't
 reach under a heading of their own.

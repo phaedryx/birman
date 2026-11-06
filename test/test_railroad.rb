@@ -91,9 +91,43 @@ class RailroadTest < Minitest::Test
   end
 
   def test_rule_references_are_square_boxes_linking_to_the_rules_diagram
-    s = svg(%i[ref expr])
+    s = Birman::Railroad.svg(:r, %i[ref expr], page: true)
 
     assert_match(%r{<a href="#rule-expr"><rect class="ref" [^>]*rx="0"/><text [^>]*>expr</text></a>}, s)
+  end
+
+  # A standalone SVG has no #rule-name to link to, and nothing to link
+  # it out of, so it's a picture; on a page its links are kept from
+  # screen readers no longer.
+  def test_a_standalone_svg_is_an_image_without_links_and_a_pages_svg_is_not
+    standalone = svg(%i[ref expr])
+    paged = Birman::Railroad.svg(:r, %i[ref expr], page: true)
+
+    assert_match(%r{<rect class="ref" [^>]*/><text [^>]*>expr</text>}, standalone)
+    refute_includes standalone, "<a "
+    assert_includes standalone, %( role="img")
+    refute_includes paged, "role="
+  end
+
+  # Under a dark scheme its lines are light, so a standalone SVG on a
+  # light page needs its own background; a page has one already.
+  def test_a_standalone_svg_has_its_own_background
+    standalone = svg([:str, "a"])
+    paged = Birman::Railroad.svg(:r, [:str, "a"], page: true)
+
+    assert_match(%r{<title>r</title><style>.*</style><rect class="bg" width="100%" height="100%"/>}, standalone)
+    assert_includes standalone, ".railroad rect.bg { fill: var(--rr-bg, #"
+    refute_includes paged, %(class="bg")
+  end
+
+  # SVG collapses runs of spaces unless told not to, which would draw
+  # "a   b" as "a b" in a box sized for five characters.
+  def test_spaces_in_literals_and_regexps_are_kept
+    s = svg([:seq, nil, [[:str, "a   b"], [:pat, "/a  b/x"]]])
+
+    assert_match(/\A<svg [^>]* xml:space="preserve"/, s)
+    assert_includes s, ">&quot;a   b&quot;</text>"
+    assert_match(/\.railroad text \{[^}]*white-space: pre;/, s)
   end
 
   def test_text_is_escaped
@@ -101,7 +135,8 @@ class RailroadTest < Minitest::Test
 
     assert_includes s, ">&quot;&lt;&amp;&gt;&quot;</text>"
     assert_includes s, ">/a&amp;b/</text>"
-    assert_includes s, %(<a href="#rule-a&lt;b">)
+    assert_includes s, ">a&lt;b</text>"
+    assert_includes Birman::Railroad.svg(:r, %i[ref a<b], page: true), %(<a href="#rule-a&lt;b">)
   end
 
   def test_a_commit_point_is_a_visible_tilde_where_it_falls_in_the_sequence
@@ -127,14 +162,30 @@ class RailroadTest < Minitest::Test
     assert_includes s, "&quot;z&quot;"
   end
 
+  # either() with nothing to choose from is legal, and never matches.
+  def test_a_choice_with_no_alternatives_is_a_box_saying_it_never_matches
+    g = grammar { rule(:top) { either } }
+
+    assert_match(%r{<rect class="unknown" [^>]*/><text [^>]*>never matches</text>}, g.to_svg)
+    assert_includes g.to_html, ">never matches<"
+  end
+
   def test_bounded_repetitions_say_how_many_times
     {
       [2, 3] => "2 to 3 times", [0, 4] => "up to 4 times", [3, 3] => "exactly 3 times",
-      [2, nil] => "at least 2 times", [1, 1] => "exactly 1 time"
+      [2, nil] => "at least 2 times"
     }.each do |(min, max), note|
       assert_includes svg([:rep, min, max, %i[ref digit]]), %(class="note"), "#{min}..#{max}"
       assert_match(/>#{note}</, svg([:rep, min, max, %i[ref digit]]))
     end
+  end
+
+  # Exactly once is the item, and no times at all is nothing: a loop
+  # would draw a way the grammar can't go.
+  def test_exactly_once_is_the_item_and_never_is_nothing
+    assert_equal svg(%i[ref digit]), svg([:rep, 1, 1, %i[ref digit]])
+    assert_equal svg([:seq, nil, []]), svg([:rep, 0, 0, %i[ref digit]])
+    refute_includes svg([:rep, 0, 0, %i[ref digit]]), "digit"
   end
 
   def test_star_plus_and_optional_need_no_note
@@ -183,10 +234,34 @@ class RailroadTest < Minitest::Test
     refute_match(/not followed by/, svg([:both, %i[ref a], %i[ref b]]))
   end
 
-  def test_a_check_is_a_captioned_box_naming_its_method
-    s = svg([:check, :defined, %i[ref name]])
+  # a.present & b is [:both, [:and, a], b]: one "followed by", not two.
+  def test_a_present_guard_is_one_lookahead_then_what_it_guards
+    s = svg([:both, [:and, %i[ref a]], %i[ref b]])
 
-    assert_match(/class="group check".*>check :defined<.*>name</m, s)
+    assert_equal 1, s.scan(">followed by<").size
+    assert_equal svg([:both, %i[ref a], %i[ref b]]), s
+  end
+
+  # to_ast carries a check's phrase for errors, not its method's name.
+  def test_a_check_is_a_captioned_box_quoting_its_phrase
+    g = grammar do
+      rule(:top)  { name.check(:defined?, "a defined name") }
+      rule(:name) { match(/\w+/) }
+    end
+    s = svg([:seq, nil, [%i[ref a], g.to_ast[:top]]])
+
+    assert_match(/class="group check".*>check &quot;a defined name&quot;<.*>name</m, s)
+  end
+
+  # label's name is a String, but a Symbol draws as one rather than raising.
+  def test_a_symbol_label_draws_as_its_name
+    g = grammar do
+      rule(:top)   { seq("y", str("a").label(:sym)) }
+      rule(:other) { str("b").label(:own) }
+    end
+
+    assert_includes g.to_svg, ">&quot;sym&quot;<"
+    assert_includes g.to_html, "<small>&quot;own&quot;</small>"
   end
 
   def test_a_nested_label_is_a_captioned_box_and_a_rules_own_label_is_not_drawn
