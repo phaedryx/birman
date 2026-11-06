@@ -179,6 +179,59 @@
   lookbehind and leading `\b` it refuses in `match`, since both search
   the whole input. `upto` is now a method the grammar relies on, so a
   rule can't take that name.
+- Railroad diagrams, drawn from `to_ast` in plain Ruby (no JavaScript,
+  no new dependencies). `Grammar.to_svg(:rule)` is one rule's diagram
+  as a standalone SVG document, the root's when no rule is given: an
+  image (`role="img"`) with its own styles and a background in the
+  diagram's colors, so its dark-scheme lines stay legible on a light
+  page, and with rule boxes that aren't links, there being no other
+  diagrams to go to. A name that isn't a rule raises `ArgumentError`,
+  `undefined rule :name`, as `parse(root:)` does, and so does a missing
+  argument on a grammar with no root (`no rule given, and the grammar
+  has no root`). `Grammar.to_html(title:)` is a page of every rule's
+  diagram, in `to_ast` order, under the grammar's class name (or
+  "Grammar" for an anonymous class) unless titled. The rules the root
+  doesn't reach follow a "Not reachable from the root" heading, which a
+  grammar with no root leaves out. Each rule is a `#rule-name` anchor,
+  and every rule reference in a diagram links to it; the page's
+  diagrams aren't `role="img"`, which would hide those links from
+  screen readers. Literals (`"select"i` for `nocase`) and regexps are
+  rounded boxes, rules square ones, and a commit point is an orange `~`
+  on the track. Runs of spaces in a box are kept (`xml:space` and
+  `white-space: pre`), not collapsed, since its width counts them, so
+  `"a   b"` and an `/x` regexp's indentation draw as written (a newline
+  as a space). A choice stacks its alternatives in order, the first on
+  the main line, and `either()` with none is a box saying it never
+  matches. `*`, `+` and `?` are the usual loop and bypass, and other
+  bounds note their count under the loop ("2 to 3 times", "up to 4
+  times", "exactly 3 times"), but `rep(1, 1)` is just its item and
+  `rep(0, 0)` draws nothing. Lookaheads, guards (`x.absent & y` draws
+  "not followed by" x, then y, and `x.present & y` one "followed by"
+  x, then y), checks and labels inside a rule are dashed boxes
+  captioned with what they are: a check by the phrase its errors use
+  (`check "a real date"`, from `.check(:real_date?, "a real date")`),
+  as `to_ast` has no method name, and a label by its name, a Symbol
+  one (`label(:op)`) as if a String. `upto(t)` is a "text up to" box
+  around `t`, dotted as a lookahead is, since `t` is found and not
+  taken: `seq("/*", upto("*/"), "*/")` draws `"*/"` twice, once in the
+  box and once after it. A rule's own label, under any
+  wrappers, isn't boxed, since it names the whole rule; the page shows
+  it beside the rule's name. Actions, `text`, `spanned`, `lexeme` and
+  `quiet` are drawn as what they wrap, as `to_ebnf` prints them. An AST
+  node type the renderer doesn't know is a box naming the type, without
+  its parts, so matchers added later draw without raising. Colors are
+  CSS custom properties set through `:where(:root)`, so a page's own
+  `:root` rule overrides them wherever it comes, with a
+  `prefers-color-scheme: dark` palette, and every `var()` also names
+  its light color for renderers without custom properties (librsvg).
+  Box widths come from character counts in a monospace font, so the
+  output is deterministic and in whole pixels; a wide character still
+  counts as one. Literals and labels are quoted as `inspect` would, but
+  with printable characters as themselves whatever
+  `Encoding.default_external` is (`"école"`, not `"\u00E9cole"` under
+  `LANG=C`). Both work on an instance too, and `to_svg` and
+  `to_html` are now methods the grammar relies on, so a rule can't take
+  those names. `examples/railroad.rb` draws every example grammar.
 
 ### Changed
 
@@ -203,7 +256,13 @@
   `Birman.read_input` and the generated parser's `BirmanRT.read_input`
   alike. A File has both and is still read from its current position,
   neither rewound nor closed, and a StringIO is read as before.
-
+- `to_ebnf` quoted literals with `inspect`, which escapes non-ASCII
+  when `Encoding.default_external` isn't Unicode, so the same grammar
+  printed `"école"` under a UTF-8 locale and `"\u00E9cole"` under
+  `LANG=C`. Literals (and `nocase`'s `"..."i`) now keep every printable
+  character as itself, escaping only quotes, backslashes and
+  unprintable characters as `inspect` does (`"\"\\\t"`), whatever the
+  locale. Railroad diagrams share the quoting.
 - `infix` with an operator and an operand that both match nothing
   looped forever; the step that consumes nothing now ends the loop.
 - A rule that overrides an included one and calls it with a bare

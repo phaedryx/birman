@@ -24,7 +24,8 @@ Style/Documentation:
 
 # Combinators read best with the short names parser libraries use:
 # m (matcher), s (string), x (anything), re, fn, q (pretty-print
-# queue). Listing names replaces RuboCop's defaults, so those are
+# queue), and the railroad diagrams' geometry: x, y, dx, dy, d (an SVG
+# path), n (a count). Listing names replaces RuboCop's defaults, so those are
 # repeated here.
 Naming/MethodParameterName:
   AllowedNames:
@@ -33,6 +34,11 @@ Naming/MethodParameterName:
     - re
     - s
     - x
+    - y
+    - d
+    - dx
+    - dy
+    - n
     - fn
     - as
     - at
