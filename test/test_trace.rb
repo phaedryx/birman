@@ -485,6 +485,27 @@ class TraceTest < Minitest::Test
     assert_equal 0, ops.furthest
   end
 
+  def test_long_runs_of_collapsed_siblings_are_counted
+    out = Lists.parse("[1, 2, 3, 4, 5, 6, 7, x]", trace: true).trace.to_s
+    assert_includes out, <<~LINES
+      │  ├─ item 1:2 ✓ → 1:3
+      │  ├─ "," 1:3 ✓ → 1:5
+      │  ├─ … (9 more)
+      │  ├─ "," 1:18 ✓ → 1:20
+      │  ├─ item 1:20 ✓ → 1:21
+      │  ├─ "," 1:21 ✓ → 1:23
+      │  └─ item 1:23 ✗
+    LINES
+    refute_includes Lists.parse("[1, 2, 3, 4, 5, 6, 7, x]", trace: true).trace.to_s(all: true), " more)"
+  end
+
+  def test_a_long_input_stays_short
+    records = Array.new(1000) { |i| %({"id": #{i}, "tags": ["a", "b"]}) }.join(", ")
+    out = JSONExample::Grammar.parse("[#{records}, ]", trace: true).trace.to_s
+    assert_operator out.lines.size, :<, 60
+    assert_match(/… \(199\d more\)/, out)
+  end
+
   # The guard against TracingContext drifting from Context and Ref: a
   # traced parse gives exactly the untraced result, except on input
   # nested deeper than a traced parse can go, which fails as too deep.

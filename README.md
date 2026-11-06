@@ -519,7 +519,10 @@ What the labels mean:
   before it and matched to it or failed at or past it, lookaheads not
   counting) is expanded, and the other attempts beside it are one line
   each, so the alternatives tried before the one that got there stay
-  visible. The default for a `Failure` is its `pos`.
+  visible. A run of more than five such lines keeps its first two and
+  last two, with `… (n more)` between, so a list of a thousand items
+  with an error at the end is a few lines. The default for a `Failure`
+  is its `pos`.
 - `all: true` expands everything. For a `Success` the default is
   everything to `depth: 4`, which is usually enough to see why the
   wrong alternative won.

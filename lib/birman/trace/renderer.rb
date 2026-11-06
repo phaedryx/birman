@@ -15,6 +15,10 @@ module Birman
       # is under one is explained as being there.
       LOOKING = %i[not and both quiet].freeze
 
+      # A run of more than RUN * 2 + 1 siblings drawn on one line each
+      # keeps its first and last RUN, with a line counting the rest.
+      RUN = 2
+
       # A failure nested this deep shows its outermost and innermost
       # levels, with the ones between counted.
       OUTER = 5
@@ -74,12 +78,28 @@ module Birman
 
         shown = node.children.reject { hidden?(_1) }
         kids = shown.map { Item.new(_1, nil, item.mode, item.limit, nil) }
+        kids = count_runs(kids) if item.mode == :auto && !@all
         kids << origin_item(node, level) if item.mode == :auto && node.origin && !shown?(node.origin)
         cap = item.limit || @depth
         return kids unless cap && level >= cap && !kids.empty?
 
         [Item.new(nil, "… (#{shown.sum { Trace.count(_1) }} nodes)", nil, nil, nil)]
       end
+
+      # Runs of siblings that didn't reach at:, each drawn on one line,
+      # shortened (see RUN): a list of a thousand items with an error at
+      # the end is a few lines, not two thousand.
+      def count_runs(kids)
+        out = []
+        kids.chunk_while { |a, b| !expanded?(a.node) && !expanded?(b.node) }.each do |run|
+          next out.concat(run) if run.size <= (RUN * 2) + 1 || expanded?(run.first.node)
+
+          out.concat(run.first(RUN), [more(run.size - (RUN * 2))], run.last(RUN))
+        end
+        out
+      end
+
+      def more(count) = Item.new(nil, "… (#{count} more)", nil, nil, nil)
 
       # A memo hit whose first call isn't drawn gets that call under it.
       def origin_item(node, level)
