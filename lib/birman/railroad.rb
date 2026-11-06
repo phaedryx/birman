@@ -327,10 +327,8 @@ module Birman
 
     def esc(s) = s.to_s.gsub(/[&<>"]/, ESCAPES)
 
-    # s in double quotes as inspect writes it, but with every printable
-    # character as itself: inspect escapes non-ASCII when
-    # Encoding.default_external isn't Unicode, changing text and width.
-    def quote(s) = %("#{s.gsub(/["\\]|[^[:print:]]/) { _1.inspect[1...-1] }}")
+    # Quoted as to_ebnf does, so the width doesn't depend on the locale.
+    def quote(s) = AST.quote(s)
 
     # css with each var(--rr-name) given the value css first sets it to.
     def fallbacks(css)

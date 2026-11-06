@@ -25,6 +25,11 @@ module Birman
       else []
       end
     end
+
+    # s in double quotes as inspect writes it, but with every printable
+    # character as itself: inspect escapes non-ASCII when
+    # Encoding.default_external isn't Unicode (LANG=C).
+    def quote(s) = %("#{s.gsub(/["\\]|[^[:print:]]/) { _1.inspect[1...-1] }}")
   end
 
   # Prints a grammar AST in PEG-flavored EBNF:
@@ -54,8 +59,8 @@ module Birman
     # One branch per AST node type, so its size grows with the matcher set.
     def expr(node, prec) # rubocop:disable Metrics
       case node
-      in [:str, s]           then s.inspect
-      in [:istr, s]          then "#{s.inspect}i"
+      in [:str, s]           then AST.quote(s)
+      in [:istr, s]          then "#{AST.quote(s)}i"
       in [:pat, source]      then source
       in [:ref, name]        then name.to_s
       in [:action, inner]    then expr(inner, prec)

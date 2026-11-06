@@ -1454,6 +1454,17 @@ class BirmanTest < Minitest::Test
     assert_equal 'top     = "let" ~ /\w+/ "=" /\d+/ ;', g.to_ebnf.lines.first.chomp
   end
 
+  # String#inspect escapes non-ASCII when the default external encoding
+  # isn't Unicode (LANG=C).
+  def test_ebnf_quotes_literals_the_same_whatever_the_default_encoding
+    g = grammar { rule(:top) { seq("école", nocase("ñ"), "\"\\\t") } }
+    external = Encoding.default_external
+    Encoding.default_external = Encoding::US_ASCII
+    assert_equal 'top = "école" "ñ"i "\"\\\\\t" ;', g.to_ebnf.lines.first.chomp
+  ensure
+    Encoding.default_external = external
+  end
+
   # --- The example language, end to end ---
 
   def run_calc(source)

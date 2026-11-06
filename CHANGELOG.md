@@ -243,7 +243,13 @@
   `Birman.read_input` and the generated parser's `BirmanRT.read_input`
   alike. A File has both and is still read from its current position,
   neither rewound nor closed, and a StringIO is read as before.
-
+- `to_ebnf` quoted literals with `inspect`, which escapes non-ASCII
+  when `Encoding.default_external` isn't Unicode, so the same grammar
+  printed `"école"` under a UTF-8 locale and `"école"` under
+  `LANG=C`. Literals (and `nocase`'s `"..."i`) now keep every printable
+  character as itself, escaping only quotes, backslashes and
+  unprintable characters as `inspect` does (`"\"\\\t"`), whatever the
+  locale. Railroad diagrams share the quoting.
 - `infix` with an operator and an operand that both match nothing
   looped forever; the step that consumes nothing now ends the loop.
 - A rule that overrides an included one and calls it with a bare
