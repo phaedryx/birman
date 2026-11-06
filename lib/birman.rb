@@ -51,21 +51,30 @@ module Birman
     input.ascii_only? ? char_pos : input[0, char_pos].bytesize
   end
 
-  # The String a parse reads: input itself when it's one; what read
+  # The String a parse reads: input itself when it's one; the file
+  # to_path names (a Pathname), read whole and taken as UTF-8, valid or
+  # not (invalid bytes are a Failure, as in a String); or what read
   # gives, once, for anything with read (an IO, a StringIO, a File),
-  # neither rewound nor closed; or the file to_path names (a Pathname),
-  # read whole and taken as UTF-8, valid or not (invalid bytes are a
-  # Failure, as in a String).
+  # neither rewound nor closed. Anything with both takes to_path unless
+  # it's an IO: a File is read from where it is, and a Pathname (whose
+  # read is File.read, in the default external encoding) is the file,
+  # read as UTF-8 whatever the locale.
   # [method."Birman.read_input"]
-  # params = ["input: String | #read | #to_path"]
+  # params = ["input: String | #to_path | #read"]
   # returns = "String: the input to parse"
   # raises = ["ArgumentError for anything else, naming it", "as File.read, for a to_path it can't read"]
   def self.read_input(input)
     return input if input.is_a?(String)
+    return File.binread(input.to_path).force_encoding(Encoding::UTF_8) if path?(input)
     return input.read if input.respond_to?(:read)
-    return File.binread(input.to_path).force_encoding(Encoding::UTF_8) if input.respond_to?(:to_path)
 
     raise ArgumentError, "input must be a String, or respond to read or to_path, not #{input.inspect}"
+  end
+
+  # Whether read_input reads the file input names: it has to_path and
+  # isn't an IO (a File is read instead, from where it is).
+  def self.path?(input)
+    input.respond_to?(:to_path) && !input.is_a?(IO)
   end
 
   # The byte offset of the first byte in input that doesn't start a

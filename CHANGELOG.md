@@ -193,6 +193,17 @@
 
 ### Fixed
 
+- A Pathname was read in `Encoding.default_external`, not as UTF-8:
+  `read_input` checked `read` before `to_path`, and `Pathname#read` is
+  `File.read`. Under a UTF-8 locale that happened to work; under
+  `LANG=C` the file came back US-ASCII, so a valid non-ASCII file was a
+  `Failure` with `reason` "invalid US-ASCII", and so was an invalid
+  one, instead of "invalid UTF-8". Anything with `to_path` that isn't
+  an IO is now read whole as UTF-8, before `read` is considered, in
+  `Birman.read_input` and the generated parser's `BirmanRT.read_input`
+  alike. A File has both and is still read from its current position,
+  neither rewound nor closed, and a StringIO is read as before.
+
 - `infix` with an operator and an operand that both match nothing
   looped forever; the step that consumes nothing now ends the loop.
 - A rule that overrides an included one and calls it with a bare

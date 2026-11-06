@@ -38,7 +38,7 @@ class TestTOMLExample < Minitest::Test
     cases = Dir.glob("valid/**/*.toml", base: CORPUS).sort
     refute_empty cases
     cases.each do |name|
-      want = typed(JSON.parse(File.read(File.join(CORPUS, name.sub(/\.toml\z/, ".json")))))
+      want = typed(JSON.parse(File.read(File.join(CORPUS, name.sub(/\.toml\z/, ".json")), encoding: "UTF-8")))
       got = TOMLExample.parse(read(name))
       assert got.success?, "#{name}:\n#{got.message if got.failure?}"
       assert_equal comparable(want), comparable(got.value), name
