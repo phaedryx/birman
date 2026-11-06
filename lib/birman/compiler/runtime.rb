@@ -258,15 +258,23 @@ module BirmanRT
   end
 
   # The String a parse reads: Birman.read_input. A String as it is;
-  # what read gives, once, for anything with read (an IO, a File),
-  # neither rewound nor closed; or the file to_path names, read whole
-  # and taken as UTF-8, valid or not.
+  # the file to_path names, read whole and taken as UTF-8, valid or
+  # not; or what read gives, once, for anything with read (an IO, a
+  # File), neither rewound nor closed. Anything with both takes to_path
+  # unless it's an IO: a File is read from where it is, and a Pathname
+  # (whose read is in the default external encoding) is the file.
   def self.read_input(input)
     return input if input.is_a?(String)
+    return File.binread(input.to_path).force_encoding(Encoding::UTF_8) if path?(input)
     return input.read if input.respond_to?(:read)
-    return File.binread(input.to_path).force_encoding(Encoding::UTF_8) if input.respond_to?(:to_path)
 
     raise ArgumentError, "input must be a String, or respond to read or to_path, not #{input.inspect}"
+  end
+
+  # Whether read_input reads the file input names: it has to_path and
+  # isn't an IO (a File is read instead, from where it is).
+  def self.path?(input)
+    input.respond_to?(:to_path) && !input.is_a?(IO)
   end
 
   # Binary (and US-ASCII) input has a character per byte; otherwise

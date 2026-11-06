@@ -701,9 +701,11 @@ own.
   Input nested too deeply for Ruby's stack is a `Failure` too, with
   `reason` set (see Limits), and so is invalid UTF-8: `reason` is
   "invalid UTF-8", at the first bad byte. Besides a String, `parse`
-  takes anything with `read` (an IO, a StringIO, a File), read once from
-  where it is and left open, or a Pathname, whose file is read as UTF-8;
-  `Failure#input` and the positions are in terms of the String read.
+  takes anything with `to_path` that isn't an IO (a Pathname), whose
+  file is read whole as UTF-8 whatever the locale, or anything with
+  `read` (an IO, a StringIO, a File), read once from where it is and
+  left open; `Failure#input` and the positions are in terms of the
+  String read.
   Anything else raises `ArgumentError`.
 - `parse(input, root: :rule)` starts at any rule instead of the root,
   which is handy for testing one rule on its own. The rule needn't be
