@@ -31,8 +31,8 @@ module Birman
   #   "ArgumentError for an input that isn't a String and has neither read nor to_path, naming it",
   #   "ArgumentError for an offset: that isn't an Integer, or is negative or past the end of input"
   # ]
-  def self.parse(matcher, input, ignore: nil, consume: true, offset: 0)
-    Standalone.grammar(matcher, ignore).parse(input, consume:, offset:)
+  def self.parse(matcher, input, ignore: nil, consume: true, offset: 0, trace: false) # rubocop:disable Metrics/ParameterLists
+    Standalone.grammar(matcher, ignore).parse(input, consume:, offset:, trace:)
   end
 
   # [method."Birman.parse!"]
@@ -41,8 +41,9 @@ module Birman
   # ]
   # returns = "The parsed value"
   # raises = ["Birman::ParseError", "ArgumentError, as Birman.parse"]
-  def self.parse!(matcher, input, ignore: nil, consume: true, offset: 0, formatter: ErrorFormatter.new) # rubocop:disable Metrics/ParameterLists
-    Standalone.grammar(matcher, ignore).parse!(input, consume:, offset:, formatter:)
+  def self.parse!(matcher, input, ignore: nil, consume: true, offset: 0, trace: false, # rubocop:disable Metrics/ParameterLists
+                  formatter: ErrorFormatter.new)
+    Standalone.grammar(matcher, ignore).parse!(input, consume:, offset:, trace:, formatter:)
   end
 
   # The anonymous grammar classes behind Birman.parse: the matcher is

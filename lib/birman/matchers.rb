@@ -928,6 +928,9 @@ module Birman
   Ref = Data.define(:name) do
     include Matcher
 
+    # TracingContext#memoize repeats this block with the rule's
+    # instrumented matcher: keep the two in step (test_trace's guards,
+    # which compare traced and untraced results, fail if they drift).
     def match(ctx, pos)
       result, furthest, expected = ctx.memoize(name, pos) do
         r = ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }

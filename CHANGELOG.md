@@ -2,6 +2,35 @@
 
 ### Added
 
+- `parse(input, trace: true)` (on `Grammar.parse`, `Grammar#parse`,
+  `parse!`, `Birman.parse` and `Birman.parse!`) attaches a
+  `Birman::Trace` of the parse's attempts to the result, as
+  `result.trace`: every rule call, `either` alternative, `seq` part,
+  repetition item and literal tried, with where each began and ended, in
+  the detail Parslet's `error_tree` gives. Memo hits are labeled
+  `(memo)` and point at the first call (`Node#origin`); a left-recursive
+  rule's growth shows each round, its seed and the round that stopped,
+  and indirect cycles' `(this round)` and `(took the longest from
+  :leader's rounds)` answers are labeled too. `puts result.trace` draws
+  it as a tree, filtered so it stays readable: `to_s(at:, all:, depth:,
+  hide:)` expands the attempts that reached `at:` (a `Failure`'s `pos`
+  by default) and shows the others beside them on one line each (a run
+  of more than five keeps its first and last two, with `… (n more)`
+  between), a `Success` is drawn to `depth: 4`, and the ignore rule is
+  hidden unless `hide: []`. The result is exactly the untraced one:
+  `trace` isn't a member, so `==`, `inspect` and pattern matching are
+  unchanged; Marshal drops it (`Failure` gains its own
+  `marshal_dump`/`marshal_load` for that); `parse!` puts it on
+  `error.failure.trace`; it's `nil` untraced and on results built by
+  hand. Invalid UTF-8 gets a one-node trace. A traced parse is slower,
+  keeps every attempt, and nests less deeply (the JSON example about 220
+  levels on the main thread, against about 400), still returning a
+  `Failure` with `reason` past that, its trace drawn as the outermost 5
+  and innermost 20 levels. Untraced parses don't change, in results or
+  speed: the context class is picked once per parse. Generated parsers
+  don't trace (`parse(trace: true)` raises `ArgumentError`; trace with
+  `Grammar.parse`, whose results they share), and neither does
+  `Matcher#===`.
 - `operators(operand, *levels)`, a precedence table (Citrus has none;
   Pratt's method): each level is a Hash with exactly one of `prefix:`,
   `postfix:`, `left:` or `right:` (an operator or an Array of them,
