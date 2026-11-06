@@ -61,9 +61,16 @@ module Birman
       def member(value)
         case value
         when Matcher then call(value)
-        when Operators::Entry then value.with(matcher: call(value.matcher))
+        when Operators::Entry then value.with(matcher: entry(value))
         else value
         end
+      end
+
+      # Operators drops what a prefix operator expected, as if it were
+      # quiet (see Operators#prefix_at), so its trace is under a quiet node.
+      def entry(entry)
+        matcher = call(entry.matcher)
+        entry.fixity == :prefix ? Probe.new(matcher, :quiet, "quiet") : matcher
       end
 
       # The text a node is shown as: its EBNF, but sep_by and operators

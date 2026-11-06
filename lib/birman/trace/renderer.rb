@@ -25,7 +25,7 @@ module Birman
         @input = trace.input
         result = trace.result
         succeeded = result.nil? || result.success?
-        @hide = hide == :default ? [trace.ignore, Standalone::IGNORE].compact : Array(hide)
+        @hide = hide == :default ? [trace.ignore, Standalone::IGNORE].compact : Array(hide).map(&:to_sym)
         @all = all || (succeeded && at == :default)
         @at = at == :default ? (result.pos unless succeeded) : at
         @depth = depth || (4 if succeeded && at == :default && !all)

@@ -509,8 +509,8 @@ What the labels mean:
   already tried in the current round, answered from the round's table.
 - **(took the longest from :leader's rounds)**: a rule of a cycle
   entered from outside, which took the longest match the leader's
-  rounds gave it; its line shows that match, and the attempt it made
-  itself is below.
+  rounds gave it because that ended elsewhere than its own; its line
+  shows that match, and the attempt it made itself is below.
 - **stack ran out**: an attempt open when the input nested too deeply.
 
 `to_s` takes filters, so the tree stays readable on a real grammar:

@@ -22,19 +22,21 @@ module Birman
     # is the same. A call that doesn't run the block was answered from a
     # table: the memo, a growth round's (in_round sets @hit) or the seed
     # (seed sets it).
-    def memoize(name, pos) # rubocop:disable Metrics/MethodLength
+    def memoize(name, pos) # rubocop:disable Metrics
       frame = open_frame(:rule, name, name.to_s, pos)
-      computed = false
+      computed = nil
       @hit = :memo
+      @swapped = nil
       recording(frame) do
         entry = super(name, pos) do
-          computed = true
           @first_calls[[name, pos]] ||= frame
           r = isolate(pos) { grammar.__traced_matcher_for(name).match(self, pos) }
-          [r, isolated_furthest, isolated_expected]
+          computed = [r, isolated_furthest, isolated_expected]
         end
         frame.to = entry[0]&.pos
         answered(frame, name, pos, entry) unless computed
+        # outside hands a tie to the kept match; only a different end is news
+        frame.note(:took_longest, @swapped) if @swapped && end_of(computed) != end_of(entry)
         entry
       end
     end
@@ -77,6 +79,17 @@ module Birman
     def commit_failure!
       @frame.children.last&.note(:committed, { pos: furthest, expected: expected.dup })
       super
+    end
+
+    # A failed lookahead's frame says what it expected. Context folds
+    # that in with merge, which the trace leaves to the frame that
+    # recorded it: here, one under the lookahead, which doesn't count.
+    def peek?(matcher, pos)
+      return true if super
+
+      furthest = isolated_furthest
+      isolated_expected.each { @frame.fail(pos, _1) } if furthest == pos
+      false
     end
 
     def lookahead
@@ -128,7 +141,7 @@ module Birman
     # match its leader's rounds kept, rather than the one it computed.
     def outside(leader, name, table, pos, &)
       entry = super
-      @frame.note(:took_longest, leader) if entry.equal?(@longest[leader][pos]&.[](name))
+      @swapped = leader if entry.equal?(@longest[leader][pos]&.[](name))
       entry
     end
 

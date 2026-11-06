@@ -274,8 +274,23 @@ class TraceTest < Minitest::Test
     again = all.find { _1.rule == :b && _1.notes[:this_round] }
     assert_equal [0, nil], [again.from, again.to]
     assert again.origin.notes.empty?
+  end
+
+  # The paper's lvalues (Medeiros et al.), entered at l: what l matches
+  # with pp's final match is just "x", since pp has eaten the ".x"; it
+  # takes its longest match from pp's rounds instead.
+  def test_took_the_longest_is_labeled_when_it_changes_the_match
+    g = grammar do
+      rule(:r) { either(seq(pp, ".x"), "x") }
+      rule(:pp) { either(seq(pp, "(n)"), r) }
+    end
+    r = root_rule(g.parse("x(n).x", trace: true))
+    assert_equal [:pp, 6], [r.notes[:took_longest], r.to]
+  end
+
+  def test_took_the_longest_is_not_labeled_on_a_tie
     b = root_rule(indirect.parse("1+2", root: :b, trace: true))
-    assert_equal [:b, :r, 3], [b.rule, b.notes[:took_longest], b.to]
+    assert_equal [:b, nil, 3], [b.rule, b.notes[:took_longest], b.to]
   end
 
   # The spec's reference rendering: the README's Lists grammar, on input
@@ -424,6 +439,50 @@ class TraceTest < Minitest::Test
     assert_equal [0, ["an even number"]], [check.furthest, check.expected]
     assert_match(/check :even\? 1:1 ✗ expected an even number rejected by :even\?$/,
                  g.parse("3y", trace: true).trace.to_s)
+  end
+
+  def test_hide_takes_strings_too
+    t = lists_trace
+    assert_equal t.to_s(all: true, hide: %i[spacing item]), t.to_s(all: true, hide: %w[spacing item])
+  end
+
+  def test_a_failed_lookahead_says_what_it_expected
+    g = grammar do
+      rule(:r) { seq(word.present, word) }
+      rule(:word) { match(/[a-z]+/) }
+    end
+    out = g.parse("1", trace: true).trace.to_s
+    assert_match(%r{^[├└]─ &word 1:1 ✗ expected /\[a-z\]\+/$}, out)
+  end
+
+  def test_rules_comments_are_hidden_by_default
+    g = grammar do
+      include Birman::Rules::Comments
+
+      ignore :spacing
+      rule(:r) { seq("(", lexed, ")") }
+      lexeme(:lexed) { match(/[a-z]+/) }
+    end
+    t = g.parse("( # note\n ab # more\n x", trace: true).trace
+    refute_match(/spacing|comment/, t.to_s(all: true))
+    assert_match(/spacing/, t.to_s(all: true, hide: []))
+  end
+
+  # Operators drops what its prefix operators expected, as if they were
+  # quiet, so the trace wraps each in a quiet node.
+  def test_operators_prefix_attempts_dont_reach
+    g = grammar do
+      rule(:r) do
+        operators(match(/\d/), { prefix: seq("-", "-"), node: Birman.node(:op, :operand) },
+                  { left: "+", node: Birman.node(:op, :left, :right) })
+      end
+    end
+    result = g.parse("-x", trace: true)
+    assert_equal 0, result.pos
+    ops = root_rule(result).children.first
+    prefix = ops.children.first
+    assert_equal [:quiet, nil, 1], [prefix.kind, prefix.furthest, prefix.children.first.furthest]
+    assert_equal 0, ops.furthest
   end
 
   # The guard against TracingContext drifting from Context and Ref: a
