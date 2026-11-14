@@ -245,10 +245,154 @@ class RecoverTest < Minitest::Test
     assert_equal({ v: "1" }, g.parse!("1;"))
   end
 
+  # The commit keeps the recovered error when "!" fails (see
+  # test_root_plain_failure_rolls_back_but_commit_keeps_them).
   def test_a_recovered_attempts_expectations_are_not_merged_outward
-    g = grammar { rule(:top) { seq(stmt.recover(to: ";"), "!") } }
+    g = grammar { rule(:top) { seq(stmt.recover(to: ";"), commit, "!") } }
     result = g.parse("let ;")
     assert_equal([[4, ["/[a-z]+/"]], [4, ['"!"']]], result.errors.map { [_1.pos, _1.expected] })
+  end
+
+  # --- Backtracking discards recovered errors ---
+
+  # Each grammar below has an alternative that recovers (from "let = 1",
+  # failing at 4) and is then thrown away, and another that matches
+  # without errors: the parse is a Success only if the thrown-away
+  # alternative took its error with it.
+
+  Add = Birman.node(:op, :left, :right)
+  Neg = Birman.node(:op, :operand)
+
+  def assert_no_stale_errors(grammar_class, input)
+    result = grammar_class.parse(input)
+    assert_instance_of Birman::Success, result, -> { "stale errors at #{result.errors.map(&:pos)}" }
+    result
+  end
+
+  def test_choice_backtracking_over_a_recovered_seq
+    g = grammar { rule(:top) { seq(either(seq(stmt.recover(to: ";"), "!"), /let[^;]*/), ";") } }
+    assert_no_stale_errors(g, "let = 1;")
+  end
+
+  def test_pick_failing_after_a_recovered_part
+    g = grammar { rule(:top) { seq(either(between("(", ")", stmt.recover(to: ";")), /\([^;]*/), ";") } }
+    assert_no_stale_errors(g, "(let = 1;")
+  end
+
+  def test_rep_below_min_after_a_recovered_pass
+    g = grammar { rule(:top) { seq(either(seq(stmt.recover(to: ";"), ";").rep(2), /[^!]*/), "!") } }
+    assert_no_stale_errors(g, "let = 1;!")
+  end
+
+  # The pass recovers, then finds no ";": the rep ends before it.
+  def test_a_rep_pass_that_recovers_then_fails_leaves_no_error
+    g = grammar { rule(:top) { seq(seq(stmt.recover(to: ";"), ";").rep, /.*/m) } }
+    result = assert_no_stale_errors(g, "print 1; let = 1")
+    assert_equal [[{ value: "1" }, ";"]], result.value[0]
+  end
+
+  def test_sep_by_dropped_separator_takes_its_errors
+    g = grammar { rule(:top) { seq(sep_by("x", seq(stmt.recover(to: ";"), ";")), /.*/m) } }
+    result = assert_no_stale_errors(g, "x let = 1; y")
+    assert_equal ["x"], result.value[0]
+  end
+
+  # The separator after the last item is kept; the item after it, which
+  # recovered and then failed, isn't.
+  def test_sep_by_trailing_item_takes_its_errors
+    g = grammar do
+      rule(:top) { seq(sep_by(seq(stmt.recover(to: ";"), "!"), ",", trailing: true), /[^;]*/, ";") }
+    end
+    result = assert_no_stale_errors(g, "print 1 !, let = 1;")
+    assert_equal [[{ value: "1" }, "!"]], result.value[0]
+  end
+
+  def test_check_rejection_takes_inner_errors
+    g = grammar do
+      rule(:top) { seq(either(stmt.recover(to: ";").check(:never?, "ok"), /[^;]*/), ";") }
+      def never?(_value) = false # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_no_stale_errors(g, "let = 1;")
+  end
+
+  # An operator ("+" "+", recovering at a digit) matched, then its right
+  # operand failed.
+  def test_operators_dropped_operand_takes_the_operators_errors
+    g = grammar do
+      rule(:top) { seq(operators(num, { left: seq("+", commit, "+").recover(to: /\d/), node: Add }), /.*/m) }
+    end
+    result = assert_no_stale_errors(g, "1 + x")
+    assert_equal "1", result.value[0]
+  end
+
+  # The inner climb (after "*") matches the looser operator, recovering,
+  # and drops it for the outer climb, which matches it again: one error.
+  def test_operators_dropped_looser_operator_reports_its_error_once
+    g = grammar do
+      rule(:top) do
+        operators(num, { left: "*", node: Add }, { left: seq("+", commit, "+").recover(to: /\d/), node: Add })
+      end
+    end
+    assert_equal [8], g.parse("1 * 2 + 3").errors.map(&:pos)
+  end
+
+  # A prefix operator that recovers and then has no operand, and one that
+  # recovers matching nothing: both dropped for the bare operand.
+  def test_operators_dropped_prefix_takes_its_errors
+    g = grammar do
+      rule(:top) { operators(either(num, /-\s*x/), { prefix: seq("-", commit, "-").recover(to: /\d/), node: Neg }) }
+    end
+    assert_no_stale_errors(g, "- x")
+    g = grammar do
+      rule(:top) { operators(num, { prefix: seq("", commit, "~").recover(to: /\d/), node: Neg }) }
+    end
+    assert_no_stale_errors(g, "5")
+  end
+
+  # An item that recovers matching nothing, after a real one: the rep
+  # ends there, dropping it.
+  def test_rep_drops_an_empty_recovered_match_after_real_ones
+    g = grammar { rule(:top) { seq(either("@", seq("", commit, "~").recover(to: /\d/)).rep, /\d/) } }
+    result = assert_no_stale_errors(g, "@5")
+    assert_equal [["@"], "5"], result.value
+  end
+
+  def test_absent_and_present_discard_errors
+    g = grammar { rule(:top) { seq(either(stmt.recover(to: ";").absent, /[^;]*/), ";") } }
+    assert_no_stale_errors(g, "let = 1;")
+    g = grammar { rule(:top) { seq(stmt.recover(to: ";").present, /[^;]*/, ";") } }
+    assert_no_stale_errors(g, "let = 1;")
+  end
+
+  def test_upto_with_a_rule_terminator_discards_errors
+    g = grammar do
+      rule(:top) { seq(upto(term), /.*/m) }
+      rule(:term) { stmt.recover(to: ";") }
+    end
+    result = assert_no_stale_errors(g, "abc let = 1;")
+    assert_equal "abc ", result.value[0]
+  end
+
+  # The block recovers at "}" after its statement recovered (the outer
+  # error is logged after the inner one, though it starts first); then
+  # "end" fails and the regexp alternative matches instead.
+  def test_backtracking_over_a_nested_recover
+    g = grammar do
+      rule(:top) { seq(either(seq(block.recover(to: "}"), "}", "end"), /[^!]*/), "!") }
+      rule(:block) { seq("{", commit, statements, "done") }
+    end
+    assert_no_stale_errors(g, "{ let = 1; oops }!")
+  end
+
+  # The root seq failing plainly is backtracking too, so only the final
+  # failure is left; a commit failure doesn't backtrack, so the errors
+  # recovered before it stay.
+  def test_root_plain_failure_rolls_back_but_commit_keeps_them
+    input = "{ let = 1; print 2;"
+    plain = grammar { rule(:top) { seq("{", seq(stmt.recover(to: ";"), ";").rep, "}") } }.parse(input)
+    assert_equal [19], plain.errors.map(&:pos)
+    committed = grammar { rule(:top) { seq("{", commit, seq(stmt.recover(to: ";"), ";").rep, "}") } }.parse(input)
+    assert_equal [6, 19], committed.errors.map(&:pos)
   end
 
   # --- The error log Context keeps ---

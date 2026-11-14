@@ -136,10 +136,20 @@ module Birman
     def record(node) = (@recovered ||= []) << node
 
     # Drop the recorded errors that start at or after pos: what they
-    # covered has been backtracked over.
+    # covered has been backtracked over. Returns nil, for a matcher
+    # that fails to return.
+    #
+    # Only the tail is looked at, though the log isn't sorted by start:
+    # a nested recover logs its inner errors before the outer error,
+    # which starts first. That's safe because a backtrack starting
+    # inside an outer recover's span ends before the outer error is
+    # logged, and one starting after it starts at or past its end; so
+    # an error starting before pos is never logged after one at or past
+    # it that's still there.
     def rollback(pos)
       log = @recovered or return
       log.pop while (last = log.last) && last.span.byte_from >= pos
+      nil
     end
 
     # Was an error recorded at or after pos?
@@ -175,10 +185,12 @@ module Birman
 
     # A positive lookahead: does matcher match at pos? Nothing is
     # consumed, and failures inside it describe input the parse never
-    # moves past, so they're dropped. If it fails, that's recorded at
-    # pos, as what it expected there or as the lookahead itself.
+    # moves past, so they're dropped, as are errors recovered from in it.
+    # If it fails, that's recorded at pos, as what it expected there or
+    # as the lookahead itself.
     def peek?(matcher, pos)
       result = isolate(pos) { lookahead { matcher.match(self, pos) } }
+      rollback(pos)
       return true if result
 
       furthest = isolated_furthest

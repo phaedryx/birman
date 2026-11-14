@@ -321,9 +321,10 @@ module Birman
     def with(**changes) = changes.empty? ? self : Seq.new(open: open?, **to_h, **changes)
 
     def match(ctx, pos)
+      start = pos
       values = Array.new(parts.size)
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return failed(ctx, part, pos, i)
+        r = part.match(ctx, pos) or return failed(ctx, part, start, pos, i)
         values[i] = r.value
         pos = r.pos
       end
@@ -377,9 +378,12 @@ module Birman
                            "list its parts in the outer seq, or name it with .as"
     end
 
-    def failed(ctx, part, pos, index)
+    # A committed failure raises, keeping the errors recovered so far: it
+    # ends the parse or is recovered from, and neither backtracks. A plain
+    # one discards the parts that matched, and their errors.
+    def failed(ctx, part, start, pos, index)
       fail_committed!(ctx, part, pos) if commit_at && index >= commit_at
-      nil
+      ctx.rollback(start)
     end
 
     # If the failed part recorded nothing at or past pos (it's quiet,
@@ -409,9 +413,10 @@ module Birman
     def initialize(parts:, index:) = super(parts: parts.dup.freeze, index:)
 
     def match(ctx, pos)
+      start = pos
       value = nil
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return nil
+        r = part.match(ctx, pos) or return ctx.rollback(start)
         value = r.value if i == index
         pos = r.pos
       end
@@ -433,15 +438,17 @@ module Birman
 
     def initialize(item:, sep:, min: 1, trailing: false) = super
 
-    def match(ctx, pos)
+    def match(ctx, pos) # rubocop:disable Metrics/AbcSize
       r = item.match(ctx, pos) or return (min.zero? ? Match.new(pos, []) : nil)
       values = [r.value]
       pos = r.pos
       loop do
         s = sep.match(ctx, pos) or break
         r = item.match(ctx, s.pos)
-        pos = s.pos if r.nil? && trailing
-        break if r.nil? || r.pos == pos # an empty separator and item would loop forever
+        break pos = s.pos if r.nil? && trailing # kept, ending the list
+        # Dropped with its errors: a separator with no item after it, or
+        # an empty separator and item (they would loop forever).
+        break ctx.rollback(pos) if r.nil? || r.pos == pos
 
         values << r.value
         pos = r.pos
@@ -485,6 +492,7 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
+      start = pos
       values = []
       while max.nil? || values.size < max
         r = inner.match(ctx, pos) or break
@@ -492,14 +500,14 @@ module Birman
         # It still counts as the first match, so `x.rep(1)` and `x.maybe`
         # work when x can match empty; after real matches it's just the end.
         if r.pos == pos
-          values << r.value if values.empty?
+          values.empty? ? values << r.value : ctx.rollback(pos)
           break
         end
 
         values << r.value
         pos = r.pos
       end
-      values.size >= min ? Match.new(pos, values) : nil
+      values.size >= min ? Match.new(pos, values) : ctx.rollback(start)
     end
 
     def to_ast = [:rep, min, max, inner.to_ast]
@@ -507,12 +515,14 @@ module Birman
   end
 
   # Negative lookahead. The inner attempt's failures are discarded,
-  # since failing is exactly what we hoped for.
+  # since failing is exactly what we hoped for, and so are the errors it
+  # recovered from, as every lookahead's are.
   Not = Data.define(:inner) do
     include Matcher
 
     def match(ctx, pos)
       r = ctx.isolate(pos) { ctx.lookahead { inner.match(ctx, pos) } }
+      ctx.rollback(pos)
       r ? nil : Match.new(pos, nil)
     end
 
@@ -645,7 +655,10 @@ module Birman
 
     def match(ctx, pos)
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
-      return ctx.fail_at(pos, name) if result && !ctx.grammar.__send__(method_name, result.value)
+      if result && !ctx.grammar.__send__(method_name, result.value)
+        ctx.rollback(pos)
+        return ctx.fail_at(pos, name)
+      end
 
       ctx.merge(ctx.isolated_furthest, ctx.isolated_expected)
       result
@@ -721,12 +734,20 @@ module Birman
       else
         bytes = input.encoding == Encoding::BINARY # a character per byte, as any matches
         while pos < input.bytesize
-          return pos if ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
+          return pos if terminator_at?(ctx, pos)
 
           pos += 1
           pos += 1 while !bytes && pos < input.bytesize && input.getbyte(pos).between?(0x80, 0xBF)
         end
       end
+    end
+
+    # A lookahead for the terminator at pos, dropping its failures and
+    # the errors it recovered from.
+    def terminator_at?(ctx, pos)
+      found = ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
+      ctx.rollback(pos)
+      found
     end
   end
 
@@ -822,26 +843,29 @@ module Birman
 
     # The operand slot: a prefix operator and its operand at the
     # operator's rank, else the bare operand (also when the prefixed
-    # form fails).
+    # form fails, dropping the operator and its errors).
     def operand_at(ctx, pos)
       entry, o = prefix_at(ctx, pos)
-      if entry && (right = climb(ctx, o.pos, entry.rank))
-        node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
-        return Match.new(right.pos, node)
+      if entry
+        if (right = climb(ctx, o.pos, entry.rank))
+          node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
+          return Match.new(right.pos, node)
+        end
+        ctx.rollback(pos)
       end
 
       operand.match(ctx, pos)
     end
 
     # The first prefix operator matching at pos, as [entry, match]; one
-    # that consumes nothing counts as no match. Failures are dropped, as
-    # if the choice were quiet.
+    # that consumes nothing counts as no match, and its errors are
+    # dropped. Failures are dropped, as if the choice were quiet.
     def prefix_at(ctx, pos)
       found = nil
       ctx.isolate(pos) do
         prefixes.each do |entry|
           m = entry.matcher.match(ctx, pos) or next
-          found = [entry, m] if m.pos > pos
+          m.pos > pos ? found = [entry, m] : ctx.rollback(pos)
           break
         end
       end
@@ -850,16 +874,16 @@ module Birman
 
     # One more operator folded onto left, as [node, end], or nil to
     # stop before the operator (rank too loose, no right side, or
-    # nothing consumed). A right fold whose operator matched nothing
-    # where the climb began would recurse at its own start forever, so
-    # it stops too.
+    # nothing consumed), dropping its errors. A right fold whose
+    # operator matched nothing where the climb began would recurse at
+    # its own start forever, so it stops too.
     def suffix_step(ctx, pos, min, left, start)
       entry, o = suffix_at(ctx, pos)
-      return if entry.nil? || entry.rank < min
-      return if entry.fixity == :right && o.pos == start
+      return unless entry
+      return ctx.rollback(pos) if entry.rank < min || (entry.fixity == :right && o.pos == start)
 
       fields, stop = suffix_fields(ctx, entry, o, left)
-      return if stop.nil? || stop == pos
+      return ctx.rollback(pos) if stop.nil? || stop == pos
 
       [Birman.build(entry.node, fields, ctx, start, stop), stop]
     end
