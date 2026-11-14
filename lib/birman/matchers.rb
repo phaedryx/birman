@@ -129,6 +129,22 @@ module Birman
     # returns = "Matcher whose value is always value (self's .as name is kept)"
     def means(value) = Const.new(self, value)
 
+    # Recover from a failure of self: record it as an error, skip to
+    # the first place `to` matches from where self failed (or to the end
+    # of input), and succeed there with an ErrorNode spanning self's
+    # start to that point, so the parse carries on. Only a committed
+    # failure, or one that got past where self started, is recovered;
+    # failing at the start is an ordinary failure, so a list of
+    # recovering items still ends where the items do. `to` isn't
+    # consumed, and nothing is skipped after it: the grammar matches it
+    # next.
+    # [method.recover]
+    # params = ["to: String (exact, nothing skipped) | Regexp | Matcher, where parsing resumes"]
+    # returns = "Matcher for self, or an ErrorNode up to where to matches when self fails past its start"
+    # value = "self's value, or a Birman::ErrorNode (span: self's start to the sync point; failure: the error)"
+    # notes = "A parse that recovered returns a Failure listing every error (Failure#errors) and the tree (#value)"
+    def recover(to:) = Recover.new(self, to.is_a?(String) ? Str.new(to) : Birman.coerce(to))
+
     # [method.label]
     # params = ["name: String"]
     # returns = "self, reported as \"expected <name>\" when it fails without consuming input"
@@ -587,6 +603,37 @@ module Birman
     end
 
     def to_ast = [:label, name, inner.to_ast]
+    def capture_key = inner.capture_key
+  end
+
+  # See Matcher#recover. inner runs isolated: what it expected is
+  # merged outward when it matches or fails at pos, and becomes the
+  # recorded error when it's recovered from. The search for the sync
+  # point is upto's, its diagnostics dropped.
+  Recover = Data.define(:inner, :to) do
+    include Matcher
+
+    def initialize(inner:, to:)
+      @sync = Upto.new(to)
+      super
+    end
+
+    def match(ctx, pos)
+      result, furthest, expected, committed = ctx.recover_failure(pos) { inner.match(ctx, pos) }
+      if result || (!committed && furthest <= pos)
+        ctx.merge(furthest, expected)
+        return result
+      end
+
+      input = ctx.input
+      stop = ctx.isolate(furthest) { @sync.match(ctx, furthest) }&.pos || input.bytesize
+      failure = Failure.new(input:, pos: Birman.char_offset(input, furthest), expected: expected.uniq, committed:)
+      node = Node.new_with_span(ErrorNode, ctx.span(pos, stop), { failure: })
+      ctx.record(node)
+      Match.new(stop, node)
+    end
+
+    def to_ast = [:recover, inner.to_ast, to.to_ast]
     def capture_key = inner.capture_key
   end
 

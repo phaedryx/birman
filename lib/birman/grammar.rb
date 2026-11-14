@@ -330,15 +330,29 @@ module Birman
       ctx = (trace ? TracingContext : Context).new(input, self, ignore_rule, analysis, from)
       result = Ref.new(root).match(ctx, ctx.start)
       if result && (!consume || result.pos == input.bytesize)
+        if (errors = ctx.recovered) && !errors.empty?
+          return Failure.recovered(errors.map(&:failure), value: result.value, trace: ctx.trace)
+        end
+
         return Success.new(value: result.value, input:, byte_pos: ctx.token_end(result.pos), trace: ctx.trace)
       end
 
       ctx.end_of_input(result.pos) if result
-      build_failure(input, ctx.furthest, ctx.expected, trace: ctx.trace)
+      __failed(ctx, input, ctx.furthest, ctx.expected)
     rescue Committed => e
-      build_failure(input, e.pos, e.expected, committed: true, trace: ctx.trace)
+      __failed(ctx, input, e.pos, e.expected, committed: true)
     rescue SystemStackError
-      build_failure(input, ctx.position, [], reason: "input is nested too deeply", trace: ctx.trace)
+      __failed(ctx, input, ctx.position, [], reason: "input is nested too deeply")
+    end
+
+    # The parse's Failure; after recoveries (see Matcher#recover), one
+    # listing their errors as well as this last one, with no value.
+    def __failed(ctx, input, byte_pos, expected, **)
+      errors = ctx.recovered
+      return build_failure(input, byte_pos, expected, **, trace: ctx.trace) if errors.nil? || errors.empty?
+
+      Failure.recovered([*errors.map(&:failure), build_failure(input, byte_pos, expected, **)], value: nil,
+                                                                                                trace: ctx.trace)
     end
 
     # As to_ast, leaving out what it can't describe: undefined rules

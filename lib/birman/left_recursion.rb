@@ -88,6 +88,7 @@ module Birman
       in [:lexeme, inner]        then nullable_node?(inner)
       in [:text | :spanned, inner] then nullable_node?(inner)
       in [:upto, _] then true # the terminator may be right here
+      in [:recover, inner, _] then nullable_node?(inner) # skipping to the sync point is recovery, not a match
       else false
       end
     end
@@ -126,6 +127,7 @@ module Birman
       in [:lexeme, inner]      then calls(inner) + (@ignore && nullable_node?(inner) ? [@ignore] : [])
       in [:text | :spanned, inner] then calls(inner)
       in [:upto, stop] then calls(stop) # tried first where it starts
+      in [:recover, inner, _] then calls(inner)
       else []
       end
     end
@@ -178,6 +180,7 @@ module Birman
       in [:choice, alts] then alts.any? { seedable?(_1, cycle) }
       in [:seq, _, parts] then leading(parts).all? { seedable?(_1, cycle) }
       in [:rep, 0, _, _] | [:rep, _, 0, _] | [:not, _] | [:upto, _] then true
+      in [:recover, inner, _] then seedable?(inner, cycle)
       in [:rep | :label | :check, *] | [:and | :action | :quiet | :lexeme, _]
         seedable?(node.last, cycle) # a wrapper: its inner node is its last element
       in [:both, left, right] then seedable?(left, cycle) && seedable?(right, cycle)

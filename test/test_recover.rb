@@ -84,4 +84,156 @@ class RecoverTest < Minitest::Test
     assert_equal Birman::ErrorFormatter.new.call(b), err.message
     assert_equal [b, a], err.failure.errors
   end
+
+  # --- recover(to:) in a parse ---
+
+  # Statements separated by ";": let commits after its keyword, print
+  # doesn't, so a print that fails part-way is a plain failure past its
+  # start.
+  LANG = proc do
+    rule(:statements) { seq(only(stmt.recover(to: ";")), ";").rep }
+    rule(:stmt) { either(let_stmt, print_stmt) }
+    rule(:let_stmt) { seq("let", commit, name.as(:name), "=", num.as(:value)) }
+    rule(:print_stmt) { seq("print", num.as(:value)) }
+    lexeme(:name) { /[a-z]+/ }
+    lexeme(:num) { /\d+/ }
+  end
+
+  def grammar(root = :top, &rules)
+    Class.new do
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      ignore :spacing
+      self.root(root)
+      class_eval(&LANG)
+      class_eval(&rules) if rules
+    end
+  end
+
+  def program = grammar(:statements)
+
+  def test_valid_input_is_a_success_with_no_errors
+    result = program.parse("let x = 1; print 2;")
+    assert_instance_of Birman::Success, result
+    assert_equal [{ name: "x", value: "1" }, { value: "2" }], result.value
+  end
+
+  def test_list_ending_at_a_brace_or_eof_is_not_an_error
+    g = grammar { rule(:top) { seq("{", seq(stmt.recover(to: ";"), ";").rep, "}") } }
+    assert_instance_of Birman::Success, g.parse("{ let x = 1; }")
+    assert_instance_of Birman::Success, program.parse("print 2;")
+  end
+
+  def test_committed_failure_is_recovered_and_parsing_continues
+    result = program.parse("let = 1; let y = 2; let 3; print 4;")
+    assert_instance_of Birman::Failure, result
+    assert_equal [4, 24], result.errors.map(&:pos)
+    assert result.errors.all?(&:committed)
+    value = result.value
+    assert_kind_of Array, value
+    assert_equal 4, value.size
+    assert_instance_of Birman::ErrorNode, value[0]
+    assert_instance_of Birman::ErrorNode, value[2]
+    assert_equal({ name: "y", value: "2" }, value[1])
+    assert_equal({ value: "4" }, value[3])
+    assert_equal result.errors, [value[0].failure, value[2].failure]
+  end
+
+  def test_error_node_spans_from_the_start_to_the_sync_point
+    value = program.parse("let = 1; let 3 ;").value
+    assert_equal "let = 1", value[0].span.text
+    assert_equal 0, value[0].span.from
+    assert_equal "let 3", value[1].span.text # spacing before the sync point isn't in it
+  end
+
+  def test_sync_search_starts_at_the_failure_point
+    g = grammar(:prints) do
+      rule(:prints) { seq(only(bang.recover(to: ";")), ";").rep }
+      rule(:bang) { seq("print", commit, "(", sep_by(num, ";"), ")", "!") }
+    end
+    result = g.parse("print (1; 2) @; print (3) !;")
+    assert_equal [13], result.errors.map(&:pos)
+    assert_equal ['"!"'], result.errors.first.expected
+    assert_equal "print (1; 2) @", result.value[0].span.text
+    assert_equal ["print", "(", ["3"], ")", "!"], result.value[1]
+  end
+
+  def test_no_sync_skips_to_end_of_input
+    g = grammar { rule(:top) { stmt.recover(to: ";") } }
+    result = g.parse("let = 1 2 3")
+    assert_equal [4], result.errors.map(&:pos)
+    assert_instance_of Birman::ErrorNode, result.value
+    assert_equal "let = 1 2 3", result.value.span.text
+  end
+
+  def test_plain_failure_that_got_past_its_start_is_recovered
+    result = program.parse("print x; print 2;")
+    assert_equal [6], result.errors.map(&:pos)
+    refute result.errors.first.committed
+    assert_equal ["/\\d+/"], result.errors.first.expected
+    assert_equal "print x", result.value[0].span.text
+    assert_equal({ value: "2" }, result.value[1])
+  end
+
+  def test_first_error_is_the_failures_own_fields
+    result = program.parse("let = 1; print x;")
+    first = result.errors.first
+    assert_equal [4, 15], result.errors.map(&:pos)
+    assert_equal [first.pos, first.expected, first.committed, first.reason],
+                 [result.pos, result.expected, result.committed, result.reason]
+    assert_equal first.message, result.message
+  end
+
+  def test_parse_bang_raises_the_first_error
+    err = assert_raises(Birman::ParseError) { program.parse!("let = 1; print x;") }
+    assert_equal Birman::ErrorFormatter.new.call(err.failure.errors.first), err.message
+    assert_equal [4, 15], err.failure.errors.map(&:pos)
+  end
+
+  def test_recover_with_a_regexp_or_rule_sync
+    input = "let = 1 ; let y = 2; let 3; print 4;"
+    syncs = [/;/, Birman.match(/;/), :semi, :stop]
+    syncs.each do |sync|
+      g = grammar(:synced) do
+        rule(:semi) { ";" } # a literal, skipping spacing after it
+        rule(:stop) { either(str(";"), str("}")) }
+        rule(:synced) { seq(only(stmt.recover(to: sync.is_a?(Symbol) ? send(sync) : sync)), ";").rep }
+      end
+      result = g.parse(input)
+      assert_equal [4, 25], result.errors.map(&:pos), sync.inspect
+      assert_equal "let = 1", result.value[0].span.text, sync.inspect
+      assert_equal 4, result.value.size, sync.inspect
+    end
+  end
+
+  def test_consume_false_and_offset_with_recovery
+    prefix = program.parse("let = 1; print 2; )))", consume: false)
+    assert_instance_of Birman::Failure, prefix
+    assert_equal [4], prefix.errors.map(&:pos)
+    assert_equal({ value: "2" }, prefix.value[1])
+
+    offset = program.parse("éé let = 1; print 2;", offset: 3)
+    assert_equal [7], offset.errors.map(&:pos)
+    assert_equal 3, offset.value[0].span.from
+    assert_equal "let = 1", offset.value[0].span.text
+  end
+
+  def test_nested_recover_keeps_inner_errors
+    g = grammar(:blocks) do
+      rule(:blocks) { seq(only(block.recover(to: "}")), "}").rep }
+      rule(:block) { seq("{", commit, statements, "done") }
+    end
+    result = g.parse("{ let = 1; print 2; oops } { print 3; done }")
+    assert_equal [6, 20], result.errors.map(&:pos)
+    assert result.errors.all?(&:committed)
+    assert_equal "{ let = 1; print 2; oops", result.value[0].span.text
+    assert_equal ["{", [{ value: "3" }], "done"], result.value[1]
+  end
+
+  def test_a_failure_after_recovering_lists_both
+    result = program.parse("let = 1; print 2 print 3;")
+    assert_equal [4, 17], result.errors.map(&:pos)
+    assert_nil result.value
+  end
 end

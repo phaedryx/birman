@@ -129,6 +129,42 @@ module Birman
       end
     end
 
+    # The ErrorNodes of the failures recovered from so far (see
+    # Matcher#recover), in the order recorded; nil until the first.
+    attr_reader :recovered
+
+    def record(node) = (@recovered ||= []) << node
+
+    # Drop the recorded errors that start at or after pos: what they
+    # covered has been backtracked over.
+    def rollback(pos)
+      log = @recovered or return
+      log.pop while (last = log.last) && last.span.byte_from >= pos
+    end
+
+    # Was an error recorded at or after pos?
+    def recovered_since?(pos)
+      last = @recovered&.last
+      last ? last.span.byte_from >= pos : false
+    end
+
+    # Run a recover's inner match isolated from pos, returning [result,
+    # furthest, expected, committed]: a commit failure inside it is
+    # caught, as a lookahead catches one, its diagnostics taken as the
+    # attempt's.
+    def recover_failure(pos)
+      committed = false
+      result = isolate(pos) do
+        yield
+      rescue Committed => e
+        committed = true
+        @furthest = e.pos
+        @expected = e.expected
+        nil
+      end
+      [result, isolated_furthest, isolated_expected, committed]
+    end
+
     # Input was left over after the root rule matched up to pos.
     def end_of_input(pos) = fail_at(pos, "end of input")
 
