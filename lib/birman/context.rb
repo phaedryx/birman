@@ -135,28 +135,23 @@ module Birman
 
     def record(node) = (@recovered ||= []) << node
 
-    # Drop the recorded errors that start at or after pos: what they
-    # covered has been backtracked over. Returns nil, for a matcher
-    # that fails to return.
-    #
-    # Only the tail is looked at, though the log isn't sorted by start:
-    # a nested recover logs its inner errors before the outer error,
-    # which starts first. That's safe because a backtrack starting
-    # inside an outer recover's span ends before the outer error is
-    # logged, and one starting after it starts at or past its end; so
-    # an error starting before pos is never logged after one at or past
-    # it that's still there.
-    def rollback(pos)
+    # Where the log is now, for rollback and recovered_since?: its
+    # length, or nil while nothing has been recovered (so a parse that
+    # recovers nothing only ever reads an ivar).
+    def log_mark = @recovered&.size
+
+    # Drop the errors recorded since mark: the match that recorded them
+    # has been backtracked over. Returns nil, for a matcher that fails
+    # to return.
+    def rollback(mark)
       log = @recovered or return
-      log.pop while (last = log.last) && last.span.byte_from >= pos
+      keep = mark || 0
+      log.pop while log.size > keep
       nil
     end
 
-    # Was an error recorded at or after pos?
-    def recovered_since?(pos)
-      last = @recovered&.last
-      last ? last.span.byte_from >= pos : false
-    end
+    # Was an error recorded since mark?
+    def recovered_since?(mark) = (@recovered&.size || 0) > (mark || 0)
 
     # Run a recover's inner match isolated from pos, returning [result,
     # furthest, expected, committed]: a commit failure inside it is
@@ -189,8 +184,9 @@ module Birman
     # If it fails, that's recorded at pos, as what it expected there or
     # as the lookahead itself.
     def peek?(matcher, pos)
+      mark = log_mark
       result = isolate(pos) { lookahead { matcher.match(self, pos) } }
-      rollback(pos)
+      rollback(mark)
       return true if result
 
       furthest = isolated_furthest

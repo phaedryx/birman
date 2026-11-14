@@ -321,10 +321,10 @@ module Birman
     def with(**changes) = changes.empty? ? self : Seq.new(open: open?, **to_h, **changes)
 
     def match(ctx, pos)
-      start = pos
+      mark = ctx.log_mark
       values = Array.new(parts.size)
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return failed(ctx, part, start, pos, i)
+        r = part.match(ctx, pos) or return failed(ctx, part, mark, pos, i)
         values[i] = r.value
         pos = r.pos
       end
@@ -381,9 +381,9 @@ module Birman
     # A committed failure raises, keeping the errors recovered so far: it
     # ends the parse or is recovered from, and neither backtracks. A plain
     # one discards the parts that matched, and their errors.
-    def failed(ctx, part, start, pos, index)
+    def failed(ctx, part, mark, pos, index)
       fail_committed!(ctx, part, pos) if commit_at && index >= commit_at
-      ctx.rollback(start)
+      ctx.rollback(mark)
     end
 
     # If the failed part recorded nothing at or past pos (it's quiet,
@@ -413,10 +413,10 @@ module Birman
     def initialize(parts:, index:) = super(parts: parts.dup.freeze, index:)
 
     def match(ctx, pos)
-      start = pos
+      mark = ctx.log_mark
       value = nil
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return ctx.rollback(start)
+        r = part.match(ctx, pos) or return ctx.rollback(mark)
         value = r.value if i == index
         pos = r.pos
       end
@@ -438,17 +438,18 @@ module Birman
 
     def initialize(item:, sep:, min: 1, trailing: false) = super
 
-    def match(ctx, pos) # rubocop:disable Metrics/AbcSize
+    def match(ctx, pos) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       r = item.match(ctx, pos) or return (min.zero? ? Match.new(pos, []) : nil)
       values = [r.value]
       pos = r.pos
       loop do
+        mark = ctx.log_mark
         s = sep.match(ctx, pos) or break
         r = item.match(ctx, s.pos)
         break pos = s.pos if r.nil? && trailing # kept, ending the list
         # Dropped with its errors: a separator with no item after it, or
         # an empty separator and item (they would loop forever).
-        break ctx.rollback(pos) if r.nil? || r.pos == pos
+        break ctx.rollback(mark) if r.nil? || r.pos == pos
 
         values << r.value
         pos = r.pos
@@ -491,23 +492,24 @@ module Birman
   Rep = Data.define(:inner, :min, :max) do
     include Matcher
 
-    def match(ctx, pos)
-      start = pos
+    def match(ctx, pos) # rubocop:disable Metrics/MethodLength
+      start_mark = ctx.log_mark
       values = []
       while max.nil? || values.size < max
+        pass_mark = ctx.log_mark
         r = inner.match(ctx, pos) or break
         # Matching nothing ends the loop (repeating it would never stop).
         # It still counts as the first match, so `x.rep(1)` and `x.maybe`
         # work when x can match empty; after real matches it's just the end.
         if r.pos == pos
-          values.empty? ? values << r.value : ctx.rollback(pos)
+          values.empty? ? values << r.value : ctx.rollback(pass_mark)
           break
         end
 
         values << r.value
         pos = r.pos
       end
-      values.size >= min ? Match.new(pos, values) : ctx.rollback(start)
+      values.size >= min ? Match.new(pos, values) : ctx.rollback(start_mark)
     end
 
     def to_ast = [:rep, min, max, inner.to_ast]
@@ -521,8 +523,9 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = ctx.isolate(pos) { ctx.lookahead { inner.match(ctx, pos) } }
-      ctx.rollback(pos)
+      ctx.rollback(mark)
       r ? nil : Match.new(pos, nil)
     end
 
@@ -654,9 +657,10 @@ module Birman
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
       if result && !ctx.grammar.__send__(method_name, result.value)
-        ctx.rollback(pos)
+        ctx.rollback(mark)
         return ctx.fail_at(pos, name)
       end
 
@@ -745,8 +749,9 @@ module Birman
     # A lookahead for the terminator at pos, dropping its failures and
     # the errors it recovered from.
     def terminator_at?(ctx, pos)
+      mark = ctx.log_mark
       found = ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
-      ctx.rollback(pos)
+      ctx.rollback(mark)
       found
     end
   end
@@ -845,13 +850,14 @@ module Birman
     # operator's rank, else the bare operand (also when the prefixed
     # form fails, dropping the operator and its errors).
     def operand_at(ctx, pos)
+      mark = ctx.log_mark
       entry, o = prefix_at(ctx, pos)
       if entry
         if (right = climb(ctx, o.pos, entry.rank))
           node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
           return Match.new(right.pos, node)
         end
-        ctx.rollback(pos)
+        ctx.rollback(mark)
       end
 
       operand.match(ctx, pos)
@@ -862,10 +868,11 @@ module Birman
     # dropped. Failures are dropped, as if the choice were quiet.
     def prefix_at(ctx, pos)
       found = nil
+      mark = ctx.log_mark
       ctx.isolate(pos) do
         prefixes.each do |entry|
           m = entry.matcher.match(ctx, pos) or next
-          m.pos > pos ? found = [entry, m] : ctx.rollback(pos)
+          m.pos > pos ? found = [entry, m] : ctx.rollback(mark)
           break
         end
       end
@@ -878,12 +885,13 @@ module Birman
     # operator matched nothing where the climb began would recurse at
     # its own start forever, so it stops too.
     def suffix_step(ctx, pos, min, left, start)
+      mark = ctx.log_mark
       entry, o = suffix_at(ctx, pos)
       return unless entry
-      return ctx.rollback(pos) if entry.rank < min || (entry.fixity == :right && o.pos == start)
+      return ctx.rollback(mark) if entry.rank < min || (entry.fixity == :right && o.pos == start)
 
       fields, stop = suffix_fields(ctx, entry, o, left)
-      return ctx.rollback(pos) if stop.nil? || stop == pos
+      return ctx.rollback(mark) if stop.nil? || stop == pos
 
       [Birman.build(entry.node, fields, ctx, start, stop), stop]
     end

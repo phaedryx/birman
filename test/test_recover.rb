@@ -384,6 +384,25 @@ class RecoverTest < Minitest::Test
     assert_no_stale_errors(g, "{ let = 1; oops }!")
   end
 
+  # A left-recursive rule grows by matching its body again at the same
+  # position; the last round, which gets no further, backtracks over the
+  # seed it took, but the seed (the match kept) keeps its error.
+  def test_a_growth_rounds_backtracking_keeps_the_seeds_errors
+    g = grammar(:expr) do
+      rule(:expr) { either(seq(expr, "+", term), num) }
+      rule(:term) { either(num, seq("(", commit, num, ")").recover(to: "+")) }
+    end
+    assert_equal [3], g.parse("1+(x").errors.map(&:pos)
+    assert_equal [3], g.parse("1+(x+2").errors.map(&:pos)
+  end
+
+  # The kept item ends with a recover that matched nothing at ","; the
+  # dropped separator starts there too, but only its own errors go.
+  def test_a_dropped_separator_keeps_an_empty_error_before_it
+    g = grammar { rule(:top) { seq(sep_by(seq("a", seq("", commit, "~").recover(to: ",")), ","), /.*/m) } }
+    assert_equal [1], g.parse("a,").errors.map(&:pos)
+  end
+
   # The root seq failing plainly is backtracking too, so only the final
   # failure is left; a commit failure doesn't backtrack, so the errors
   # recovered before it stay.
@@ -410,22 +429,30 @@ class RecoverTest < Minitest::Test
   def test_the_log_is_nil_until_an_error_is_recorded
     ctx = context("abcdef")
     assert_nil ctx.recovered
-    refute ctx.recovered_since?(0)
-    ctx.rollback(0) # nothing to roll back
+    assert_nil ctx.log_mark
+    refute ctx.recovered_since?(nil)
+    ctx.rollback(nil) # nothing to roll back
     assert_nil ctx.recovered
   end
 
-  def test_rollback_drops_the_errors_starting_at_or_after_pos
+  # Marks are the log's length, so errors are dropped by when they were
+  # recorded, not where they start: an inner error logged before the
+  # outer one that starts first, say.
+  def test_rollback_drops_the_errors_recorded_since_the_mark
     ctx = context("abcdef")
-    nodes = [1, 3, 4].map { error_at(ctx, _1) }
-    nodes.each { ctx.record(_1) }
-    assert ctx.recovered_since?(4)
-    refute ctx.recovered_since?(5)
-    ctx.rollback(3)
-    assert_equal nodes.take(1), ctx.recovered
-    refute ctx.recovered_since?(2)
-    ctx.rollback(0)
+    before = ctx.log_mark
+    inner, outer, later = [3, 1, 4].map { error_at(ctx, _1) }
+    ctx.record(inner)
+    ctx.record(outer)
+    mark = ctx.log_mark
+    refute ctx.recovered_since?(mark)
+    ctx.record(later)
+    assert ctx.recovered_since?(mark)
+    ctx.rollback(mark)
+    assert_equal [inner, outer], ctx.recovered
+    assert ctx.recovered_since?(before)
+    ctx.rollback(before)
     assert_empty ctx.recovered
-    refute ctx.recovered_since?(0)
+    refute ctx.recovered_since?(before)
   end
 end
