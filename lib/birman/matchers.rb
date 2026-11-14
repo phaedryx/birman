@@ -342,7 +342,7 @@ module Birman
       case part
       when Seq then part.only_at ? names_inside(part.parts[part.only_at]) : part.parts.filter_map(&:capture_key)
       when Pick then names_inside(part.parts[part.index])
-      when Label, Quiet, Lexeme, Check, Maybe then names_inside(part.inner)
+      when Label, Quiet, Lexeme, Check, Maybe, Recover then names_inside(part.inner)
       when Rep then names_inside(part.inner)
       when SepBy then names_inside(part.item)
       when Both then names_inside(part.right)

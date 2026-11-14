@@ -236,4 +236,52 @@ class RecoverTest < Minitest::Test
     assert_equal [4, 17], result.errors.map(&:pos)
     assert_nil result.value
   end
+
+  def test_a_recover_passes_names_through_as_its_inner_matcher_does
+    g = grammar { rule(:top) { seq(seq(name.as(:n), num.as(:v)).recover(to: ";"), str(";").as(:end)) } }
+    error = assert_raises(ArgumentError) { g.parse("x 1;") }
+    assert_match(/would lose its names :n, :v/, error.message)
+    g = grammar { rule(:top) { seq(num.as(:v).recover(to: ";"), ";") } }
+    assert_equal({ v: "1" }, g.parse!("1;"))
+  end
+
+  def test_a_recovered_attempts_expectations_are_not_merged_outward
+    g = grammar { rule(:top) { seq(stmt.recover(to: ";"), "!") } }
+    result = g.parse("let ;")
+    assert_equal([[4, ["/[a-z]+/"]], [4, ['"!"']]], result.errors.map { [_1.pos, _1.expected] })
+  end
+
+  # --- The error log Context keeps ---
+
+  def context(input)
+    g = program.new
+    Birman::Context.new(input, g, nil, g.left_recursion)
+  end
+
+  def error_at(ctx, from)
+    failure = Birman::Failure.new(input: ctx.input, pos: from, expected: [], committed: true)
+    Birman::Node.new_with_span(Birman::ErrorNode, ctx.span(from, from + 1), { failure: })
+  end
+
+  def test_the_log_is_nil_until_an_error_is_recorded
+    ctx = context("abcdef")
+    assert_nil ctx.recovered
+    refute ctx.recovered_since?(0)
+    ctx.rollback(0) # nothing to roll back
+    assert_nil ctx.recovered
+  end
+
+  def test_rollback_drops_the_errors_starting_at_or_after_pos
+    ctx = context("abcdef")
+    nodes = [1, 3, 4].map { error_at(ctx, _1) }
+    nodes.each { ctx.record(_1) }
+    assert ctx.recovered_since?(4)
+    refute ctx.recovered_since?(5)
+    ctx.rollback(3)
+    assert_equal nodes.take(1), ctx.recovered
+    refute ctx.recovered_since?(2)
+    ctx.rollback(0)
+    assert_empty ctx.recovered
+    refute ctx.recovered_since?(0)
+  end
 end
