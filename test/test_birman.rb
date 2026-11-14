@@ -1350,7 +1350,7 @@ class BirmanTest < Minitest::Test
           rule(name) { str("x") }
         end
       end
-      assert_match(/would replace #{mod}##{name}, which Birman relies on/, error.message)
+      assert_includes error.message, "would replace #{mod}##{name}, which Birman relies on"
     end
   end
 

@@ -71,7 +71,9 @@ module Birman
       # [method."Grammar.rule"]
       # params = ["name: Symbol", "block: the rule's body (omit to read the rule's matcher)"]
       # returns = "nil when defining; the rule's Matcher when reading"
-      # raises = ["ArgumentError for an undefined rule, or one whose matcher can't be built, when reading"]
+      # raises = [
+      #   "ArgumentError for an undefined rule, one naming one, or one whose matcher can't be built, when reading"
+      # ]
       def rule(name, &) = block_given? ? super : instance.matcher_for(name)
 
       # These share one instance, so each rule's matcher is built once
@@ -100,6 +102,11 @@ module Birman
       # [method."Grammar.to_ebnf"]
       # returns = "String: the grammar in PEG-flavored EBNF; rules the root doesn't reach follow a blank line"
       def to_ebnf = instance.to_ebnf
+
+      # [method."Grammar.lint"]
+      # returns = "Array of Lint::Problem (kind, rule, message), empty when it finds nothing; see Grammar#lint"
+      # notes = "Parses nothing, and raises nothing for a mistake in the grammar: it reports it"
+      def lint = instance.lint
 
       # [method."Grammar.to_svg"]
       # params = ["rule: Symbol = root"]
@@ -161,7 +168,7 @@ module Birman
     # [method.rule]
     # params = ["name: Symbol"]
     # returns = "The rule's Matcher, built once (as matcher_for)"
-    # raises = ["ArgumentError for an undefined rule, or one whose matcher can't be built"]
+    # raises = ["ArgumentError for an undefined rule, one naming one, or one whose matcher can't be built"]
     def rule(name) = matcher_for(name)
 
     # Returns Success(value) or Failure(...). Never raises on bad input.
@@ -202,6 +209,7 @@ module Birman
     #   "ArgumentError on the first parse for left-recursive cycles with no rule in common",
     #   "ArgumentError on the first parse for a left-recursive cycle with no base case, or a base case first",
     #   "ArgumentError on the first parse for a reachable rule whose matcher can't be built (unnamed captures...)",
+    #   "ArgumentError for a reachable rule naming an undefined rule (\"rule :a refers to undefined rule :b\")",
     #   "ArgumentError for an undefined rule, or left recursion through a custom matcher, when the parse reaches it"
     # ]
     # notes = [
@@ -235,6 +243,10 @@ module Birman
         raise ArgumentError, "undefined rule :#{name}" unless respond_to?(body, true)
 
         Birman.coerce(send(body))
+      rescue NameError => e
+        raise unless __missing_rule?(e)
+
+        raise ArgumentError, "rule :#{name} refers to undefined rule :#{e.name}"
       rescue RuntimeError => e
         raise unless e.message.start_with?("implicit argument passing of super")
 
@@ -261,6 +273,14 @@ module Birman
     # [method.to_ebnf]
     # returns = "String: one rule per line, the unreachable ones in a second block"
     def to_ebnf = __asts.reject(&:empty?).map { EBNF.call(_1) }.join("\n\n")
+
+    # What's wrong with the grammar, found without parsing anything (see
+    # Lint): rules naming undefined rules, rules that can't be built,
+    # rules of its own the root doesn't reach, and choices with an
+    # alternative that can never match. Empty when it finds nothing.
+    # [method.lint]
+    # returns = "Array of Lint::Problem (kind, rule, message)"
+    def lint = Lint.call(self)
 
     # A rule's railroad diagram (see Railroad), the root's by default.
     # [method.to_svg]
@@ -306,6 +326,14 @@ module Birman
     end
 
     private
+
+    # A rule is a method returning a Ref, so a misspelt or missing rule
+    # is a NameError for a method this grammar doesn't have.
+    def __missing_rule?(error)
+      error.name && !respond_to?(error.name, true) && error.receiver.equal?(self)
+    rescue ArgumentError # a NameError raised by hand may have no receiver
+      false
+    end
 
     # [reachable, rest]: the rules reachable from the root and the ignore
     # rule, as __reachable_asts orders them (none without a root), and

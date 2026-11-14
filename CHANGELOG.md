@@ -2,6 +2,19 @@
 
 ### Added
 
+- `Grammar.lint` (on an instance too) checks a grammar without parsing
+  anything, returning `Birman::Lint::Problem`s (`kind`, `rule`,
+  `message`): rules naming undefined rules, and a `root` or `ignore`
+  that isn't a rule (`:undefined_rule`); rules whose matcher can't be
+  built (`:invalid_rule`); rules the grammar's own classes define that
+  the root and ignore rule don't reach, leaving included modules' rules
+  out (`:unreachable_rule`); and choice alternatives that are never
+  tried, after one that never fails or a literal that's a prefix of
+  theirs, `"<"` before `"<="` (`:shadowed_alternative`). A word-like
+  literal's keyword boundary is taken into account, so `"in"` before
+  `"int"` isn't reported. It reports only what it can show, so a
+  regexp, lookahead, custom matcher or check isn't compared. Every
+  example grammar lints clean.
 - `parse(input, trace: true)` (on `Grammar.parse`, `Grammar#parse`,
   `parse!`, `Birman.parse` and `Birman.parse!`) attaches a
   `Birman::Trace` of the parse's attempts to the result, as
@@ -245,6 +258,11 @@
   error of its own.
 
 ### Fixed
+
+- A rule naming an undefined rule (`seq("x", item)` with no rule
+  `item`) raised a bare `NameError` from inside Birman on the first
+  parse. It's now `ArgumentError`, `rule :top refers to undefined rule
+  :item`.
 
 - A Pathname was read in `Encoding.default_external`, not as UTF-8:
   `read_input` checked `read` before `to_path`, and `Pathname#read` is
