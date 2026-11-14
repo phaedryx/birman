@@ -68,6 +68,13 @@ module Birman
   # Failure.at(span, reason) is one for a check made after parsing, on
   # the AST: it points at a node's span, committed, with no expected
   # list, so the message reads "line L, column C: reason".
+  #
+  # A parse made with recover can fail yet carry
+  # on: errors lists every Failure it recovered from, in input order,
+  # and value is what the grammar built around them. The Failure itself
+  # then reads as the first of those errors. Neither is a member, so
+  # equality, inspect and pattern matching leave them out. Without
+  # recovery, errors is just [self] and value is nil.
   # [class.Failure]
   # purpose = "The input didn't parse"
   # fields = [
@@ -79,13 +86,27 @@ module Birman
   # ]
   # methods = [
   # "Failure.at(span, reason) -> Failure at span's start (for checks after parsing)",
+  # "Failure.recovered(errors, value:) -> Failure reading as the first error, listing all of them",
+  # "errors -> Array of Failure (every error found; [self] without recovery)",
+  # "value -> what the grammar built around the errors, or nil",
   # "line", "column", "found", "message(formatter)", "value!(formatter) -> raises ParseError"
   # ]
   Failure = Data.define(:input, :pos, :expected, :committed, :reason) do
     def self.at(span, reason) = new(input: span.input, pos: span.from, expected: [], committed: true, reason:)
 
-    def initialize(input:, pos:, expected:, committed:, reason: nil, trace: nil) # rubocop:disable Metrics/ParameterLists
+    # errors: sorted by pos (stable), the first one's fields as the
+    # Failure's own.
+    def self.recovered(errors, value:, trace: nil)
+      sorted = errors.each_with_index.sort_by { |error, i| [error.pos, i] }.map(&:first)
+      first = sorted.first
+      new(input: first.input, pos: first.pos, expected: first.expected, committed: first.committed,
+          reason: first.reason, errors: sorted, value:, trace:)
+    end
+
+    def initialize(input:, pos:, expected:, committed:, reason: nil, trace: nil, errors: nil, value: nil) # rubocop:disable Metrics/ParameterLists
       @trace = trace
+      @errors = errors
+      @value = value
       super(input:, pos:, expected:, committed:, reason:)
       trace&.__finish(self)
     end
@@ -93,8 +114,21 @@ module Birman
     # As Success#trace.
     attr_reader :trace
 
+    # Every error a recovering parse found; just this one otherwise.
+    def errors = @errors || [self]
+
+    # What a recovering parse built around its errors, else nil.
+    attr_reader :value
+
     # Data's own Marshal support would set @trace after freezing.
-    def marshal_dump = to_h
+    # errors and value are kept (trace isn't), only when set.
+    def marshal_dump
+      dump = to_h
+      dump[:errors] = @errors if @errors
+      dump[:value] = @value unless @value.nil?
+      dump
+    end
+
     def marshal_load(fields) = initialize(**fields)
 
     def success? = false
