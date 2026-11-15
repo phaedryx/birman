@@ -25,7 +25,7 @@ module Birman
     # left_recursion: the grammar's analysis for the rule the parse starts
     # at (see Grammar#left_recursion). from: the byte offset it starts
     # at; nothing before it is matched, but positions count from 0.
-    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0)
+    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0) # rubocop:disable Metrics/MethodLength
       @input = input
       @from = from
       @grammar = grammar
@@ -41,6 +41,7 @@ module Birman
       @furthest = from
       @expected = NOTHING_EXPECTED
       @token_ends = {}
+      @log_mark = 0
     end
 
     # Where the parse begins: past whatever the ignore rule (if any)
@@ -131,27 +132,29 @@ module Birman
 
     # The ErrorNodes of the failures recovered from so far (see
     # Matcher#recover), in the order recorded; nil until the first.
-    attr_reader :recovered
+    # log_mark: how many there are, for rollback and recovered_since?.
+    # A counter kept beside the log, so every matcher that may backtrack
+    # can read it at its start for the price of an attr_reader.
+    attr_reader :recovered, :log_mark
 
-    def record(node) = (@recovered ||= []) << node
-
-    # Where the log is now, for rollback and recovered_since?: its
-    # length, or nil while nothing has been recovered (so a parse that
-    # recovers nothing only ever reads an ivar).
-    def log_mark = @recovered&.size
+    def record(node)
+      (@recovered ||= []) << node
+      @log_mark += 1
+    end
 
     # Drop the errors recorded since mark: the match that recorded them
     # has been backtracked over. Returns nil, for a matcher that fails
     # to return.
     def rollback(mark)
-      log = @recovered or return
-      keep = mark || 0
-      log.pop while log.size > keep
+      return if @log_mark == mark
+
+      @recovered.pop while @recovered.size > mark
+      @log_mark = mark
       nil
     end
 
     # Was an error recorded since mark?
-    def recovered_since?(mark) = (@recovered&.size || 0) > (mark || 0)
+    def recovered_since?(mark) = @log_mark > mark
 
     # Run a recover's inner match isolated from pos, returning [result,
     # furthest, expected, committed]: a commit failure inside it is
@@ -356,9 +359,11 @@ module Birman
       # Not loop: its block adds frames to every level of nesting.
       while true # rubocop:disable Style/InfiniteLoop
         rounds[pos] = {} if rounds
+        mark = log_mark
         result, furthest, expected = yield
         diagnostics = further(diagnostics, furthest, expected)
-        break unless result && result.pos > (best[0]&.pos || -1)
+        # The round that gets no further is dropped, with its errors.
+        break rollback(mark) unless result && result.pos > (best[0]&.pos || -1)
 
         seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
       end

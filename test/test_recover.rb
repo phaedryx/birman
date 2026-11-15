@@ -396,6 +396,15 @@ class RecoverTest < Minitest::Test
     assert_equal [3], g.parse("1+(x+2").errors.map(&:pos)
   end
 
+  # The round that gets no further is dropped, and its errors with it:
+  # the recover in it fired again at 0, as in the round that's kept.
+  def test_a_dropped_growth_round_takes_its_errors
+    g = grammar(:expr) do
+      rule(:expr) { either(seq(expr, "+", num), seq("(", commit, num, ")").recover(to: "+")) }
+    end
+    assert_equal [1], g.parse("(x+1").errors.map(&:pos)
+  end
+
   # The kept item ends with a recover that matched nothing at ","; the
   # dropped separator starts there too, but only its own errors go.
   def test_a_dropped_separator_keeps_an_empty_error_before_it
@@ -429,9 +438,9 @@ class RecoverTest < Minitest::Test
   def test_the_log_is_nil_until_an_error_is_recorded
     ctx = context("abcdef")
     assert_nil ctx.recovered
-    assert_nil ctx.log_mark
-    refute ctx.recovered_since?(nil)
-    ctx.rollback(nil) # nothing to roll back
+    assert_equal 0, ctx.log_mark
+    refute ctx.recovered_since?(0)
+    ctx.rollback(0) # nothing to roll back
     assert_nil ctx.recovered
   end
 
