@@ -423,6 +423,110 @@ class RecoverTest < Minitest::Test
     assert_equal [6, 19], committed.errors.map(&:pos)
   end
 
+  # --- Errors through the memo and left recursion ---
+  #
+  # A rule's errors are kept in its memo entry and recorded again each
+  # time a call takes the entry, so an error is reported once however
+  # many times its rule is reached, and not dropped when a call that
+  # recorded it is backtracked over.
+
+  # The first alternative recovers in :item and then fails, dropping the
+  # error; the second takes :item's memo entry, and the error with it.
+  def test_memo_hit_replays_errors_once
+    g = grammar do
+      rule(:top) { either(seq(item, "!"), seq(item, ";")) }
+      rule(:item) { stmt.recover(to: ";") }
+    end
+    assert_equal [4], g.parse("let = 1;").errors.map(&:pos)
+  end
+
+  # Here the dropped call is a rule's inside another rule, reached again
+  # from a different one: the backtrack and the hit are rules apart.
+  def test_a_memo_hit_after_an_enclosing_backtrack_reports_once
+    g = grammar do
+      rule(:top) { either(seq(bang, "!"), seq(semi, ";")) }
+      rule(:bang) { seq(item, "?") }
+      rule(:semi) { item }
+      rule(:item) { stmt.recover(to: ";") }
+    end
+    result = g.parse("let = 1;")
+    assert_equal [4], result.errors.map(&:pos)
+    assert_instance_of Birman::ErrorNode, result.value[0]
+  end
+
+  def test_recover_inside_a_left_recursive_rule
+    g = grammar(:sum) do
+      rule(:sum) { either(seq(sum, "+", term.recover(to: "+")), term) }
+      rule(:term) { either(num, seq("(", commit, num, ")")) }
+    end
+    result = g.parse("1+(x+2+(y+3")
+    assert_equal [3, 8], result.errors.map(&:pos)
+    ((((one, _, x), _, two), _, y), _, three) = result.value
+    assert_equal %w[1 2 3], [one, two, three]
+    assert_equal [Birman::ErrorNode] * 2, [x.class, y.class]
+  end
+
+  # Each "(" commits, then the left-recursive :expr inside it fails, and
+  # its term recovers at the next "+": an error in every kept round.
+  def test_a_recover_in_several_growth_rounds_reports_each_once
+    g = grammar(:expr) do
+      rule(:expr) { either(seq(expr, "+", term), term) }
+      rule(:term) { either(num, seq("(", commit, expr, ")")).recover(to: "+") }
+    end
+    result = g.parse("(x+(y+(z")
+    assert_equal [1, 4, 7], result.errors.map(&:pos)
+    ((first, _, second), _, third) = result.value
+    assert_equal [Birman::ErrorNode] * 3, [first, second, third].map(&:class)
+  end
+
+  # :sum grows inside the recover; the enclosing either backtracks over
+  # the whole list and takes it again from the memo.
+  def test_left_recursive_rule_inside_recover
+    g = grammar do
+      rule(:top) { either(seq(list, "!"), list) }
+      rule(:list) { seq(sum.recover(to: ";"), ";").rep }
+      rule(:sum) { either(seq(sum, "+", commit, num), num) }
+    end
+    result = g.parse("1+2;3+x;4+5+6;")
+    assert_equal [6], result.errors.map(&:pos)
+    sums = result.value.map(&:first)
+    assert_equal [%w[1 + 2], [%w[4 + 5], "+", "6"]], sums.values_at(0, 2)
+    assert_instance_of Birman::ErrorNode, sums[1]
+  end
+
+  # :b is in :a's cycle (:a, used first, leads it). The parse enters the
+  # cycle at :b from outside, so :b's match is its longest from :a's
+  # rounds, with that match's errors; or :a grows first, its seq fails
+  # after it, and :b takes the match :a's growth published for it.
+  def test_indirect_left_recursion_with_recovery
+    cycle = proc do
+      rule(:a) { either(seq(b, "!", term), term) }
+      rule(:b) { either(seq(a, "?", term), term) }
+      rule(:term) { either(num, seq("(", commit, num, ")")).recover(to: /[!?]/) }
+    end
+    outside = grammar { rule(:top) { either(seq("#", a), b) } }
+    published = grammar { rule(:top) { either(seq(a, "#"), b) } }
+    [outside, published].each do |g|
+      g.class_eval(&cycle)
+      assert_equal({ a: :a, b: :a }, g.new.left_recursion.leaders)
+      assert_equal [3, 8], g.parse("1!(x?2!(y?3").errors.map(&:pos)
+    end
+  end
+
+  # :b's longest match is from :a's second round, through :term (error
+  # at 1); in the last, :b falls back to its own recover (error at 2).
+  # Entered from outside, :b takes the longest, with its error, not the
+  # last round's.
+  def test_a_cycles_kept_match_carries_its_own_errors
+    g = grammar do
+      rule(:top) { either(seq("#", a), b) }
+      rule(:a) { either(seq(b, "!", num), term) }
+      rule(:b) { either(seq(a, "?", num), seq("(", "x", commit, "!").recover(to: "?")) }
+      rule(:term) { seq("(", commit, "y").recover(to: "?") }
+    end
+    assert_equal [1, 6], g.parse("(x?1!2").errors.map(&:pos)
+  end
+
   # --- The error log Context keeps ---
 
   def context(input)

@@ -1003,7 +1003,9 @@ module Birman
 
   # A reference to a named rule, resolved through the grammar carried
   # in the context. Each (rule, position) is parsed once and memoized
-  # along with its diagnostics: packrat parsing.
+  # along with its diagnostics and the errors it recovered from (see
+  # Context#memoize): packrat parsing. Every call records those errors,
+  # computed or not, so they're logged once for each call that's kept.
   Ref = Data.define(:name) do
     include Matcher
 
@@ -1011,11 +1013,12 @@ module Birman
     # instrumented matcher: keep the two in step (test_trace's guards,
     # which compare traced and untraced results, fail if they drift).
     def match(ctx, pos)
-      result, furthest, expected = ctx.memoize(name, pos) do
+      result, furthest, expected, errors = ctx.memoize(name, pos) do
         r = ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }
         [r, ctx.isolated_furthest, ctx.isolated_expected]
       end
       ctx.merge(furthest, expected)
+      ctx.replay(errors) if errors
       result
     end
 
