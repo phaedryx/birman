@@ -19,6 +19,8 @@ class TraceTest < Minitest::Test
     rule(:item) { either(match(/\d+/).map(:to_i), list) }
   end
 
+  Wrap = Birman.node(:value)
+
   # A grammar whose root is :r, with the rules the block defines.
   def grammar(&)
     Class.new do
@@ -538,9 +540,18 @@ class TraceTest < Minitest::Test
       rule(:r) { either(seq(r, ",", item), item) }
       rule(:item) { seq("@", commit, match(/\d+/)).recover(to: /[,;]/) }
     end
+    # .to over recovered values: one that fits Wrap is built, one with a
+    # key Wrap lacks is passed on. (Trace rebuilds these matchers with
+    # Data#with, which on Ruby 3.2 doesn't run initialize.)
+    nodes = grammar do
+      rule(:r) { seq(either(fits, passed), ";").rep }
+      rule(:fits) { seq("@", s.as(:value)).means(:ok).to(Wrap) }
+      rule(:passed) { seq("#", s.as(:other)).means(:ok).to(Wrap) }
+      rule(:s) { seq(str("x"), commit, match(/\d+/)).recover(to: ";") }
+    end
     [[recovering, "let a = 1; let = 2; let b = 3;", 1], [recovering, "let = 1; let = 2;", 2],
      [memo, "@x;?", 1], [lookahead, "@x;", 1],
-     [left, "@1,@x,@2", 1], [left, "@x,@y", 2]]
+     [left, "@1,@x,@2", 1], [left, "@x,@y", 2], [nodes, "@x1;@xy;#xz;#x2;", 2]]
   end
 
   def test_trace_of_a_recovered_parse_matches_the_untraced_result

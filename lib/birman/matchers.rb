@@ -627,14 +627,11 @@ module Birman
   # See Matcher#recover. inner runs isolated: what it expected is
   # merged outward when it matches or fails at pos, and becomes the
   # recorded error when it's recovered from. The search for the sync
-  # point is upto's, its diagnostics dropped.
+  # point is upto's, its diagnostics dropped. (Made when it's needed,
+  # not kept from initialize: Data#with skips that on Ruby 3.2, and
+  # Trace rebuilds matchers with it.)
   Recover = Data.define(:inner, :sync) do
     include Matcher
-
-    def initialize(inner:, sync:)
-      @search = Upto.new(sync)
-      super
-    end
 
     def match(ctx, pos)
       result, furthest, expected, committed = ctx.recover_failure(pos) { inner.match(ctx, pos) }
@@ -644,7 +641,7 @@ module Birman
       end
 
       input = ctx.input
-      stop = ctx.isolate(furthest) { @search.match(ctx, furthest) }&.pos || input.bytesize
+      stop = ctx.isolate(furthest) { Upto.new(sync).match(ctx, furthest) }&.pos || input.bytesize
       failure = Failure.new(input:, pos: Birman.char_offset(input, furthest), expected: expected.uniq, committed:)
       node = Node.new_with_span(ErrorNode, ctx.span(pos, stop), { failure: })
       ctx.record(node)
@@ -697,13 +694,6 @@ module Birman
   To = Data.define(:inner, :node) do
     include Matcher
 
-    # optional: the fields node's own initialize gives defaults.
-    def initialize(inner:, node:)
-      init = node.instance_method(:initialize)
-      @optional = init.owner == node ? init.parameters.filter_map { |kind, name| name if kind == :key } : []
-      super
-    end
-
     def match(ctx, pos)
       mark = ctx.log_mark
       r = inner.match(ctx, pos) or return nil
@@ -722,8 +712,16 @@ module Birman
     private
 
     # Could node be built from fields: no field it lacks, none missing
-    # that its initialize doesn't give a default?
-    def fits?(fields) = (fields.keys - node.members).empty? && (node.members - fields.keys - @optional).empty?
+    # that its initialize doesn't give a default? Worked out here, on
+    # the recovered path only, rather than kept from initialize, which
+    # Data#with skips on Ruby 3.2 (and Trace rebuilds matchers with it).
+    def fits?(fields)
+      return false unless (fields.keys - node.members).empty?
+
+      init = node.instance_method(:initialize)
+      optional = init.owner == node ? init.parameters.filter_map { |kind, name| name if kind == :key } : []
+      (node.members - fields.keys - optional).empty?
+    end
   end
 
   # See Matcher#text. The text ends where a node's span would.
