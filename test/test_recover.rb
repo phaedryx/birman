@@ -307,12 +307,14 @@ class RecoverTest < Minitest::Test
     assert_equal [[{ value: "1" }, "!"]], result.value[0]
   end
 
-  def test_check_rejection_takes_inner_errors
+  # A check passes over a subtree with errors, so its rejection never
+  # has errors to take: one with none inside still rejects.
+  def test_check_with_no_errors_inside_still_rejects
     g = grammar do
       rule(:top) { seq(either(stmt.recover(to: ";").check(:never?, "ok"), /[^;]*/), ";") }
       def never?(_value) = false # rubocop:disable Lint/NestedMethodDefinition
     end
-    assert_no_stale_errors(g, "let = 1;")
+    assert_no_stale_errors(g, "print 1;")
   end
 
   # An operator ("+" "+", recovering at a digit) matched, then its right
@@ -537,6 +539,52 @@ class RecoverTest < Minitest::Test
   def error_at(ctx, from)
     failure = Birman::Failure.new(input: ctx.input, pos: from, expected: [], committed: true)
     Birman::Node.new_with_span(Birman::ErrorNode, ctx.span(from, from + 1), { failure: })
+  end
+
+  # --- user code skips subtrees with errors ---
+
+  Stmt = Birman.node(:body)
+
+  def skipping(wrap)
+    grammar do
+      rule(:top) { seq(only(wrap.call(stmt.recover(to: ";"))), ";").rep }
+      def add(value) = value.fetch(:value).to_i + 1 # rubocop:disable Lint/NestedMethodDefinition
+      def even_value?(value) = value.fetch(:value).to_i.even? # rubocop:disable Lint/NestedMethodDefinition
+    end
+  end
+
+  def test_map_and_action_are_skipped_and_the_error_node_survives
+    [->(m) { m.map { |v| v.fetch(:value).to_i + 1 } }, ->(m) { m.action(:add) }].each do |wrap|
+      result = skipping(wrap).parse("let = 1; print 2;")
+      assert_instance_of Birman::Failure, result
+      assert_instance_of Birman::ErrorNode, result.value[0]
+      assert_equal 3, result.value[1]
+      assert_equal [4], result.errors.map(&:pos)
+    end
+  end
+
+  def test_means_is_skipped
+    result = skipping(->(m) { m.means(:ok) }).parse("let = 1; print 2;")
+    assert_instance_of Birman::ErrorNode, result.value[0]
+    assert_equal :ok, result.value[1]
+  end
+
+  def test_check_passes_over_errors
+    result = skipping(->(m) { m.check(:even_value?, "even") }).parse("let = 1; print 2;")
+    assert_instance_of Birman::ErrorNode, result.value[0]
+    assert_equal({ value: "2" }, result.value[1])
+    assert_equal [4], result.errors.map(&:pos)
+  end
+
+  def test_to_node_still_builds_with_the_error_node_in_its_field
+    result = skipping(->(m) { Birman::To.new(m, Stmt) }).parse("let = 1;")
+    assert_instance_of Stmt, result.value[0]
+    assert_instance_of Birman::ErrorNode, result.value[0].body
+  end
+
+  def test_actions_run_on_statements_without_errors
+    ran = skipping(->(m) { m.action(:add) }).parse("print 2; let = 1; print 4;")
+    assert_equal [3, 5], ran.value.grep(Integer)
   end
 
   def test_the_log_is_nil_until_an_error_is_recorded

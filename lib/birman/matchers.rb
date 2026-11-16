@@ -561,11 +561,16 @@ module Birman
 
   # A successful match whose value is replaced: the shared shape of
   # Const, Map, Send and Action, each defining transform(value, ctx).
+  # Over a subtree that recovered from an error the value is left alone:
+  # user code would be handed an ErrorNode where it expects a shape.
   module Transform
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = inner.match(ctx, pos) or return nil
+      return r if ctx.recovered_since?(mark)
+
       Match.new(r.pos, transform(r.value, ctx))
     end
 
@@ -652,15 +657,16 @@ module Birman
 
   # Semantic predicate (see Matcher#check). Like Label, inner runs
   # isolated, so a rejection can drop what inner recorded (a rep's
-  # stopping point, say), as Not does, and report only its own name.
+  # stopping point, say) and report only its own name. Over a subtree
+  # that recovered from an error the predicate isn't asked, as with
+  # Transform, and passes.
   Check = Data.define(:inner, :method_name, :name) do
     include Matcher
 
     def match(ctx, pos)
       mark = ctx.log_mark
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
-      if result && !ctx.grammar.__send__(method_name, result.value)
-        ctx.rollback(mark)
+      if result && !ctx.recovered_since?(mark) && !ctx.grammar.__send__(method_name, result.value)
         return ctx.fail_at(pos, name)
       end
 
