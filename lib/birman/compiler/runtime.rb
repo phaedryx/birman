@@ -808,6 +808,19 @@ module BirmanRT
       FAIL
     end
 
+    # Every key of hash one of members? (For .to over a value that
+    # recovered: see To.)
+    def known_keys?(hash, members)
+      keys = hash.keys
+      i = 0
+      while i < keys.size
+        return false unless members.include?(keys[i])
+
+        i += 1
+      end
+      true
+    end
+
     #: (Integer) -> bool
     def recovered_since?(mark)
       @log_mark > mark

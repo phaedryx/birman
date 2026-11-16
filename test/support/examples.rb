@@ -495,7 +495,8 @@ module Examples
   # Statements that recover at ";", blocks of them, and a left-recursive
   # sum whose parenthesized parts recover at ")": a recovering parse's
   # errors and the value built around them (ErrorNodes and all), with
-  # actions and checks skipped over errors.
+  # actions and checks skipped over errors, and nodes built from
+  # recovered values when they fit.
   module Recovering
     # let x = 1 + (2 +; print x; { print (; }
     class Grammar
@@ -504,6 +505,8 @@ module Examples
 
       Let = node(:name, :value)
       Block = node(:body)
+      Printed = node(:value)
+      Paren = node(:value, :depth) { def initialize(value:, depth: 1) = super }
 
       root :program
       ignore :spacing
@@ -511,10 +514,12 @@ module Examples
       rule(:program) { seq(only(stmt.recover(to: ";")), ";").rep }
       rule(:stmt) { either(let_stmt, print_stmt, block) }
       rule(:let_stmt) { seq("let", commit, name.as(:name), "=", sum.as(:value)).to(Let) }
-      rule(:print_stmt) { seq("print", sum).action(:printed) }
+      rule(:print_stmt) { seq("print", sum).action(:printed).to(Printed) }
       rule(:block) { seq("{", commit, program.as(:body), "}").to(Block) }
       rule(:sum) { either(seq(sum, "+", commit, term).action(:add), term) }
-      rule(:term) { either(num, name, seq("(", commit, sum.recover(to: ")"), ")").action(:inner)) }
+      # Recovered, .to(Paren) gets the seq's Hash, whose key it lacks.
+      rule(:term) { either(num, name, paren) }
+      rule(:paren) { seq("(", commit, sum.recover(to: ")").as(:inside), ")").action(:inner).to(Paren) }
       lexeme(:num) { match(/\d+/).map(:to_i) }
       lexeme(:name) { match(/[a-z]+/).check(:short?, "a short name") }
 
@@ -522,13 +527,13 @@ module Examples
 
       def printed(parts) = parts[1]
       def add(parts) = parts[0].is_a?(Integer) && parts[2].is_a?(Integer) ? parts[0] + parts[2] : parts
-      def inner(parts) = parts[2]
+      def inner(parts) = parts[:inside]
       def short?(text) = text.size <= 3
     end
 
     FIXED = ["let x = 1 + (2 +; print x; { print (; }", "let x = 1; print x + 2;", "let = 1; print (1 + 2);",
              "{ let y = 1; print y; };", "{ let = 1; print 2;", "print (1 + (x;", "print abcd;", "let x = ;;",
-             "print 1 + ;", "{ { print (; }; };", "", ";", "print 1", "let"].freeze
+             "print 1 + ;", "{ { print (; }; };", "print (1 + ); print 2;", "", ";", "print 1", "let"].freeze
     TOKENS = ["let ", "print ", "x", "abcd", "1", "+", "(", ")", "{", "}", ";", "=", " "].freeze
   end
 

@@ -656,6 +656,26 @@ class RecoverTest < Minitest::Test
     assert_equal "1", g.parse("print 1").value.value
   end
 
+  # A skipped .means passes its inner Hash on; with keys the node
+  # doesn't have, .to passes it on too rather than raise. A value that
+  # fits is built, and valid input builds as ever.
+  def test_to_passes_on_a_recovered_value_that_doesnt_fit_the_node
+    g = grammar { rule(:top) { seq(stmt.recover(to: ";").as(:body), str(";").as(:end)).means(:ok).to(Printed) } }
+    result = g.parse("let = 1;")
+    assert_equal [4], result.errors.map(&:pos)
+    assert_equal %i[body end], result.value.keys
+    assert_instance_of Birman::ErrorNode, result.value[:body]
+    assert_equal Printed.new(value: :ok), g.parse!("print 1;")
+
+    fits = grammar { rule(:top) { seq(str(""), stmt.recover(to: ";").as(:value)).means(:ok).to(Printed) } }
+    assert_instance_of Birman::ErrorNode, fits.parse("let = 1").value.value
+  end
+
+  def test_to_still_raises_for_an_unrecovered_value_that_doesnt_fit
+    g = grammar { rule(:top) { seq(str("print").as(:body), str(" ").as(:end)).to(Printed) } }
+    assert_raises(ArgumentError) { g.parse("print ") }
+  end
+
   def test_actions_run_on_statements_without_errors
     ran = skipping(->(m) { m.action(:add) }).parse("print 2; let = 1; print 4;")
     assert_equal [3, 5], ran.value.grep(Integer)

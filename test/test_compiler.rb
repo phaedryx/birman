@@ -986,6 +986,35 @@ class CompilerTest < Minitest::Test
     assert_equal(%i[poly poly str], g.new.matcher_for(:top).parts.map { types.of(_1) })
   end
 
+  # A recovered value .to can't build a node from passes on as it is,
+  # as the interpreter's To passes it; one that fits is built by name.
+  def test_to_over_a_recovered_value
+    recovered = -> { seq(str("b"), commit, str("c")).recover(to: "!") }
+    bodies = [
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).means(:ok).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).map(:to_s).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).action(:size_of).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).means({ left: 1, right: 2 }).to(Pair) },
+      -> { seq(str("a").as(:left), str("b").as(:right)).recover(to: "!").to(Pair) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:other)).means(:ok).to(Wrap) }
+    ]
+    bodies.each do |body|
+      g = grammar do
+        rule(:top, &body)
+        def size_of(value) = value.size # rubocop:disable Lint/NestedMethodDefinition
+      end
+      assert_same_results g, ["abc", "abx", "abx!", "ab", "a", "x"]
+    end
+
+    # Without errors, a value that doesn't fit still raises.
+    g = grammar do
+      rule(:top) { either(seq(str("a"), instance_exec(&recovered).as(:value)), seq(str("z").as(:other))).to(Wrap) }
+    end
+    parser = Differential.load(g, "CompilerTestParser")
+    assert_raises(ArgumentError) { g.parse("z") }
+    assert_raises(KeyError) { parser.new("z").parse }
+  end
+
   def test_error_nodes_inspect_as_the_interpreters
     g = recovering(:statements)
     input = "let = 1; print #{"x" * 40};"

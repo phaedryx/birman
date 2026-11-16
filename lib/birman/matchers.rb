@@ -689,20 +689,41 @@ module Birman
   end
 
   # See Matcher#to.
+  # Over a subtree that recovered, the value may not be the shape the
+  # node is built from (a .means or .map skipped, an ErrorNode in place
+  # of a Hash): if its fields don't fit the node, it's passed on as it
+  # is, as a skipped transform passes its value on. Otherwise, and
+  # always without errors, the node is built.
   To = Data.define(:inner, :node) do
     include Matcher
 
+    # optional: the fields node's own initialize gives defaults.
+    def initialize(inner:, node:)
+      init = node.instance_method(:initialize)
+      @optional = init.owner == node ? init.parameters.filter_map { |kind, name| name if kind == :key } : []
+      super
+    end
+
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = inner.match(ctx, pos) or return nil
       fields = if r.value.is_a?(Hash) then r.value
                elsif node.members.empty? then {} # a node with no fields drops the value
                else { node.members.first => r.value }
                end
+      return r if ctx.recovered_since?(mark) && !fits?(fields)
+
       Match.new(r.pos, Birman.build(node, fields, ctx, pos, r.pos))
     end
 
     def to_ast = [:action, inner.to_ast]
     def capture_key = inner.capture_key
+
+    private
+
+    # Could node be built from fields: no field it lacks, none missing
+    # that its initialize doesn't give a default?
+    def fits?(fields) = (fields.keys - node.members).empty? && (node.members - fields.keys - @optional).empty?
   end
 
   # See Matcher#text. The text ends where a node's span would.

@@ -628,18 +628,56 @@ module Birman
 
       # --- Nodes ---
 
-      def to(matcher, want, name)
+      def to(matcher, want, name) # rubocop:disable Metrics/AbcSize
         return compile_matcher(matcher.inner, false) unless want
 
         node = @nodes.name_for(matcher.node, @rule)
         keys = hash_keys(matcher.inner)
         return seq_node(matcher, node, name) if keys.is_a?(Array) && direct_seq?(matcher.inner)
+        return recovering_to(matcher, node, keys, name) if logs?(matcher.inner)
 
         define(:to, matcher, true, name) do |v|
           inner = compile_matcher(matcher.inner, true)
           args = node_args(matcher.node, keys, inner.value)
           value = "x = #{inner.value}\n" if keys == :unknown && !matcher.node.members.empty?
           "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{value}#{v} = #{node_call(node, args, "span(p, q)")}\nq"
+        end
+      end
+
+      # .to over a match that may recover, as To: without errors the node
+      # is built as ever (keys are the Hash's then); with them, from
+      # whatever the value turned out to be, if its fields fit the node,
+      # else the value is passed on. (A direct seq of named parts always
+      # fits: seq_node builds it either way.)
+      def recovering_to(matcher, node, keys, name)
+        define(:to, matcher, true, name) do |v|
+          inner = compile_matcher(matcher.inner, true)
+          built = node_call(node, node_args(matcher.node, keys, "x"), "span(p, q)")
+          rebuilt = node_call(node, recovered_fields(matcher.node), "span(p, q)")
+          "m = @log_mark\nq = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\nx = #{inner.value}\n" \
+            "if @log_mark == m\n  #{v} = #{built}\nelsif #{fits(matcher.node)}\n  #{v} = #{rebuilt}\n" \
+            "else\n  #{v} = x\nend\nq"
+        end
+      end
+
+      # Whether node can be built from x (see To#fits?): a Hash with no
+      # field node lacks and every one without a default; anything else
+      # fills the first field, so the rest need defaults.
+      def fits(node)
+        members = node.members
+        optional = @nodes.defaults(node).keys
+        checks = ["known_keys?(x, #{members.inspect})", *(members - optional).map { "x.key?(#{_1.inspect})" }]
+        hash = members.empty? ? "x.empty?" : checks.join(" && ")
+        "(x.is_a?(Hash) ? #{hash} : #{(members.drop(1) - optional).empty?})"
+      end
+
+      # Node fields from x, a Hash or not, as Birman.build fills them;
+      # fits has made sure no field without a default is left out.
+      def recovered_fields(node)
+        defaults = @nodes.defaults(node)
+        node.members.each_with_index.map do |member, i|
+          default = defaults.fetch(member, "nil")
+          "x.is_a?(Hash) ? (x.key?(#{member.inspect}) ? x[#{member.inspect}] : #{default}) : #{i.zero? ? "x" : default}"
         end
       end
 
@@ -693,7 +731,7 @@ module Birman
           keys = matcher.parts.filter_map(&:capture_key)
           keys.empty? ? nil : keys.uniq
         when Pick then hash_keys(matcher.parts[matcher.index], seen)
-        when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
+        when Label, Check, Quiet, Named, Lexeme, Recover then hash_keys(matcher.inner, seen) # see recovering_to
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
         when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher, Upto then nil

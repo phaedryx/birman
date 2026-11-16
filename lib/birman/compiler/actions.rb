@@ -23,7 +23,7 @@ module Birman
         initialize input parse reset skip_ignored fail_at merge commit_failure ignored_after token_end span_end
         span failure failure_because invalid_input label_end check_end peek_end bytes_at? abandon left_recursion
         fold_expected large_integer record_error replay_errors rollback_to recovered_since? take_errors parse_result
-        parse_failure recovered_failures
+        parse_failure recovered_failures known_keys?
       ].freeze
 
       # Methods the generated parser's runtime provides as Birman::Grammar

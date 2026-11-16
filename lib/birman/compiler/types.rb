@@ -40,7 +40,7 @@ module Birman
         when Recover then :poly
         when Const then recovers?(matcher.inner) ? :poly : constant(matcher.constant)
         when Send then recovers?(matcher.inner) ? :poly : SENDS.fetch(matcher.method_name, :poly)
-        when To then :node
+        when To then recovers?(matcher.inner) ? :poly : :node # see To: maybe the value passed on
         when SpannedMatcher then :spanned
         when Operators then infix(of(matcher.operand))
         when Ref then rules.fetch(matcher.name, :poly)
