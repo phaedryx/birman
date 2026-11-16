@@ -628,11 +628,11 @@ module Birman
   # merged outward when it matches or fails at pos, and becomes the
   # recorded error when it's recovered from. The search for the sync
   # point is upto's, its diagnostics dropped.
-  Recover = Data.define(:inner, :to) do
+  Recover = Data.define(:inner, :sync) do
     include Matcher
 
-    def initialize(inner:, to:)
-      @sync = Upto.new(to)
+    def initialize(inner:, sync:)
+      @search = Upto.new(sync)
       super
     end
 
@@ -644,14 +644,14 @@ module Birman
       end
 
       input = ctx.input
-      stop = ctx.isolate(furthest) { @sync.match(ctx, furthest) }&.pos || input.bytesize
+      stop = ctx.isolate(furthest) { @search.match(ctx, furthest) }&.pos || input.bytesize
       failure = Failure.new(input:, pos: Birman.char_offset(input, furthest), expected: expected.uniq, committed:)
       node = Node.new_with_span(ErrorNode, ctx.span(pos, stop), { failure: })
       ctx.record(node)
       Match.new(stop, node)
     end
 
-    def to_ast = [:recover, inner.to_ast, to.to_ast]
+    def to_ast = [:recover, inner.to_ast, sync.to_ast]
     def capture_key = inner.capture_key
   end
 

@@ -544,6 +544,7 @@ class RecoverTest < Minitest::Test
   # --- user code skips subtrees with errors ---
 
   Stmt = Birman.node(:body)
+  Printed = Birman.node(:value)
 
   def skipping(wrap)
     grammar do
@@ -577,9 +578,14 @@ class RecoverTest < Minitest::Test
   end
 
   def test_to_node_still_builds_with_the_error_node_in_its_field
-    result = skipping(->(m) { Birman::To.new(m, Stmt) }).parse("let = 1;")
+    result = skipping(->(m) { m.to(Stmt) }).parse("let = 1;")
     assert_instance_of Stmt, result.value[0]
     assert_instance_of Birman::ErrorNode, result.value[0].body
+  end
+
+  def test_recover_then_to_builds_the_node
+    g = grammar { rule(:top) { stmt.recover(to: ";").to(Printed) } }
+    assert_equal "1", g.parse("print 1").value.value
   end
 
   def test_actions_run_on_statements_without_errors
