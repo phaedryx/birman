@@ -430,6 +430,49 @@ end
 #   ^
 ```
 
+## Linting a grammar
+
+`Grammar.lint` checks a grammar without parsing anything and returns
+what it finds, as `Birman::Lint::Problem`s (`kind`, `rule`, `message`;
+`to_s` is the message). Nothing runs it for you, so call it from a
+test:
+
+```ruby
+class Cmp
+  include Birman::Grammar
+  root :cmp
+  rule(:cmp) { seq(match(/\d+/), either("<", "<="), match(/\d+/)) }
+  rule(:old) { "x" }
+end
+
+puts Cmp.lint
+# rule :cmp: "<=" (alternative 2) never matches, since "<" (alternative 1) matches first; put the longer one first
+# rule :old isn't reached from root :cmp
+
+assert_empty MyGrammar.lint   # in your test suite
+```
+
+Its kinds:
+
+- `:undefined_rule`: a rule names one that doesn't exist, or `root`
+  or `ignore` isn't a rule. (Parsing raises `ArgumentError` for this
+  too, `rule :cmp refers to undefined rule :num`, when it gets there.)
+- `:invalid_rule`: a rule whose matcher can't be built (`operators`
+  with no levels, say), with the `ArgumentError`'s message.
+- `:unreachable_rule`: a rule the grammar's own classes define that
+  the root and the ignore rule never reach. Rules from included
+  modules, such as `Birman::Rules::Numbers`, aren't reported, since
+  you pick from those. A rule you only parse with `root:` counts.
+- `:shadowed_alternative`: an alternative of an `either`, `one_of` or
+  `|` that never gets tried. That's either because an earlier one never
+  fails (`x.maybe`), or because an earlier literal matches wherever it
+  would: `"<"` before `"<="`, or `"x"` twice. A word-like literal ends at
+  a word boundary, so `"in"` before `"int"` is fine.
+
+It reports only what it can show from the rules' ASTs, so every problem
+is real but not every mistake is found: a regexp, a lookahead, a
+custom matcher or a `.check` before an alternative isn't compared.
+
 ## Tracing a parse
 
 A `Failure` says where the input went wrong and what would have fit
