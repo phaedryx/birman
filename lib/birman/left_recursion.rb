@@ -88,7 +88,9 @@ module Birman
       in [:lexeme, inner]        then nullable_node?(inner)
       in [:text | :spanned, inner] then nullable_node?(inner)
       in [:upto, _] then true # the terminator may be right here
-      in [:recover, inner, _] then nullable_node?(inner) || commits_at_start?(inner) # then `to` may be right here
+      # An inner that commits at its start fails there, so the sync search
+      # starts here: it may stop here, or the input may end here.
+      in [:recover, inner, _] then nullable_node?(inner) || commits_at_start?(inner)
       else false
       end
     end
@@ -200,7 +202,9 @@ module Birman
     end
 
     # Can node match while its calls to the cycle's rules at its start
-    # fail?
+    # fail? A recover follows only its inner matcher, though it can also
+    # match by recovering: a gap that can miss a "no base case" error,
+    # never one that gives a wrong parse.
     def seedable?(node, cycle) # rubocop:disable Metrics
       case node
       in [:ref, name] then !cycle.include?(name)

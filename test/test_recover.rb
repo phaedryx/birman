@@ -710,4 +710,17 @@ class RecoverTest < Minitest::Test
     assert_empty ctx.recovered
     refute ctx.recovered_since?(before)
   end
+
+  # --- The README's example ---
+
+  # The first ruby block under "Recovering from errors", run as it is,
+  # prints the plain block after it.
+  def test_the_readme_example_prints_what_the_readme_shows
+    readme = File.read(File.expand_path("../README.md", __dir__))
+    section = readme[/^## Recovering from errors\n.*?(?=^## )/m]
+    match = section&.match(/^```ruby\n(.*?)^```\n\n```\n(.*?)^```$/m)
+    refute_nil match, "README needs a Recovering from errors section: a ruby block, then its output"
+    out, = capture_io { Module.new.module_eval(match[1], "README.md") }
+    assert_equal match[2], out
+  end
 end

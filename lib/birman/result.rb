@@ -69,12 +69,12 @@ module Birman
   # the AST: it points at a node's span, committed, with no expected
   # list, so the message reads "line L, column C: reason".
   #
-  # A parse made with recover can fail yet carry
-  # on: errors lists every Failure it recovered from, in input order,
-  # and value is what the grammar built around them. The Failure itself
-  # then reads as the first of those errors. Neither is a member, so
-  # equality, inspect and pattern matching leave them out. Without
-  # recovery, errors is just [self] and value is nil.
+  # A parse made with recover can fail yet carry on: errors lists every
+  # Failure it recovered from, in input order, and value is what the
+  # grammar built around them. The Failure itself then reads as the
+  # first of those errors. Neither is a member, so equality, inspect and
+  # pattern matching leave them out. Without recovery, errors is just
+  # [self] and value is nil.
   # [class.Failure]
   # purpose = "The input didn't parse"
   # fields = [

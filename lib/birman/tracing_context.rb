@@ -54,7 +54,8 @@ module Birman
     end
 
     # A recover skipping to its sync point records the error it recovered
-    # from while its frame is the open one.
+    # from while its frame is the open one. Recover is record's only
+    # caller.
     def record(node)
       @frame.note(:recovered, true) if @frame.kind == :recover
       super

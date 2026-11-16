@@ -318,7 +318,8 @@ module Birman
     end
 
     # The entry, with the errors recorded since mark (there are some) as
-    # its fourth element, taken out of the log. Callers check for none
+    # its fourth element, taken out of the log. It appends to the
+    # block's entry in place, and returns it. Callers check for none
     # first, inline: memoize runs for every rule call, and a grammar that
     # never recovers should build and call no more than it did.
     def with_errors(entry, mark)
