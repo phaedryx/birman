@@ -496,6 +496,10 @@ What the labels mean:
   memo; it has no children, since the first try is drawn elsewhere.
   When that first try isn't drawn (it was inside a lookahead, say),
   it's drawn under the hit, headed "first tried here, under &word".
+- **recover (recovered to ";")**: a `.recover(to: ";")` that failed,
+  recorded the error and skipped to the sync point. The attempt it
+  recovered from is its child. A call answered from the memo replays the
+  errors without the label: it's on the first try.
 - **(lookahead)**: an attempt made inside `absent`, `present` or the
   guard of `&`. Its failures don't count as getting anywhere.
   **(caught a commit)**: a lookahead whose inside failed after a

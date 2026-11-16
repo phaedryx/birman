@@ -506,6 +506,65 @@ class TraceTest < Minitest::Test
     assert_match(/… \(199\d more\)/, out)
   end
 
+  # Statements ended by ";", each recovered to the next ";". "bad" is a
+  # failure that got past its start, so it's the recovered kind.
+  def recovering
+    grammar do
+      include Birman::Rules::Whitespace
+
+      ignore :spacing
+      rule(:r) { seq(only(stmt.recover(to: ";")), ";").rep }
+      rule(:stmt) { seq("let", commit, name, "=", num) }
+      lexeme(:name) { /[a-z]+/ }
+      lexeme(:num) { /\d+/ }
+    end
+  end
+
+  # [grammar, input, errors]: a recovered rule met again from the memo, a
+  # recovery inside a lookahead (dropped, as the lookahead is), and recovery
+  # through left recursion. The counts keep the comparison honest: a
+  # traced parse that dropped or doubled an error as the untraced one does
+  # would still equal it.
+  def recovered_parses
+    memo = grammar do
+      rule(:r) { either(seq(s, ";", "!"), seq(s, ";", "?")) }
+      rule(:s) { seq("@", commit, match(/\d+/)).recover(to: ";") }
+    end
+    lookahead = grammar do
+      rule(:r) { seq(s.recover(to: ";").present, s.recover(to: ";"), ";") }
+      rule(:s) { seq("@", commit, match(/\d+/)) }
+    end
+    left = grammar do
+      rule(:r) { either(seq(r, ",", item), item) }
+      rule(:item) { seq("@", commit, match(/\d+/)).recover(to: /[,;]/) }
+    end
+    [[recovering, "let a = 1; let = 2; let b = 3;", 1], [recovering, "let = 1; let = 2;", 2],
+     [memo, "@x;?", 1], [lookahead, "@x;", 1],
+     [left, "@1,@x,@2", 1], [left, "@x,@y", 2]]
+  end
+
+  def test_trace_of_a_recovered_parse_matches_the_untraced_result
+    recovered_parses.each do |g, input, count|
+      want = g.parse(input)
+      got = g.parse(input, trace: true)
+      assert_equal want, got, input
+      assert_equal count, got.errors.size, input
+      assert_equal want.errors, got.errors, input
+      assert_equal want.value, got.value, input
+    end
+  end
+
+  def test_trace_shows_the_recovery
+    out = recovering.parse("let a = 1; let = 2; let b = 3;", trace: true).trace.to_s
+    assert_includes out, '(recovered to ";")'
+    assert_equal 1, out.scan("(recovered").size
+  end
+
+  def test_an_unrecovered_attempt_is_not_labeled_recovered
+    out = recovering.parse("let a = 1;", trace: true).trace.to_s
+    refute_includes out, "recovered"
+  end
+
   # The guard against TracingContext drifting from Context and Ref: a
   # traced parse gives exactly the untraced result, except on input
   # nested deeper than a traced parse can go, which fails as too deep.

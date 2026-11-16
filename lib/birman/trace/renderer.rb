@@ -205,6 +205,7 @@ module Birman
         out << " (this round)" if notes[:this_round]
         out << (node.to ? " (seed)" : " (seed fails)") if notes[:seed]
         out << " (took the longest from :#{notes[:took_longest]}'s rounds)" if notes[:took_longest]
+        out << " (recovered to #{notes[:recover_to]})" if notes[:recovered]
         out << " (caught a commit)" if notes[:caught_commit]
         out << " (lookahead)" if notes[:in_lookahead] && !origin && lookahead_top?(node)
         out
