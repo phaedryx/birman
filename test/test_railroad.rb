@@ -150,6 +150,25 @@ class RailroadTest < Minitest::Test
     refute_includes svg([:seq, nil, [[:str, "let"], %i[ref name]]]), %(class="commit")
   end
 
+  # Recovery changes what happens on bad input, not what's accepted, so
+  # a recover is drawn as what it recovers from; its sync point isn't.
+  def test_railroad_draws_recover_as_its_inner
+    inner = [:seq, 1, [[:str, "let"], %i[ref name]]]
+
+    assert_equal svg(inner), svg([:recover, inner, [:str, ";"]])
+    recovering = [:recover, inner, %i[ref stop]]
+    assert_equal svg([:seq, nil, [inner, [:str, ";"]]]), svg([:seq, nil, [recovering, [:str, ";"]]])
+  end
+
+  # A label under the recover is still the rule's own: its name in
+  # errors, beside the rule's name, not a box in its diagram.
+  def test_a_rules_label_under_a_recover_is_its_own
+    labeled = [:label, "statement", [:seq, 1, [[:str, "let"], %i[ref name]]]]
+
+    assert_equal "statement", Birman::Railroad.rule_label([:recover, labeled, [:str, ";"]])
+    assert_equal svg(labeled), svg([:recover, labeled, [:str, ";"]])
+  end
+
   def test_a_choice_draws_every_alternative_in_order
     s = svg([:choice, [%i[ref a], %i[ref b], %i[ref c]]])
 

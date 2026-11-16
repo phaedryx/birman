@@ -215,6 +215,19 @@ class LintTest < Minitest::Test
     assert_equal [%i[shadowed_alternative top]], kinds(g.lint)
   end
 
+  # A recover fails where what it recovers from fails at its start, so
+  # it shadows what follows only when that never fails.
+  def test_a_recover_fails_as_what_it_recovers_from
+    never_fails = grammar { rule(:top) { either(str("x").maybe.recover(to: ";"), "y") } }
+    assert_equal [%i[shadowed_alternative top]], kinds(never_fails.lint)
+
+    fails = grammar do
+      rule(:top) { either(seq("x", commit, "y").recover(to: stop), "z") }
+      rule(:stop) { either("-", "->") }
+    end
+    assert_equal [%i[shadowed_alternative stop]], kinds(fails.lint), "the sync point is linted and reached"
+  end
+
   # --- the whole ---
 
   def test_problems_print_as_their_message

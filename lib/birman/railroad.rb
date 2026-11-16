@@ -18,9 +18,10 @@ module Birman
   # take. A rule's own label is its name for errors, so it isn't drawn
   # (to_html shows it beside the rule's name). Actions, text, spanned,
   # lexeme and quiet don't change what's accepted, so only what they
-  # wrap is drawn, as in EBNF. A node type this doesn't know is a box
-  # naming it, and either() with no alternatives one saying it never
-  # matches, rather than an error.
+  # wrap is drawn, as in EBNF; a recover is drawn as what it recovers
+  # from. A node type this doesn't know is a box naming it, and
+  # either() with no alternatives one saying it never matches, rather
+  # than an error.
   #
   # Widths come from character counts in a monospace font, not font
   # metrics, so the output is the same on every machine, in whole
@@ -257,6 +258,7 @@ module Birman
       case ast
       in [:label, name, _] then name
       in [Symbol => type, inner] if WRAPPERS.include?(type) then rule_label(inner)
+      in [:recover, inner, _] then rule_label(inner)
       else nil
       end
     end
@@ -286,6 +288,7 @@ module Birman
       in [:rep, 1, 1, inner] then diagram(inner)
       in [:rep, min, max, inner] then repeat(min, max, diagram(inner))
       in [Symbol => type, inner] if WRAPPERS.include?(type) then diagram(inner)
+      in [:recover, inner, _] then diagram(inner)
       in [Symbol => type, *] then Box.new(type.to_s, "unknown", nil)
       end
     end
@@ -295,6 +298,7 @@ module Birman
       case ast
       in [:label, _, inner] then inner
       in [Symbol => type, inner] if WRAPPERS.include?(type) then own(inner)
+      in [:recover, inner, _] then own(inner)
       else ast
       end
     end

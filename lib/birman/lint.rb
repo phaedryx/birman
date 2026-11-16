@@ -148,6 +148,7 @@ module Birman
     def never_fails?(node, grammar, seen = [])
       case node
       in [Symbol => tag, *, inner] if TRANSPARENT.include?(tag) then never_fails?(inner, grammar, seen)
+      in [:recover, inner, _] then never_fails?(inner, grammar, seen) # failing at its start, it fails
       in [:rep, 0, _, _] | [:str | :istr, ""] then true
       in [:seq, _, parts] then parts.all? { never_fails?(_1, grammar, seen) }
       in [:choice, alts] then alts.any? { never_fails?(_1, grammar, seen) }

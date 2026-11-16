@@ -529,6 +529,74 @@ class RecoverTest < Minitest::Test
     assert_equal [1, 6], g.parse("(x?1!2").errors.map(&:pos)
   end
 
+  # --- The left-recursion analysis looks through recover ---
+
+  def assert_cycles(cycles, klass) = assert_equal(cycles, klass.new.left_recursion.cycles)
+
+  # Recovering doesn't change how a rule grows: it reaches its own call
+  # through the recover, and grows from "y" as it would without one.
+  def test_left_recursion_through_recover_is_detected
+    g = grammar(:a) { rule(:a) { either(seq(a, "x").recover(to: ";"), "y") } }
+    plain = grammar(:a) { rule(:a) { either(seq(a, "x"), "y") } }
+
+    assert_cycles [[:a]], g
+    assert_equal({ a: :a }, g.new.left_recursion.leaders)
+    assert_equal [%w[y x], "x"], g.parse!("y x x")
+    assert_equal plain.parse!("y x x"), g.parse!("y x x")
+  end
+
+  # A recover whose inner fails committed at its very start, where its
+  # sync point also is, matches empty: so the call after it is at the
+  # rule's own start. (A commit after something that consumes can't
+  # fail there, nor can one inside a lookahead, which catches it.)
+  def test_a_recover_that_can_commit_at_its_start_is_nullable
+    g = grammar do
+      rule(:top) { either(seq(seq(str("-").maybe, commit, "x").recover(to: ";"), top), ";") }
+    end
+    assert_cycles [[:top]], g
+    assert_equal ";", g.parse!(";")
+    empty = grammar { rule(:top) { seq(seq(str("-").maybe, commit, "x").recover(to: ";"), ";") } }.parse(";")
+    assert_equal [0], empty.errors.map(&:pos)
+    assert_equal "", empty.value.first.span.text
+
+    via_rule = grammar do
+      rule(:top) { either(seq(item.recover(to: ";"), top), ";") }
+      rule(:item) { either(seq("-", commit, "x"), seq(sign, commit, "y")) }
+      rule(:sign) { str("+").maybe }
+    end
+    assert_cycles [[:top]], via_rule
+
+    nested = grammar do
+      rule(:top) { either(seq(seq(str("-").maybe, seq(str("+").maybe, commit, "x")).recover(to: ";"), top), ";") }
+    end
+    assert_cycles [[:top]], nested
+
+    after_input = grammar { rule(:top) { either(seq(seq("-", commit, "x").recover(to: ";"), top), ";") } }
+    in_lookahead = grammar do
+      rule(:top) { either(seq(seq(seq(str("-").maybe, commit, "x").present, "z").recover(to: ";"), top), ";") }
+    end
+    [after_input, in_lookahead].each { assert_cycles [], _1 }
+  end
+
+  # The sync point is looked for from where the inner failed, so it runs
+  # at the recover's own start only when the inner commits there.
+  def test_the_sync_point_is_a_call_at_the_start_when_the_inner_can_commit_there
+    g = grammar { rule(:top) { either(seq(str("-").maybe, commit, "x").recover(to: top), ";") } }
+    assert_cycles [[:top]], g
+
+    g = grammar { rule(:top) { either(seq("-", commit, "x").recover(to: top), ";") } }
+    assert_cycles [], g
+  end
+
+  # A rule that's all one recover still has its alternatives' order
+  # checked: with the base case first it could never grow.
+  def test_a_recover_around_a_left_recursive_rules_choice_is_looked_through
+    g = grammar(:a) { rule(:a) { either("y", seq(a, "x")).recover(to: ";") } }
+
+    error = assert_raises(ArgumentError) { g.parse("y x") }
+    assert_match(/the alternative `"y"` comes before `a "x"`/, error.message)
+  end
+
   # --- The error log Context keeps ---
 
   def context(input)
