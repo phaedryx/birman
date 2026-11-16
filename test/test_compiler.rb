@@ -825,6 +825,12 @@ class CompilerTest < Minitest::Test
     end
   end
 
+  # Both's left side is a lookahead: a recover in it is backtracked over.
+  def test_recover_in_both_left_side
+    g = recovering { rule(:top) { seq(stmt.recover(to: ";") & /[^;]*/, ";") } }
+    assert_same_results g, ["let = 1;", "print 1;", "let x = 1;", "print x;", "let", ""]
+  end
+
   def test_recover_backtracking_through_a_rule_terminator_and_a_nested_recover
     g = recovering do
       rule(:top) { seq(upto(term), /.*/m) }
@@ -1042,7 +1048,7 @@ class CompilerTest < Minitest::Test
     runtime = File.read(Birman::Compiler::RUNTIME)
     names = runtime.scan(/^\s*([A-Z][A-Z0-9_]*) = /).flatten + runtime.scan(/^\s*class ([A-Z]\w*)/).flatten +
             runtime.scan(/\b(?:raise|rescue) ([A-Z]\w*)/).flatten
-    assert_empty names.uniq - Birman::Compiler::RESERVED_CONSTANTS
+    assert_empty names.uniq - Birman::Compiler.reserved_constants(true)
   end
 
   def test_generated_code_never_deletes_and_anchors_every_scan

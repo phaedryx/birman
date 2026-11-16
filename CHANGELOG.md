@@ -40,13 +40,14 @@
   `.map(:to_i)` over one is refused (its value may be an `ErrorNode`),
   and `inspect` of an `ErrorNode` or `Failure` is checked against the
   interpreter's only under CRuby. Generated parsers for grammars without
-  `recover` are byte-for-byte unchanged, but nine more runtime method
-  names (`record_error`, `replay_errors`, `rollback_to`,
-  `recovered_since?`, `take_errors`, `parse_result`, `parse_failure`,
-  `recovered_failures`, `known_keys?`) are now refused as names of
-  copied actions, in every grammar. Interpreted parses of grammars
-  without `recover` are a few percent slower (TOML example about 3%,
-  JSON within noise), from tracking the error log.
+  `recover` are byte-for-byte unchanged. Only in grammars that use
+  `recover`, eight more runtime method names (`record_error`,
+  `replay_errors`, `rollback_to`, `take_errors`, `parse_result`,
+  `parse_failure`, `recovered_failures`, `known_keys?`) are refused as
+  names of copied actions, and `ErrorNode` as the name of a node class
+  or copied constant. Interpreted parses of grammars without `recover`
+  are a few percent slower (TOML example about 3%, JSON within noise),
+  from tracking the error log.
 - `Grammar.lint` (on an instance too) checks a grammar without parsing
   anything, returning `Birman::Lint::Problem`s (`kind`, `rule`,
   `message`): rules naming undefined rules, and a `root` or `ignore`

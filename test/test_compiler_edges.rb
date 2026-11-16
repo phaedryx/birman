@@ -56,6 +56,33 @@ class CompilerEdgesTest < Minitest::Test
     end
   end
 
+  # A grammar's own ErrorNode, read by an action.
+  module OwnErrorNode
+    ErrorNode = "error" # rubocop:disable Naming/ConstantName
+
+    class Plain
+      include Birman::Grammar
+
+      root :top
+      rule(:top) { match(/\d/).action(:named) }
+
+      private
+
+      def named(_text) = ErrorNode
+    end
+
+    class Recovering
+      include Birman::Grammar
+
+      root :top
+      rule(:top) { seq(match(/\d/).action(:named), str("b").recover(to: ";")) }
+
+      private
+
+      def named(_text) = ErrorNode
+    end
+  end
+
   # A module that already holds node classes, used as the namespace.
   module Taken
     Thing = Birman.node(:value)
@@ -75,9 +102,27 @@ class CompilerEdgesTest < Minitest::Test
     assert_refused grammar { rule(:top) { str("a").to(Shadows::Parser) } }, /Parser/
   end
 
-  # The runtime's ErrorNode stands in for what a recovering parse skipped.
-  def test_error_node_name_is_reserved
-    assert_refused grammar { rule(:top) { str("a").to(Shadows::ErrorNode) } }, /ErrorNode/
+  # The runtime's ErrorNode and the error log's methods are only there
+  # for a grammar that recovers, so only it can't have its own.
+  def test_error_node_and_error_log_names_are_reserved_only_where_it_recovers
+    plain = grammar do
+      rule(:top) { seq(str("a").to(Shadows::ErrorNode), match(/\d/).action(:take_errors)) }
+      def take_errors(text) = text * 2 # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results plain, %w[a1 a b1]
+    assert_refused grammar { rule(:top) { seq(str("a").to(Shadows::ErrorNode), str("b").recover(to: ";")) } },
+                   /ErrorNode/
+    g = grammar do
+      rule(:top) { seq(str("a").recover(to: ";"), match(/\d/).action(:take_errors)) }
+      def take_errors(text) = text * 2 # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_refused g, /take_errors/
+  end
+
+  # Likewise a copied constant.
+  def test_error_node_constant_is_reserved_only_where_it_recovers
+    assert_same_results OwnErrorNode::Plain, %w[1 a]
+    assert_refused OwnErrorNode::Recovering, /ErrorNode/
   end
 
   def test_refuses_a_namespace_that_already_defines_the_node_classes
@@ -162,13 +207,16 @@ class CompilerEdgesTest < Minitest::Test
   end
 
   # A copied method named like one of the runtime's would replace it.
-  # A recovering grammar's runtime has the error log's too.
+  # A recovering grammar's runtime has the error log's too, and only it.
   def test_runtime_methods_are_all_reserved
-    [grammar { rule(:top) { str("a") } }, grammar { rule(:top) { str("a").recover(to: ";") } }].each do |g|
+    runtime = lambda do |g|
       parser = Differential.load(g, "CompilerTestParser")
-      runtime = parser.superclass.instance_methods(false) + parser.superclass.private_instance_methods(false)
-      assert_empty runtime - Birman::Compiler::Actions::RUNTIME_METHODS
+      parser.superclass.instance_methods(false) + parser.superclass.private_instance_methods(false)
     end
+    plain = runtime.call(grammar { rule(:top) { str("a") } })
+    recovering = runtime.call(grammar { rule(:top) { str("a").recover(to: ";") } })
+    assert_empty plain - Birman::Compiler::Actions::RUNTIME_METHODS
+    assert_equal Birman::Compiler::Actions::RECOVERY_METHODS.sort, (recovering - plain).sort
   end
 
   # --- Actions ---

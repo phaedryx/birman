@@ -32,11 +32,18 @@ module Birman
     # or copied constant with one of these names would sit in the same
     # lexical scope and shadow it, so it's refused.
     RESERVED_CONSTANTS = %w[
-      BirmanRT Parser Node ErrorNode Span Spanned Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19
+      BirmanRT Parser Node Span Spanned Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19
       TWO64 CHUNK_LIMIT FLOAT_CHUNK LOOKAHEAD_DEPTH
       StringScanner Hash Array String Integer Float Symbol Regexp Kernel Encoding
       StandardError ArgumentError RangeError TypeError FloatDomainError SystemStackError
     ].freeze
+
+    # The runtime's constants only a grammar that recovers gets (see
+    # runtime), reserved only there.
+    RECOVERY_CONSTANTS = %w[ErrorNode].freeze
+
+    # The constants reserved in a grammar that recovers or not.
+    def self.reserved_constants(recovers) = recovers ? RESERVED_CONSTANTS + RECOVERY_CONSTANTS : RESERVED_CONSTANTS
 
     # Spinel allows 64 begin blocks active at once and exits the process
     # past that. Each lookahead (absent, present, &) holds one while its

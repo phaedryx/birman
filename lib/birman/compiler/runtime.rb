@@ -783,10 +783,10 @@ module BirmanRT
     end
 
     # <recover>
-    # The error log, as Birman::Context's: record_error, replay_errors,
-    # rollback_to and recovered_since? are its record, replay, rollback
-    # and recovered_since?. Generated code takes a mark by reading
-    # @log_mark.
+    # The error log, as Birman::Context's: record_error, replay_errors
+    # and rollback_to are its record, replay and rollback. Generated code
+    # takes a mark by reading @log_mark, and asks whether anything was
+    # recorded since one (Context#recovered_since?) by comparing it.
     def record_error(node)
       @recovered << node
       @log_mark += 1
@@ -819,11 +819,6 @@ module BirmanRT
         i += 1
       end
       true
-    end
-
-    #: (Integer) -> bool
-    def recovered_since?(mark)
-      @log_mark > mark
     end
 
     # The errors recorded since mark, taken out of the log for a memo

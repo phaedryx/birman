@@ -11,7 +11,9 @@ module Birman
     # [class.Compiler.Nodes]
     # purpose = "Collects the grammar's node classes and writes their generated versions"
     class Nodes
-      def initialize
+      # recovers: whether the grammar recovers, which reserves more names.
+      def initialize(recovers: false)
+        @reserved = Compiler.reserved_constants(recovers)
         @classes = {}
         @defaults = {}
       end
@@ -42,7 +44,7 @@ module Birman
       private
 
       def check(node, name, rule)
-        if RESERVED_CONSTANTS.include?(name)
+        if @reserved.include?(name)
           raise Error, "rule :#{rule} builds #{node.name}, but #{name} is a name the generated parser needs"
         end
 

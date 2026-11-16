@@ -57,15 +57,15 @@ module Birman
         @roots = roots
         @read_rules = [grammar.class.root, *roots]
         @types = Types.new(grammar, roots)
-        @nodes = Nodes.new
-        @actions = Actions.new(grammar)
+        @recovers = @types.any_recovers?
+        @nodes = Nodes.new(recovers: @recovers)
+        @actions = Actions.new(grammar, recovers: @recovers)
         @methods = []
         @compiled = {}
         @taken = {}
         @values = {}
         @rules = {}
         @ignores = []
-        @recovers = @types.any_recovers?
       end
 
       # Does any rule the parser reaches recover?
