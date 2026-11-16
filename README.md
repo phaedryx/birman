@@ -301,7 +301,10 @@ skipped "let y 3"
   places where nothing else should be tried instead. A recover that
   recovered has matched, so an enclosing `either` doesn't try the
   alternatives after it. A recover inside another one keeps its errors
-  when the outer one recovers too.
+  when the outer one recovers from a committed failure; a plain failure
+  backtracks over them first, leaving only the outer one's. Nested
+  recovers that fail at the same place each record an error, so the
+  same message can be reported twice.
 - **Input nothing starts on.** Without `junk`, the `oops` above would
   fail where it starts, an ordinary failure: the list would end there
   and the whole parse fail at it. To report it and go on, add a last
@@ -341,7 +344,11 @@ has errors.
   `{ let = 1;` fails plainly at the end, wanting `}`, and reports only
   that. Put a commit in it, `seq("{", commit, items, "}")`, and the
   failure doesn't backtrack, so the `let = 1` error is kept beside it
-  (and `value` is `nil`).
+  (and `value` is `nil`). A commit inside a recover no longer ends the
+  parse, even once what holds the recover is backtracked over:
+  `either(seq(let.recover(to: ";"), ";", "!"), seq("let", /[^;]*/, ";"))`
+  on `let 1;` tries the second alternative and is a `Success`, where
+  without the recover the commit makes it a `Failure`.
 
 `parse(input, trace: true)` labels a recover that recovered with where
 it picked up (see [Tracing a parse](#tracing-a-parse)), and generated

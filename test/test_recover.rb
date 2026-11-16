@@ -240,6 +240,18 @@ class RecoverTest < Minitest::Test
     assert_equal ["{", [{ value: "3" }], "done"], result.value[1]
   end
 
+  # Without the commit the inner error goes with the block's plain
+  # failure, before the outer recover sees it (Seq backtracks over it).
+  def test_nested_recover_drops_inner_errors_under_a_plain_failure
+    g = grammar(:blocks) do
+      rule(:blocks) { seq(only(block.recover(to: "}")), "}").rep }
+      rule(:block) { seq("{", statements, "done") }
+    end
+    result = g.parse("{ let = 1; print 2; oops } { print 3; done }")
+    assert_equal [20], result.errors.map(&:pos)
+    assert_equal "{ let = 1; print 2; oops", result.value[0].span.text
+  end
+
   def test_a_failure_after_recovering_lists_both
     result = program.parse("let = 1; print 2 print 3;")
     assert_equal [4, 17], result.errors.map(&:pos)
@@ -323,7 +335,7 @@ class RecoverTest < Minitest::Test
       rule(:top) { seq(either(stmt.recover(to: ";").check(:never?, "ok"), /[^;]*/), ";") }
       def never?(_value) = false # rubocop:disable Lint/NestedMethodDefinition
     end
-    assert_no_stale_errors(g, "print 1;")
+    assert_equal ["print 1", ";"], assert_no_stale_errors(g, "print 1;").value
   end
 
   # An operator ("+" "+", recovering at a digit) matched, then its right

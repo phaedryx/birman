@@ -118,6 +118,8 @@ module Birman
     def errors = @errors || [self]
 
     # What a recovering parse built around its errors, else nil.
+    # (Data#with builds from the members alone, dropping errors and
+    # value; nothing in Birman calls it.)
     attr_reader :value
 
     # Data's own Marshal support would set @trace after freezing.
