@@ -41,6 +41,7 @@ class CompilerEdgesTest < Minitest::Test
     FAIL = 0
     Success = Birman.node(:value)
     Parser = Birman.node(:value)
+    ErrorNode = Birman.node(:failure)
 
     # An action reading its own FAIL.
     class Grammar
@@ -72,6 +73,11 @@ class CompilerEdgesTest < Minitest::Test
   def test_refuses_node_classes_named_like_the_runtime
     assert_refused grammar { rule(:top) { str("a").to(Shadows::Success) } }, /Success/
     assert_refused grammar { rule(:top) { str("a").to(Shadows::Parser) } }, /Parser/
+  end
+
+  # The runtime's ErrorNode stands in for what a recovering parse skipped.
+  def test_error_node_name_is_reserved
+    assert_refused grammar { rule(:top) { str("a").to(Shadows::ErrorNode) } }, /ErrorNode/
   end
 
   def test_refuses_a_namespace_that_already_defines_the_node_classes
@@ -156,10 +162,13 @@ class CompilerEdgesTest < Minitest::Test
   end
 
   # A copied method named like one of the runtime's would replace it.
+  # A recovering grammar's runtime has the error log's too.
   def test_runtime_methods_are_all_reserved
-    parser = Differential.load(grammar { rule(:top) { str("a") } }, "CompilerTestParser")
-    runtime = parser.superclass.instance_methods(false) + parser.superclass.private_instance_methods(false)
-    assert_empty runtime - Birman::Compiler::Actions::RUNTIME_METHODS
+    [grammar { rule(:top) { str("a") } }, grammar { rule(:top) { str("a").recover(to: ";") } }].each do |g|
+      parser = Differential.load(g, "CompilerTestParser")
+      runtime = parser.superclass.instance_methods(false) + parser.superclass.private_instance_methods(false)
+      assert_empty runtime - Birman::Compiler::Actions::RUNTIME_METHODS
+    end
   end
 
   # --- Actions ---
@@ -543,6 +552,19 @@ class CompilerEdgesTest < Minitest::Test
     end
   end
 
+  # The error log starts empty for each parse too.
+  def test_parsing_again_with_a_recovering_parser
+    g = grammar(ignore: :spacing) do
+      rule(:top) { seq(only(seq("let", commit, match(/\w+/), "=", match(/\d+/)).recover(to: ";")), ";").rep }
+    end
+    Differential.load(g, "CompilerTestParser")
+    ["let = 1; let x = 2;", "let x = 1; let 2;", "let x = 1;"].each do |input|
+      parser = CompilerTestParser::Parser.new(input)
+      want = Differential.interpreted(g, input)
+      3.times { assert_equal want, Differential.report(parser.parse, CompilerTestParser::BirmanRT.method(:dump)), input }
+    end
+  end
+
   # Spinel exits the process when more than 64 begin blocks are active,
   # so lookaheads nested past lookahead_depth make a Failure instead.
   def test_lookaheads_nested_too_deeply_fail_cleanly
@@ -557,6 +579,19 @@ class CompilerEdgesTest < Minitest::Test
     refute failure.success?
     assert_equal "input is nested too deeply", failure.reason
     assert parser.parse.reason, "and again on the same parser"
+  end
+
+  # Each active recover holds a begin block too, so it counts as a
+  # lookahead: three nested (the third trying for a "(" after "((") in a
+  # parser allowing two fail cleanly.
+  def test_recover_counts_against_lookahead_depth
+    g = grammar(:nest) { rule(:nest) { seq("(", commit, nest.maybe, ")").recover(to: ";") } }
+    Object.send(:remove_const, :CompilerTestDepth) if defined?(CompilerTestDepth)
+    Object.class_eval(g.to_ruby(namespace: "CompilerTestDepth", lookahead_depth: 2))
+    assert_equal g.parse!("()"), CompilerTestDepth::Parser.new("()").parse.value
+    failure = CompilerTestDepth::Parser.new("(())").parse
+    refute failure.success?
+    assert_equal "input is nested too deeply", failure.reason
   end
 
   def test_lookahead_depth_must_be_positive

@@ -31,8 +31,9 @@ module SpinelDiff
     FileUtils.mkdir_p(OUT)
     source = File.join(OUT, "#{example.name}_parser.rb")
     binary = File.join(OUT, "#{example.name}_parser")
-    File.write(source, "#{example.grammar.to_ruby(namespace: example.namespace, **example.to_ruby_options)}\n" \
-                       "#{Differential.main_source(example.namespace, **example.options)}")
+    code = example.grammar.to_ruby(namespace: example.namespace, **example.to_ruby_options)
+    recovers = code.include?("class ErrorNode") # its report lists errors (see Differential.main_source)
+    File.write(source, "#{code}\n#{Differential.main_source(example.namespace, recovers:, **example.options)}")
     out, status = Open3.capture2e(compiler, source, "-o", binary)
     abort "spinel failed on #{source}:\n#{out}" unless status.success?
     binary

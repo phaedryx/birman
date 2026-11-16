@@ -492,6 +492,46 @@ module Examples
     end
   end
 
+  # Statements that recover at ";", blocks of them, and a left-recursive
+  # sum whose parenthesized parts recover at ")": a recovering parse's
+  # errors and the value built around them (ErrorNodes and all), with
+  # actions and checks skipped over errors.
+  module Recovering
+    # let x = 1 + (2 +; print x; { print (; }
+    class Grammar
+      include Birman::Grammar
+      include Birman::Rules::Whitespace
+
+      Let = node(:name, :value)
+      Block = node(:body)
+
+      root :program
+      ignore :spacing
+
+      rule(:program) { seq(only(stmt.recover(to: ";")), ";").rep }
+      rule(:stmt) { either(let_stmt, print_stmt, block) }
+      rule(:let_stmt) { seq("let", commit, name.as(:name), "=", sum.as(:value)).to(Let) }
+      rule(:print_stmt) { seq("print", sum).action(:printed) }
+      rule(:block) { seq("{", commit, program.as(:body), "}").to(Block) }
+      rule(:sum) { either(seq(sum, "+", commit, term).action(:add), term) }
+      rule(:term) { either(num, name, seq("(", commit, sum.recover(to: ")"), ")").action(:inner)) }
+      lexeme(:num) { match(/\d+/).map(:to_i) }
+      lexeme(:name) { match(/[a-z]+/).check(:short?, "a short name") }
+
+      private
+
+      def printed(parts) = parts[1]
+      def add(parts) = parts[0].is_a?(Integer) && parts[2].is_a?(Integer) ? parts[0] + parts[2] : parts
+      def inner(parts) = parts[2]
+      def short?(text) = text.size <= 3
+    end
+
+    FIXED = ["let x = 1 + (2 +; print x; { print (; }", "let x = 1; print x + 2;", "let = 1; print (1 + 2);",
+             "{ let y = 1; print y; };", "{ let = 1; print 2;", "print (1 + (x;", "print abcd;", "let x = ;;",
+             "print 1 + ;", "{ { print (; }; };", "", ";", "print 1", "let"].freeze
+    TOKENS = ["let ", "print ", "x", "abcd", "1", "+", "(", ")", "{", "}", ";", "=", " "].freeze
+  end
+
   # A grammar to check the generated parser of, on inputs. options are
   # the parse's (root:, consume:); a root: is generated with to_ruby's
   # roots:.
@@ -507,7 +547,7 @@ module Examples
     [let(count), calc(count), left_calc(count), left_calc_commit(count), left_calc_indirect(count), lvalues(count),
      json(count), email(count), toml(count),
      numbers(count), cycles(count), mixed(count), dates(count), moments(count), defaults(count), select(count),
-     upto(count),
+     upto(count), recovering(count),
      *one_type(count),
      *entries(count)]
   end
@@ -640,6 +680,13 @@ module Examples
     rng = Random.new(Integer(ENV.fetch("SEED", 1)))
     inputs = Upto::FIXED + Differential.fuzz(Upto::TOKENS, rng, count, 8)
     Example.new("upto", Upto::Grammar, "UptoCompiled", inputs)
+  end
+
+  def recovering(count)
+    rng = Random.new(Integer(ENV.fetch("SEED", 1)))
+    mutants = Array.new(count / 2) { Differential.mutate(rng, Recovering::FIXED.sample(random: rng), Recovering::TOKENS) }
+    inputs = Recovering::FIXED + Differential.fuzz(Recovering::TOKENS, rng, count, 12) + mutants
+    Example.new("recovering", Recovering::Grammar, "RecoveringCompiled", inputs)
   end
 
   def mixed(count)
