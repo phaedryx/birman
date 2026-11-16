@@ -319,8 +319,10 @@ error it found, in input order, each a `Failure` with its own `pos`,
 them, so `message` and `parse!` (which raises with it, and has the rest
 on `error.failure.errors`) say where the first one was. `value` is the
 tree, with an `ErrorNode` wherever it recovered, or `nil` when the
-parse itself failed in the end. Neither is a member, so `==`, `inspect` and
-pattern matching are unchanged, and Marshal keeps them. Without
+parse itself failed in the end. Neither is a member, so `==`,
+`inspect` and pattern matching are unchanged. Marshal keeps `errors`,
+but not a `value` holding nodes with spans (an `ErrorNode` among
+them): loading one raises, as it does for a `Success`'s. Without
 recovery, `errors` is `[self]` and `value` is `nil`; a `Success` never
 has errors.
 

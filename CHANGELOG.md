@@ -16,7 +16,8 @@
   `Success`: its fields are the first error's, in input order, so
   `message` and `parse!` report that one, and two new readers (not
   members, so `==`, `inspect` and pattern matching are unchanged;
-  Marshal keeps them) give `errors`, every error sorted by position,
+  Marshal keeps `errors`, and `value` only when it holds no node with a
+  span) give `errors`, every error sorted by position,
   and `value`, the tree, or `nil` when the parse failed in the end.
   Without recovery `errors` is `[self]` and `value` is `nil`;
   `error.failure.errors` has them all after `parse!`. Errors recorded

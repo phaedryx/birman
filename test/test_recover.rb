@@ -52,13 +52,22 @@ class RecoverTest < Minitest::Test
     end
   end
 
-  def test_marshal_keeps_errors_and_value
+  # A value of plain data; one holding nodes with spans (any parsed
+  # tree with an ErrorNode) doesn't load back, as a Success's doesn't.
+  def test_marshal_keeps_errors_and_a_plain_value
     r = Birman::Failure.recovered([failure(pos: 4), failure(pos: 1)], value: [1, 2])
     back = Marshal.load(Marshal.dump(r))
     assert_equal r, back
     assert_equal r.errors, back.errors
     assert_equal [1, 2], back.value
     assert_nil back.trace
+  end
+
+  def test_marshal_keeps_a_parses_errors
+    errors = program.parse("let = 1; print x;").errors
+    back = Marshal.load(Marshal.dump(errors))
+    assert_equal errors, back
+    assert_equal [4, 15], back.map(&:pos)
   end
 
   def test_marshal_of_a_plain_failure_still_lists_itself

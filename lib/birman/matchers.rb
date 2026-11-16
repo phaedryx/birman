@@ -630,9 +630,6 @@ module Birman
   # point is upto's, its diagnostics dropped. (Made when it's needed,
   # not kept from initialize: Data#with skips that on Ruby 3.2, and
   # Trace rebuilds matchers with it.)
-  # [class.Recover]
-  # purpose = "Built by Matcher#recover: records inner's failure as an error and skips to sync"
-  # fields = ["inner: the Matcher recovered from", "sync: the Matcher where parsing resumes (not consumed)"]
   Recover = Data.define(:inner, :sync) do
     include Matcher
 
