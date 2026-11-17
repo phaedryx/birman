@@ -144,6 +144,7 @@ puts Lists.parse("[1, [2, x], []]").message
 | `.means(v)`                   | the value is `v` (`lit("null").means(nil)`)          |
 | `.map { }`                    | transform the value with a block (prefer the above)  |
 | `.label("name")`              | "expected name" in errors                            |
+| `.recover(to: ";")`           | on failure, record the error and carry on from the next `;` (see [Recovering from errors](#recovering-from-errors)) |
 | `.quiet`                      | never mention in errors                              |
 
 Rules can be left-recursive, written the way a textbook grammar writes
@@ -231,6 +232,128 @@ of at whatever a looser alternative accepted.
 
 This is Parsec-style commitment, not the choice-local "cut" from the
 PEG literature.
+
+## Recovering from errors
+
+A parse stops at its first error. To report every error in a document
+and still get a tree, mark where the parse may pick up again:
+`m.recover(to: t)` turns a failure of `m` into a recorded error, skips
+ahead to where `t` matches, and carries on from there.
+
+```ruby
+class Script
+  include Birman::Grammar
+  include Birman::Rules::Whitespace
+  include Birman::Rules::Numbers
+  include Birman::Rules::Identifiers
+
+  Let = node(:name, :value)
+  Print = node(:name)
+
+  ignore :spacing
+  root :program
+
+  rule(:program)   { seq(only(statement.recover(to: ";")), ";").rep }
+  rule(:statement) { either(let, print, junk) }
+  rule(:let)       { seq("let", commit, identifier.as(:name), "=", number.as(:value)).to(Let) }
+  rule(:print)     { seq("print", commit, identifier.as(:name)).to(Print) }
+  # Anything else that's there is an error too (see below).
+  rule(:junk)      { seq(any.present, commit, never.label("a statement")) }
+end
+
+result = Script.parse("let x = 1; let = 2; print x; oops; let y 3;")
+result.errors.each { |e| puts "#{e.line}:#{e.column}: expected #{e.expected.join(" or ")}" }
+result.value.each do |node|
+  puts node.is_a?(Birman::ErrorNode) ? "skipped #{node.span.text.inspect}" : node.inspect
+end
+```
+
+```
+1:16: expected identifier
+1:30: expected a statement
+1:42: expected "="
+(Let "x" 1)
+skipped "let = 2"
+(Print "x")
+skipped "oops"
+skipped "let y 3"
+```
+
+- **When it recovers.** When `m` fails after a commit, or fails
+  plainly after getting past where it started (a `seq` without a commit
+  that fails at its second part). A failure right where `m` started is
+  an ordinary failure, so a list of recovering items ends where the
+  items do, at a block's `}` or the end of the input, and valid input
+  is still a `Success`.
+- **Where it picks up.** `to:` is taken as `upto` takes its terminator
+  (see [Up to a terminator](#up-to-a-terminator)): a String is exact
+  text, with no spacing skipped, and a Regexp or any matcher works too.
+  It's searched for from where `m` failed, not from where `m` started,
+  so it can't be found inside what `m` already matched. It isn't
+  consumed: the grammar matches it next (the `";"` after the recover
+  above). Where it never matches, the parse picks up at the end of the
+  input.
+- **The error node.** In the tree, a `Birman::ErrorNode` stands where
+  `m`'s value would have been. Its `span` runs from where `m` started to
+  where the parse picked up (before any spacing there), and its
+  `failure` is the error.
+- **Where to put it.** On statements, list items, block bodies:
+  places where nothing else should be tried instead. A recover that
+  recovered has matched, so an enclosing `either` doesn't try the
+  alternatives after it. A recover inside another one keeps its errors
+  when the outer one recovers from a committed failure; a plain failure
+  backtracks over them first, leaving only the outer one's. Nested
+  recovers that fail at the same place each record an error, so the
+  same message can be reported twice.
+- **Input nothing starts on.** Without `junk`, the `oops` above would
+  fail where it starts, an ordinary failure: the list would end there
+  and the whole parse fail at it. To report it and go on, add a last
+  alternative that commits on anything, a junk line,
+  `either(stmt, junk_line)`. It needs something to look at: at the end
+  of the input `any.present` fails, so the list ends there as before. In a
+  block, keep it off the closing brace, `match(/[^}]/).present`, or it
+  takes the `}` as junk and skips to the next `;`, past the block's
+  end.
+
+A parse that recovered is a `Failure`, never a `Success`, so `in
+Birman::Success(value)` can't accept broken input. `errors` lists every
+error it found, in input order, each a `Failure` with its own `pos`,
+`expected` and `committed`; the `Failure` itself reads as the first of
+them, so `message` and `parse!` (which raises with it, and has the rest
+on `error.failure.errors`) say where the first one was. `value` is the
+tree, with an `ErrorNode` wherever it recovered, or `nil` when the
+parse itself failed in the end. Neither is a member, so `==`,
+`inspect` and pattern matching are unchanged. Marshal keeps `errors`,
+but not a `value` holding nodes with spans (an `ErrorNode` among
+them): loading one raises, as it does for a `Success`'s. Without
+recovery, `errors` is `[self]` and `value` is `nil`; a `Success` never
+has errors.
+
+- **Actions above an error don't run.** `.map`, `.action` and `.means`
+  over a match that recovered pass its value on unchanged, so your code
+  never gets an `ErrorNode` where it expects a value of its own, and the
+  error node stays in the tree. `.check` passes it without asking.
+  `.to(Node)` still builds the node, with the error node in whatever
+  field it landed in; when the value doesn't fit the node (a skipped
+  `.means` left a Hash with other keys), it passes the value on as it
+  is. On a `Success`, every action ran, as always.
+- **Backtracking takes errors with it.** An error recorded inside
+  something that then fails, and is backtracked over, is dropped with
+  it, and one in a memoized rule is reported once however often the
+  rule is reached. That includes the root: `seq("{", items, "}")` on
+  `{ let = 1;` fails plainly at the end, wanting `}`, and reports only
+  that. Put a commit in it, `seq("{", commit, items, "}")`, and the
+  failure doesn't backtrack, so the `let = 1` error is kept beside it
+  (and `value` is `nil`). A commit inside a recover no longer ends the
+  parse, even once what holds the recover is backtracked over:
+  `either(seq(let.recover(to: ";"), ";", "!"), seq("let", /[^;]*/, ";"))`
+  on `let 1;` tries the second alternative and is a `Success`, where
+  without the recover the commit makes it a `Failure`.
+
+`parse(input, trace: true)` labels a recover that recovered with where
+it picked up (see [Tracing a parse](#tracing-a-parse)), and generated
+parsers recover as `parse` does (see
+[Generating a parser](#generating-a-parser)).
 
 ## Left recursion
 
@@ -539,6 +662,11 @@ What the labels mean:
   memo; it has no children, since the first try is drawn elsewhere.
   When that first try isn't drawn (it was inside a lookahead, say),
   it's drawn under the hit, headed "first tried here, under &word".
+- **recover (recovered to ";")**: a `.recover(to: ";")` that failed,
+  recorded the error and skipped to the sync point (see
+  [Recovering from errors](#recovering-from-errors)). The attempt it
+  recovered from is its child. A call answered from the memo replays the
+  errors without the label: it's on the first try.
 - **(lookahead)**: an attempt made inside `absent`, `present` or the
   guard of `&`. Its failures don't count as getting anywhere.
   **(caught a commit)**: a lookahead whose inside failed after a
@@ -805,6 +933,10 @@ own.
   is the only rule) and generated parsers take the same options, except
   that generated parsers don't take `trace:`.
 - `Failure#message(formatter)` takes anything with `#call(failure)`
+- `Failure#errors` lists every error a parse that recovered found, and
+  `Failure#value` is the tree it built around them (see
+  [Recovering from errors](#recovering-from-errors)); without recovery
+  they're `[self]` and `nil`
 - `rules` lists a grammar's rule names, as Symbols, in declaration
   order: an included module's rules first, in the order the modules
   were included, then the class's own, then a subclass's, which is the
@@ -872,7 +1004,8 @@ newer matcher adds, is a box naming the type rather than an error, and
 `either()` with no alternatives is a box saying it never matches. A
 rule's own label is its name in errors, so the page shows it beside
 the rule's name instead of boxing the whole diagram. Actions, `text`, `spanned`, `lexeme` and `quiet` don't change
-what's accepted, so only what they wrap is drawn, as in `to_ebnf`. The
+what's accepted, so only what they wrap is drawn, as in `to_ebnf`, and a
+`recover` is drawn as the matcher it wraps. The
 page lists the rules in `to_ast` order, with those the root doesn't
 reach under a heading of their own.
 
@@ -926,7 +1059,10 @@ instrumented copy of every rule, or a check in every one, costing the
 size and speed a generated parser is for.
 
 Nodes come out as plain classes under `<namespace>::BirmanRT::Node`,
-with the same fields, `span`, `==` and `inspect`. Values transformed
+with the same fields, `span`, `==` and `inspect`. A grammar that
+recovers gets the same `errors`, `value` and `ErrorNode`s
+(`<namespace>::BirmanRT::ErrorNode`) as `parse` (see
+[Recovering from errors](#recovering-from-errors)). Values transformed
 with `.map(:sym)`, `.action(:name)` and `.means(v)` compile, as does
 `.check(:name, "label")`: an action's (or check's) method is copied from
 its source, with the grammar methods it calls
@@ -972,8 +1108,9 @@ the rule, for what it can't translate faithfully:
   Floats as well: exactly, as Ruby's `Integer` does). `.map(:to_i)` is
   fine on a String, an optional String (`.maybe`; nil is 0) or an
   Integer; `.map(:hex)`, `.map(:oct)`, and `.map(:to_i)` on anything
-  else are refused, as are `send` and `method` with a name that isn't
-  a literal symbol. This is a net for the common forms, not a proof:
+  else (a `recover`'s value too, which may be an `ErrorNode`) are
+  refused, as are `send` and `method` with a name that isn't a literal
+  symbol. This is a net for the common forms, not a proof:
   `Float(text).round`, `text.to_f.to_int` and whatever else slips past
   it may raise, or give a wrong number without a word. `large_integer`
   takes Integer bases and Floats (truncated) as Ruby does; Rational and
@@ -996,8 +1133,9 @@ arrays nest about 55,000 deep), so input that fails with the interpreter
 can parse when compiled. One limit runs the other way: Spinel allows 64
 `begin` blocks active at once (and exits the process past that), and
 each lookahead (`absent`, `present`, `&`) holds one while its inner
-matcher runs. So lookaheads nested more than 56 deep are a Failure,
-"input is nested too deeply". To allow more, build with a bigger stack
+matcher runs, and so does each `recover`. So lookaheads and recovers
+nested more than 56 deep, together, are a Failure, "input is nested
+too deeply". To allow more, build with a bigger stack
 and say so when generating:
 
 ```ruby
@@ -1011,7 +1149,8 @@ comment for each parameter, so Spinel takes a seq's mixed parts
 block parameters gets none: give an action that indexes mixed parts
 plain parameters. Under Spinel, a string that
 isn't valid UTF-8 (JSON's lone `\ud83d`) has the same bytes but
-`inspect`s differently. Spinel's regexps fold case one character to
+`inspect`s differently, and an `ErrorNode`'s or a `Failure`'s
+`inspect` is only checked against the interpreter's under CRuby. Spinel's regexps fold case one character to
 one: `nocase("école")` matches `ÉCOLE` in a binary as in Ruby, but
 `nocase("straße")` matches `STRASSE` only in Ruby (whose `/i` folds ß
 to ss), and the same goes for `match(/straße/i)`.

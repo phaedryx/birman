@@ -44,12 +44,21 @@ module Birman
     # Called by Trace::Probe#match: inner's match, in a frame.
     def probe(probe, pos)
       frame = open_frame(probe.kind, nil, probe.description, pos)
+      frame.note(:recover_to, Trace::Instrument.ebnf(probe.inner.sync)) if probe.kind == :recover
       recording(frame) do
         r = yield
         frame.to = r&.pos
         frame.note(:rejected_by, probe.inner.method_name) if probe.kind == :check && r.nil? && frame.children.last&.to
         r
       end
+    end
+
+    # A recover skipping to its sync point records the error it recovered
+    # from while its frame is the open one. Recover is record's only
+    # caller.
+    def record(node)
+      @frame.note(:recovered, true) if @frame.kind == :recover
+      super
     end
 
     # Leftover input, with consume: true: a last top-level node.

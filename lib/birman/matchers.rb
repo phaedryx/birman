@@ -129,6 +129,22 @@ module Birman
     # returns = "Matcher whose value is always value (self's .as name is kept)"
     def means(value) = Const.new(self, value)
 
+    # Recover from a failure of self: record it as an error, skip to
+    # the first place `to` matches from where self failed (or to the end
+    # of input), and succeed there with an ErrorNode spanning self's
+    # start to that point, so the parse carries on. Only a committed
+    # failure, or one that got past where self started, is recovered;
+    # failing at the start is an ordinary failure, so a list of
+    # recovering items still ends where the items do. `to` isn't
+    # consumed, and nothing is skipped after it: the grammar matches it
+    # next.
+    # [method.recover]
+    # params = ["to: String (exact, nothing skipped) | Regexp | Matcher, where parsing resumes"]
+    # returns = "Matcher for self, or an ErrorNode up to where to matches when self fails past its start"
+    # value = "self's value, or a Birman::ErrorNode (span: self's start to the sync point; failure: the error)"
+    # notes = "A parse that recovered returns a Failure listing every error (Failure#errors) and the tree (#value)"
+    def recover(to:) = Recover.new(self, to.is_a?(String) ? Str.new(to) : Birman.coerce(to))
+
     # [method.label]
     # params = ["name: String"]
     # returns = "self, reported as \"expected <name>\" when it fails without consuming input"
@@ -305,9 +321,10 @@ module Birman
     def with(**changes) = changes.empty? ? self : Seq.new(open: open?, **to_h, **changes)
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       values = Array.new(parts.size)
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return failed(ctx, part, pos, i)
+        r = part.match(ctx, pos) or return failed(ctx, part, mark, pos, i)
         values[i] = r.value
         pos = r.pos
       end
@@ -326,7 +343,7 @@ module Birman
       case part
       when Seq then part.only_at ? names_inside(part.parts[part.only_at]) : part.parts.filter_map(&:capture_key)
       when Pick then names_inside(part.parts[part.index])
-      when Label, Quiet, Lexeme, Check, Maybe then names_inside(part.inner)
+      when Label, Quiet, Lexeme, Check, Maybe, Recover then names_inside(part.inner)
       when Rep then names_inside(part.inner)
       when SepBy then names_inside(part.item)
       when Both then names_inside(part.right)
@@ -361,9 +378,12 @@ module Birman
                            "list its parts in the outer seq, or name it with .as"
     end
 
-    def failed(ctx, part, pos, index)
+    # A committed failure raises, keeping the errors recovered so far: it
+    # ends the parse or is recovered from, and neither backtracks. A plain
+    # one discards the parts that matched, and their errors.
+    def failed(ctx, part, mark, pos, index)
       fail_committed!(ctx, part, pos) if commit_at && index >= commit_at
-      nil
+      ctx.rollback(mark)
     end
 
     # If the failed part recorded nothing at or past pos (it's quiet,
@@ -393,9 +413,10 @@ module Birman
     def initialize(parts:, index:) = super(parts: parts.dup.freeze, index:)
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       value = nil
       parts.each_with_index do |part, i|
-        r = part.match(ctx, pos) or return nil
+        r = part.match(ctx, pos) or return ctx.rollback(mark)
         value = r.value if i == index
         pos = r.pos
       end
@@ -417,15 +438,18 @@ module Birman
 
     def initialize(item:, sep:, min: 1, trailing: false) = super
 
-    def match(ctx, pos)
+    def match(ctx, pos) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       r = item.match(ctx, pos) or return (min.zero? ? Match.new(pos, []) : nil)
       values = [r.value]
       pos = r.pos
       loop do
+        mark = ctx.log_mark
         s = sep.match(ctx, pos) or break
         r = item.match(ctx, s.pos)
-        pos = s.pos if r.nil? && trailing
-        break if r.nil? || r.pos == pos # an empty separator and item would loop forever
+        break pos = s.pos if r.nil? && trailing # kept, ending the list
+        # Dropped with its errors: a separator with no item after it, or
+        # an empty separator and item (they would loop forever).
+        break ctx.rollback(mark) if r.nil? || r.pos == pos
 
         values << r.value
         pos = r.pos
@@ -468,22 +492,24 @@ module Birman
   Rep = Data.define(:inner, :min, :max) do
     include Matcher
 
-    def match(ctx, pos)
+    def match(ctx, pos) # rubocop:disable Metrics/MethodLength
+      start_mark = ctx.log_mark
       values = []
       while max.nil? || values.size < max
+        pass_mark = ctx.log_mark
         r = inner.match(ctx, pos) or break
         # Matching nothing ends the loop (repeating it would never stop).
         # It still counts as the first match, so `x.rep(1)` and `x.maybe`
         # work when x can match empty; after real matches it's just the end.
         if r.pos == pos
-          values << r.value if values.empty?
+          values.empty? ? values << r.value : ctx.rollback(pass_mark)
           break
         end
 
         values << r.value
         pos = r.pos
       end
-      values.size >= min ? Match.new(pos, values) : nil
+      values.size >= min ? Match.new(pos, values) : ctx.rollback(start_mark)
     end
 
     def to_ast = [:rep, min, max, inner.to_ast]
@@ -491,12 +517,15 @@ module Birman
   end
 
   # Negative lookahead. The inner attempt's failures are discarded,
-  # since failing is exactly what we hoped for.
+  # since failing is exactly what we hoped for, and so are the errors it
+  # recovered from, as every lookahead's are.
   Not = Data.define(:inner) do
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = ctx.isolate(pos) { ctx.lookahead { inner.match(ctx, pos) } }
+      ctx.rollback(mark)
       r ? nil : Match.new(pos, nil)
     end
 
@@ -532,11 +561,16 @@ module Birman
 
   # A successful match whose value is replaced: the shared shape of
   # Const, Map, Send and Action, each defining transform(value, ctx).
+  # Over a subtree that recovered from an error the value is left alone:
+  # user code would be handed an ErrorNode where it expects a shape.
   module Transform
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = inner.match(ctx, pos) or return nil
+      return r if ctx.recovered_since?(mark)
+
       Match.new(r.pos, transform(r.value, ctx))
     end
 
@@ -590,15 +624,48 @@ module Birman
     def capture_key = inner.capture_key
   end
 
+  # See Matcher#recover. inner runs isolated: what it expected is
+  # merged outward when it matches or fails at pos, and becomes the
+  # recorded error when it's recovered from. The search for the sync
+  # point is upto's, its diagnostics dropped. (Made when it's needed,
+  # not kept from initialize: Data#with skips that on Ruby 3.2, and
+  # Trace rebuilds matchers with it.)
+  Recover = Data.define(:inner, :sync) do
+    include Matcher
+
+    def match(ctx, pos)
+      result, furthest, expected, committed = ctx.recover_failure(pos) { inner.match(ctx, pos) }
+      if result || (!committed && furthest <= pos)
+        ctx.merge(furthest, expected)
+        return result
+      end
+
+      input = ctx.input
+      stop = ctx.isolate(furthest) { Upto.new(sync).match(ctx, furthest) }&.pos || input.bytesize
+      failure = Failure.new(input:, pos: Birman.char_offset(input, furthest), expected: expected.uniq, committed:)
+      node = Node.new_with_span(ErrorNode, ctx.span(pos, stop), { failure: })
+      ctx.record(node)
+      Match.new(stop, node)
+    end
+
+    def to_ast = [:recover, inner.to_ast, sync.to_ast]
+    def capture_key = inner.capture_key
+  end
+
   # Semantic predicate (see Matcher#check). Like Label, inner runs
   # isolated, so a rejection can drop what inner recorded (a rep's
-  # stopping point, say), as Not does, and report only its own name.
+  # stopping point, say) and report only its own name. Over a subtree
+  # that recovered from an error the predicate isn't asked, as with
+  # Transform, and passes.
   Check = Data.define(:inner, :method_name, :name) do
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       result = ctx.isolate(pos) { inner.match(ctx, pos) }
-      return ctx.fail_at(pos, name) if result && !ctx.grammar.__send__(method_name, result.value)
+      if result && !ctx.recovered_since?(mark) && !ctx.grammar.__send__(method_name, result.value)
+        return ctx.fail_at(pos, name)
+      end
 
       ctx.merge(ctx.isolated_furthest, ctx.isolated_expected)
       result
@@ -619,20 +686,42 @@ module Birman
   end
 
   # See Matcher#to.
+  # Over a subtree that recovered, the value may not be the shape the
+  # node is built from (a .means or .map skipped, an ErrorNode in place
+  # of a Hash): if its fields don't fit the node, it's passed on as it
+  # is, as a skipped transform passes its value on. Otherwise, and
+  # always without errors, the node is built.
   To = Data.define(:inner, :node) do
     include Matcher
 
     def match(ctx, pos)
+      mark = ctx.log_mark
       r = inner.match(ctx, pos) or return nil
       fields = if r.value.is_a?(Hash) then r.value
                elsif node.members.empty? then {} # a node with no fields drops the value
                else { node.members.first => r.value }
                end
+      return r if ctx.recovered_since?(mark) && !fits?(fields)
+
       Match.new(r.pos, Birman.build(node, fields, ctx, pos, r.pos))
     end
 
     def to_ast = [:action, inner.to_ast]
     def capture_key = inner.capture_key
+
+    private
+
+    # Could node be built from fields: no field it lacks, none missing
+    # that its initialize doesn't give a default? Worked out here, on
+    # the recovered path only, rather than kept from initialize, which
+    # Data#with skips on Ruby 3.2 (and Trace rebuilds matchers with it).
+    def fits?(fields)
+      return false unless (fields.keys - node.members).empty?
+
+      init = node.instance_method(:initialize)
+      optional = init.owner == node ? init.parameters.filter_map { |kind, name| name if kind == :key } : []
+      (node.members - fields.keys - optional).empty?
+    end
   end
 
   # See Matcher#text. The text ends where a node's span would.
@@ -674,12 +763,21 @@ module Birman
       else
         bytes = input.encoding == Encoding::BINARY # a character per byte, as any matches
         while pos < input.bytesize
-          return pos if ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
+          return pos if terminator_at?(ctx, pos)
 
           pos += 1
           pos += 1 while !bytes && pos < input.bytesize && input.getbyte(pos).between?(0x80, 0xBF)
         end
       end
+    end
+
+    # A lookahead for the terminator at pos, dropping its failures and
+    # the errors it recovered from.
+    def terminator_at?(ctx, pos)
+      mark = ctx.log_mark
+      found = ctx.isolate(pos) { ctx.lookahead { terminator.match(ctx, pos) } }
+      ctx.rollback(mark)
+      found
     end
   end
 
@@ -775,26 +873,31 @@ module Birman
 
     # The operand slot: a prefix operator and its operand at the
     # operator's rank, else the bare operand (also when the prefixed
-    # form fails).
+    # form fails, dropping the operator and its errors).
     def operand_at(ctx, pos)
+      mark = ctx.log_mark
       entry, o = prefix_at(ctx, pos)
-      if entry && (right = climb(ctx, o.pos, entry.rank))
-        node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
-        return Match.new(right.pos, node)
+      if entry
+        if (right = climb(ctx, o.pos, entry.rank))
+          node = Birman.build(entry.node, { op: o.value, operand: right.value }, ctx, pos, right.pos)
+          return Match.new(right.pos, node)
+        end
+        ctx.rollback(mark)
       end
 
       operand.match(ctx, pos)
     end
 
     # The first prefix operator matching at pos, as [entry, match]; one
-    # that consumes nothing counts as no match. Failures are dropped, as
-    # if the choice were quiet.
+    # that consumes nothing counts as no match, and its errors are
+    # dropped. Failures are dropped, as if the choice were quiet.
     def prefix_at(ctx, pos)
       found = nil
+      mark = ctx.log_mark
       ctx.isolate(pos) do
         prefixes.each do |entry|
           m = entry.matcher.match(ctx, pos) or next
-          found = [entry, m] if m.pos > pos
+          m.pos > pos ? found = [entry, m] : ctx.rollback(mark)
           break
         end
       end
@@ -803,16 +906,17 @@ module Birman
 
     # One more operator folded onto left, as [node, end], or nil to
     # stop before the operator (rank too loose, no right side, or
-    # nothing consumed). A right fold whose operator matched nothing
-    # where the climb began would recurse at its own start forever, so
-    # it stops too.
+    # nothing consumed), dropping its errors. A right fold whose
+    # operator matched nothing where the climb began would recurse at
+    # its own start forever, so it stops too.
     def suffix_step(ctx, pos, min, left, start)
+      mark = ctx.log_mark
       entry, o = suffix_at(ctx, pos)
-      return if entry.nil? || entry.rank < min
-      return if entry.fixity == :right && o.pos == start
+      return unless entry
+      return ctx.rollback(mark) if entry.rank < min || (entry.fixity == :right && o.pos == start)
 
       fields, stop = suffix_fields(ctx, entry, o, left)
-      return if stop.nil? || stop == pos
+      return ctx.rollback(mark) if stop.nil? || stop == pos
 
       [Birman.build(entry.node, fields, ctx, start, stop), stop]
     end
@@ -924,7 +1028,9 @@ module Birman
 
   # A reference to a named rule, resolved through the grammar carried
   # in the context. Each (rule, position) is parsed once and memoized
-  # along with its diagnostics: packrat parsing.
+  # along with its diagnostics and the errors it recovered from (see
+  # Context#memoize): packrat parsing. Every call records those errors,
+  # computed or not, so they're logged once for each call that's kept.
   Ref = Data.define(:name) do
     include Matcher
 
@@ -932,11 +1038,12 @@ module Birman
     # instrumented matcher: keep the two in step (test_trace's guards,
     # which compare traced and untraced results, fail if they drift).
     def match(ctx, pos)
-      result, furthest, expected = ctx.memoize(name, pos) do
+      result, furthest, expected, errors = ctx.memoize(name, pos) do
         r = ctx.isolate(pos) { ctx.grammar.matcher_for(name).match(ctx, pos) }
         [r, ctx.isolated_furthest, ctx.isolated_expected]
       end
       ctx.merge(furthest, expected)
+      ctx.replay(errors) if errors
       result
     end
 

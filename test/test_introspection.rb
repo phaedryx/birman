@@ -158,6 +158,34 @@ class IntrospectionTest < Minitest::Test
     assert_equal %i[top spacing word extra], g.to_ast.keys
   end
 
+  def test_to_ast_includes_recover
+    g = grammar do
+      rule(:top)  { seq("let", commit, str("x")).recover(to: ";") }
+      rule(:item) { str("y").recover(to: /[;}]/) }
+      rule(:sync) { str("z").recover(to: item) }
+    end
+
+    assert_equal [:recover, [:seq, 1, [[:str, "let"], [:str, "x"]]], [:str, ";"]], g.to_ast[:top]
+    assert_equal [:recover, [:str, "y"], [:pat, "/[;}]/"]], g.to_ast[:item]
+    assert_equal [:recover, [:str, "z"], %i[ref item]], g.to_ast[:sync]
+  end
+
+  # Only what it recovers from: the sync point isn't part of what's
+  # accepted, and EBNF has no way to say "skip to".
+  def test_to_ebnf_renders_the_inner_expression
+    g = grammar do
+      rule(:top)  { seq(either("a", "b").recover(to: ";"), ";", stmt) }
+      rule(:stmt) { seq("let", commit, str("x")).recover(to: stop) }
+      rule(:stop) { str(";") }
+    end
+
+    assert_equal <<~EBNF.chomp, g.to_ebnf
+      top  = ("a" / "b") ";" stmt ;
+      stmt = "let" ~ "x" ;
+      stop = ";" ;
+    EBNF
+  end
+
   def test_to_ast_without_a_root_lists_every_rule_in_declaration_order
     g = grammar(nil) do
       rule(:b) { str("b") }

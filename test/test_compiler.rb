@@ -728,6 +728,317 @@ class CompilerTest < Minitest::Test
     assert_equal "left recursion in rule :top: it can reach itself without consuming input", error.message
   end
 
+  # --- Recover ---
+  #
+  # test_recover.rb's grammars and inputs: the generated parser lists the
+  # same errors, builds the same value around them (ErrorNodes and their
+  # spans included), and skips the same actions.
+
+  # Statements separated by ";": let commits after its keyword, print
+  # doesn't, so a print that fails part-way is a plain failure past its
+  # start.
+  RECOVER_LANG = proc do
+    rule(:statements) { seq(only(stmt.recover(to: ";")), ";").rep }
+    rule(:stmt) { either(let_stmt, print_stmt) }
+    rule(:let_stmt) { seq("let", commit, name.as(:name), "=", num.as(:value)) }
+    rule(:print_stmt) { seq("print", num.as(:value)) }
+    lexeme(:name) { /[a-z]+/ }
+    lexeme(:num) { /\d+/ }
+  end
+
+  STATEMENTS = ["let x = 1; print 2;", "let = 1; let y = 2; let 3; print 4;", "let = 1; let 3 ;", "print x; print 2;",
+                "let = 1; print x;", "let = 1; print 2 print 3;", "print 2;", "let = 1 2 3", "let ;", "", ";",
+                "let x = 1", "print"].freeze
+
+  def recovering(root = :top, &rules)
+    grammar(root, ignore: :spacing) do
+      class_eval(&RECOVER_LANG)
+      class_eval(&rules) if rules
+    end
+  end
+
+  def test_recover_statements
+    assert_same_results recovering(:statements), STATEMENTS
+    assert_same_results recovering { rule(:top) { stmt.recover(to: ";") } }, STATEMENTS
+    g = recovering { rule(:top) { seq("{", seq(stmt.recover(to: ";"), ";").rep, "}") } }
+    assert_same_results g, ["{ let x = 1; }", "{ let = 1; print 2; }", "{ let = 1; print 2;", "{ print x; }"]
+  end
+
+  def test_recover_with_consume_false_and_offset
+    g = recovering(:statements)
+    assert_same_results g, ["let = 1; print 2; )))", "print 2; )", "let = 1; )"], consume: false
+    assert_same_results g, ["éé let = 1; print 2;", "éé print 2;", "éé let ="], offset: 3
+  end
+
+  def test_recover_syncs_on_strings_regexps_and_rules
+    [";", /;/, Birman.match(/;/), :semi, :stop].each do |sync|
+      g = recovering(:synced) do
+        rule(:semi) { ";" } # a literal, skipping spacing after it
+        rule(:stop) { either(str(";"), str("}")) }
+        rule(:synced) { seq(only(stmt.recover(to: sync.is_a?(Symbol) ? send(sync) : sync)), ";").rep }
+      end
+      assert_same_results g, ["let = 1 ; let y = 2; let 3; print 4;", "let = 1 }; print 2;", "let = 1", "let 3 ;;"]
+    end
+  end
+
+  def test_recover_sync_search_starts_at_the_failure_point
+    g = recovering(:prints) do
+      rule(:prints) { seq(only(bang.recover(to: ";")), ";").rep }
+      rule(:bang) { seq("print", commit, "(", sep_by(num, ";"), ")", "!") }
+    end
+    assert_same_results g, ["print (1; 2) @; print (3) !;", "print (1; 2) !;", "print (1; x) !;", "print ;"]
+  end
+
+  def test_nested_recover_and_expectations_left_inside
+    g = recovering(:blocks) do
+      rule(:blocks) { seq(only(block.recover(to: "}")), "}").rep }
+      rule(:block) { seq("{", commit, statements, "done") }
+    end
+    assert_same_results g, ["{ let = 1; print 2; oops } { print 3; done }", "{ print 1; done }", "{ let = 1;"]
+    g = recovering { rule(:top) { seq(stmt.recover(to: ";"), commit, "!") } }
+    assert_same_results g, ["let ;", "let ;!", "print 1!", "print x;!"]
+  end
+
+  # One grammar for each place the interpreter drops the errors of a
+  # match it backtracks over (see test_recover.rb), on an input that
+  # recovers there.
+  def test_recover_backtracking_drops_errors
+    grammars = {
+      "let = 1;" => [
+        -> { seq(either(seq(stmt.recover(to: ";"), "!"), /let[^;]*/), ";") },
+        -> { seq(either(stmt.recover(to: ";").absent, /[^;]*/), ";") },
+        -> { seq(stmt.recover(to: ";").present, /[^;]*/, ";") },
+        -> { seq(either(seq(either("{", stmt.recover(to: ";")), "}", "end"), /[^;]*/), ";") }
+      ],
+      "(let = 1;" => [-> { seq(either(between("(", ")", stmt.recover(to: ";")), /\([^;]*/), ";") }],
+      "let = 1;!" => [-> { seq(either(seq(stmt.recover(to: ";"), ";").rep(2), /[^!]*/), "!") }],
+      "print 1; let = 1" => [-> { seq(seq(stmt.recover(to: ";"), ";").rep, /.*/m) }],
+      "x let = 1; y" => [-> { seq(sep_by("x", seq(stmt.recover(to: ";"), ";")), /.*/m) }],
+      "print 1 !, let = 1;" => [
+        -> { seq(sep_by(seq(stmt.recover(to: ";"), "!"), ",", trailing: true), /[^;]*/, ";") }
+      ],
+      "@5" => [-> { seq(either("@", seq("", commit, "~").recover(to: /\d/)).rep, /\d/) }],
+      "a," => [-> { seq(sep_by(seq("a", seq("", commit, "~").recover(to: ",")), ","), /.*/m) }]
+    }
+    grammars.each do |input, rules|
+      rules.each { |body| assert_same_results recovering { rule(:top, &body) }, [input, "", "print 1;"] }
+    end
+  end
+
+  # Both's left side is a lookahead: a recover in it is backtracked over.
+  def test_recover_in_both_left_side
+    g = recovering { rule(:top) { seq(stmt.recover(to: ";") & /[^;]*/, ";") } }
+    assert_same_results g, ["let = 1;", "print 1;", "let x = 1;", "print x;", "let", ""]
+  end
+
+  def test_recover_backtracking_through_a_rule_terminator_and_a_nested_recover
+    g = recovering do
+      rule(:top) { seq(upto(term), /.*/m) }
+      rule(:term) { stmt.recover(to: ";") }
+    end
+    assert_same_results g, ["abc let = 1;", "abc print 1;", "let = 1"]
+    g = recovering do
+      rule(:top) { seq(either(seq(block.recover(to: "}"), "}", "end"), /[^!]*/), "!") }
+      rule(:block) { seq("{", commit, statements, "done") }
+    end
+    assert_same_results g, ["{ let = 1; oops }!", "{ let = 1; oops } end!", "{ print 1; done } end!"]
+    g = recovering { rule(:top) { seq(either(stmt.recover(to: ";").check(:never?, "ok"), /[^;]*/), ";") } }
+    g.class_eval { def never?(_value) = false }
+    assert_same_results g, ["print 1;", "let = 1;"]
+  end
+
+  def test_recover_in_operators
+    g = recovering do
+      rule(:top) { seq(operators(num, { left: seq("+", commit, "+").recover(to: /\d/), node: Bin }), /.*/m) }
+    end
+    assert_same_results g, ["1 + x", "1 ++ 2", "1 + 2"]
+    g = recovering do
+      rule(:top) do
+        operators(num, { left: "*", node: Bin }, { left: seq("+", commit, "+").recover(to: /\d/), node: Bin })
+      end
+    end
+    assert_same_results g, ["1 * 2 + 3", "1 + 2 * 3", "1 ++ 2"]
+    g = recovering do
+      rule(:top) { operators(either(num, /-\s*x/), { prefix: seq("-", commit, "-").recover(to: /\d/), node: Un }) }
+    end
+    assert_same_results g, ["- x", "-- 5", "- 5", "5"]
+    g = recovering { rule(:top) { operators(num, { prefix: seq("", commit, "~").recover(to: /\d/), node: Un }) } }
+    assert_same_results g, ["5", "~5", "x"]
+  end
+
+  def test_recover_through_the_memo
+    g = recovering do
+      rule(:top) { either(seq(item, "!"), seq(item, ";")) }
+      rule(:item) { stmt.recover(to: ";") }
+    end
+    assert_same_results g, ["let = 1;", "let = 1!", "print 1;"]
+    g = recovering do
+      rule(:top) { either(seq(bang, "!"), seq(semi, ";")) }
+      rule(:bang) { seq(item, "?") }
+      rule(:semi) { item }
+      rule(:item) { stmt.recover(to: ";") }
+    end
+    assert_same_results g, ["let = 1;", "let = 1?!", "print 1;"]
+  end
+
+  def test_recover_and_left_recursion
+    sums = ["1+(x+2+(y+3", "1+(x", "1+(x+2", "(x+1", "(x+(y+(z", "1+2", "1+", ""]
+    [
+      proc do
+        rule(:expr) { either(seq(expr, "+", term), num) }
+        rule(:term) { either(num, seq("(", commit, num, ")").recover(to: "+")) }
+      end,
+      proc { rule(:expr) { either(seq(expr, "+", num), seq("(", commit, num, ")").recover(to: "+")) } },
+      proc do
+        rule(:expr) { either(seq(expr, "+", term.recover(to: "+")), term) }
+        rule(:term) { either(num, seq("(", commit, num, ")")) }
+      end,
+      proc do
+        rule(:expr) { either(seq(expr, "+", term), term) }
+        rule(:term) { either(num, seq("(", commit, expr, ")")).recover(to: "+") }
+      end
+    ].each { assert_same_results recovering(:expr, &_1), sums }
+  end
+
+  def test_left_recursive_rule_inside_recover
+    g = recovering do
+      rule(:top) { either(seq(list, "!"), list) }
+      rule(:list) { seq(sum.recover(to: ";"), ";").rep }
+      rule(:sum) { either(seq(sum, "+", commit, num), num) }
+    end
+    assert_same_results g, ["1+2;3+x;4+5+6;", "1+2;3+x;!", "1+;"]
+  end
+
+  def test_recover_in_a_cycle_of_rules
+    cycle = proc do
+      rule(:a) { either(seq(b, "!", term), term) }
+      rule(:b) { either(seq(a, "?", term), term) }
+      rule(:term) { either(num, seq("(", commit, num, ")")).recover(to: /[!?]/) }
+    end
+    inputs = ["1!(x?2!(y?3", "1!2?3", "(x?1", "#1!(x", "#(x!2?(y", "1#"]
+    [recovering { rule(:top) { either(seq("#", a), b) } }, recovering { rule(:top) { either(seq(a, "#"), b) } }]
+      .each { assert_same_results _1.tap { |g| g.class_eval(&cycle) }, inputs }
+
+    # :b, in :a's round, is called again at 0 after the first call's seq
+    # failed: the round's memo entry gives its error again.
+    g = recovering do
+      rule(:top) { either(seq("#", a), b) }
+      rule(:a) { either(seq(b, "!", term), seq(b, "#", term), term) }
+      rule(:b) { either(seq(a, "?", term), term) }
+      rule(:term) { either(num, seq("(", commit, num, ")")).recover(to: /[!?#]/) }
+    end
+    assert_same_results g, ["(x#1", "#(x#1", "1#(y!2"]
+
+    g = recovering do
+      rule(:top) { either(seq("#", a), b) }
+      rule(:a) { either(seq(b, "!", num), term) }
+      rule(:b) { either(seq(a, "?", num), seq("(", "x", commit, "!").recover(to: "?")) }
+      rule(:term) { seq("(", commit, "y").recover(to: "?") }
+    end
+    assert_same_results g, ["(x?1!2", "(y?1!2", "#(y?1!2", "(x!?1"]
+  end
+
+  # A recover whose inner can commit at its very start is nullable, so
+  # the call after it (or its sync rule) makes a cycle.
+  def test_recover_that_can_commit_at_its_start_makes_a_cycle
+    inputs = [";", "x;", "-x;;", "-;", "+y;", ";;", "-", ""]
+    [
+      proc { rule(:top) { either(seq(seq(str("-").maybe, commit, "x").recover(to: ";"), top), ";") } },
+      proc do
+        rule(:top) { either(seq(item.recover(to: ";"), top), ";") }
+        rule(:item) { either(seq("-", commit, "x"), seq(sign, commit, "y")) }
+        rule(:sign) { str("+").maybe }
+      end,
+      proc do
+        rule(:top) { either(seq(seq(str("-").maybe, seq(str("+").maybe, commit, "x")).recover(to: ";"), top), ";") }
+      end,
+      proc { rule(:top) { either(seq(str("-").maybe, commit, "x").recover(to: top), ";") } }
+    ].each do |rules|
+      g = recovering(&rules)
+      refute_empty g.new.left_recursion.cycles
+      assert_same_results g, inputs
+    end
+  end
+
+  # Over a subtree that recovered, .map, .action and .means leave the
+  # value alone and .check passes; .to still builds.
+  def test_recover_skips_user_code_over_errors
+    wraps = [->(m) { m.map(:size) }, ->(m) { m.action(:add) }, ->(m) { m.means(:ok) },
+             ->(m) { m.check(:even_value?, "even") }, ->(m) { m.to(Wrap) }]
+    wraps.each do |wrap|
+      g = recovering do
+        rule(:top) { seq(only(wrap.call(stmt.recover(to: ";"))), ";").rep }
+        def add(value) = large_integer(value.fetch(:value)) + 1 # rubocop:disable Lint/NestedMethodDefinition
+        def even_value?(value) = large_integer(value.fetch(:value)).even? # rubocop:disable Lint/NestedMethodDefinition
+      end
+      assert_same_results g, ["let = 1; print 2;", "print 2; let = 1; print 4;", "print 3;", "print x;"]
+    end
+    assert_same_results recovering { rule(:top) { stmt.recover(to: ";").to(Wrap) } }, ["print 1", "let = 1", "x"]
+    # An action whose value nothing reads still runs, but not over errors.
+    g = recovering do
+      rule(:top) { seq(only(str("!").maybe), stmt.recover(to: ";").action(:add), ";").rep }
+      def add(value) = large_integer(value.fetch(:value)) + 1 # rubocop:disable Lint/NestedMethodDefinition
+    end
+    assert_same_results g, ["let = 1; print 2;", "!print 2;"]
+  end
+
+  # .map(:to_s) and .means over a recover may keep an ErrorNode instead,
+  # so their values aren't typed by the method or the constant.
+  def test_values_that_may_be_error_nodes_are_untyped
+    g = recovering do
+      rule(:top) { seq(stmt.recover(to: ";").map(:to_s), stmt.recover(to: ";").means(1), num.map(:to_s)) }
+    end
+    types = Birman::Compiler::Types.new(g.new)
+    assert_equal(%i[poly poly str], g.new.matcher_for(:top).parts.map { types.of(_1) })
+  end
+
+  # A recovered value .to can't build a node from passes on as it is,
+  # as the interpreter's To passes it; one that fits is built by name.
+  def test_to_over_a_recovered_value
+    recovered = -> { seq(str("b"), commit, str("c")).recover(to: "!") }
+    bodies = [
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).means(:ok).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).map(:to_s).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).action(:size_of).to(Wrap) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:value)).means({ left: 1, right: 2 }).to(Pair) },
+      -> { seq(str("a").as(:left), str("b").as(:right)).recover(to: "!").to(Pair) },
+      -> { seq(str("a"), instance_exec(&recovered).as(:other)).means(:ok).to(Wrap) }
+    ]
+    bodies.each do |body|
+      g = grammar do
+        rule(:top, &body)
+        def size_of(value) = value.size # rubocop:disable Lint/NestedMethodDefinition
+      end
+      assert_same_results g, ["abc", "abx", "abx!", "ab", "a", "x"]
+    end
+
+    # Without errors, a value that doesn't fit still raises.
+    g = grammar do
+      rule(:top) { either(seq(str("a"), instance_exec(&recovered).as(:value)), seq(str("z").as(:other))).to(Wrap) }
+    end
+    parser = Differential.load(g, "CompilerTestParser")
+    assert_raises(ArgumentError) { g.parse("z") }
+    assert_raises(KeyError) { parser.new("z").parse }
+  end
+
+  def test_error_nodes_inspect_as_the_interpreters
+    g = recovering(:statements)
+    input = "let = 1; print #{"x" * 40};"
+    parser = Differential.load(g, "CompilerTestParser")
+    assert_equal g.parse(input).value.inspect, parser.new(input).parse.value.inspect
+  end
+
+  # Only a grammar that recovers gets the error log; any other is what
+  # it was before recover (see tmp/emitted-before in the task notes).
+  def test_grammars_without_recover_have_no_error_log
+    [Examples::Lang::Grammar, Calc::Grammar, JSONExample::Grammar].each do |g|
+      refute_match(/ErrorNode|@log_mark|record_error|<recover>/, g.to_ruby(namespace: "X"), g.name)
+    end
+    source = recovering(:statements).to_ruby(namespace: "X")
+    assert_match(/class ErrorNode/, source)
+    refute_match(%r{</?recover>}, source)
+  end
+
   # --- Shape of the generated code ---
 
   # Hash#delete costs O(size) in Spinel, and an unanchored scan misses
@@ -737,7 +1048,7 @@ class CompilerTest < Minitest::Test
     runtime = File.read(Birman::Compiler::RUNTIME)
     names = runtime.scan(/^\s*([A-Z][A-Z0-9_]*) = /).flatten + runtime.scan(/^\s*class ([A-Z]\w*)/).flatten +
             runtime.scan(/\b(?:raise|rescue) ([A-Z]\w*)/).flatten
-    assert_empty names.uniq - Birman::Compiler::RESERVED_CONSTANTS
+    assert_empty names.uniq - Birman::Compiler.reserved_constants(true)
   end
 
   def test_generated_code_never_deletes_and_anchors_every_scan

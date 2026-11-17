@@ -2,6 +2,52 @@
 
 ### Added
 
+- `m.recover(to: t)`, error recovery (Megaparsec's `withRecovery`):
+  when `m` fails after a commit, or fails plainly after getting past
+  where it started, the failure is recorded as an error, the parse skips
+  ahead to where `t` matches and carries on, and a `Birman::ErrorNode`
+  (`failure`, and a `span` from `m`'s start to there) stands in the tree
+  for `m`'s value. A failure where `m` started is an ordinary one, so a
+  list of recovering items still ends at `}` or the end of the input,
+  and valid input parses as before. `t` is taken as `upto`'s terminator
+  is (a String is exact text), searched for from where `m` failed, not
+  consumed, with no spacing skipped; with none, the parse picks up at
+  the end of the input. A parse that recovered is a `Failure`, never a
+  `Success`: its fields are the first error's, in input order, so
+  `message` and `parse!` report that one, and two new readers (not
+  members, so `==`, `inspect` and pattern matching are unchanged;
+  Marshal keeps `errors`, and `value` only when it holds no node with a
+  span) give `errors`, every error sorted by position,
+  and `value`, the tree, or `nil` when the parse failed in the end.
+  Without recovery `errors` is `[self]` and `value` is `nil`;
+  `error.failure.errors` has them all after `parse!`. Errors recorded
+  inside something that's backtracked over go with it, so a root that
+  fails plainly after recovering reports only its final failure (a
+  commit keeps them); a memoized rule's are reported once, and a
+  left-recursive rule keeps only those of the match it returns. Over a
+  match that recovered, `.map`, `.action` and `.means` don't run and
+  pass its value on, and `.check` passes it; `.to(Node)` still builds,
+  unless the value doesn't fit the node, which it then passes on as it
+  is. An enclosing `either` doesn't try alternatives after a recover
+  that recovered, so it belongs on statements and list items, and input
+  no alternative starts on needs one of its own that commits
+  (`either(stmt, junk_line)`). `to_ast` has a new `[:recover, inner,
+  sync]` node, `to_ebnf` and railroad diagrams show the inner matcher,
+  the left-recursion analysis and `Grammar.lint` look through it, and a
+  trace labels a recovery `(recovered to ";")`. `to_ruby` generates it,
+  with the interpreter's results; each active recover holds one of
+  Spinel's `begin` blocks, sharing `lookahead_depth:` with lookaheads,
+  `.map(:to_i)` over one is refused (its value may be an `ErrorNode`),
+  and `inspect` of an `ErrorNode` or `Failure` is checked against the
+  interpreter's only under CRuby. Generated parsers for grammars without
+  `recover` are byte-for-byte unchanged. Only in grammars that use
+  `recover`, eight more runtime method names (`record_error`,
+  `replay_errors`, `rollback_to`, `take_errors`, `parse_result`,
+  `parse_failure`, `recovered_failures`, `known_keys?`) are refused as
+  names of copied actions, and `ErrorNode` as the name of a node class
+  or copied constant. Interpreted parses of grammars without `recover`
+  are a few percent slower (TOML example about 3%, JSON within noise),
+  from tracking the error log.
 - `Grammar.lint` (on an instance too) checks a grammar without parsing
   anything, returning `Birman::Lint::Problem`s (`kind`, `rule`,
   `message`): rules naming undefined rules, and a `root` or `ignore`

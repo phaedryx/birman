@@ -17,11 +17,12 @@ module CompilerTestHelpers
 
   # Same value (with spans), error position, expectations and message
   # from the generated parser as from the interpreter, on every input,
-  # from the grammar's root and from each of roots:.
-  def assert_same_results(grammar, inputs, roots: [])
+  # from the grammar's root and from each of roots:, with the parse's
+  # other options (consume:, offset:).
+  def assert_same_results(grammar, inputs, roots: [], **parse_options)
     parser = Differential.load(grammar, "CompilerTestParser", roots:)
     [nil, *roots].each do |root|
-      options = root ? { root: } : {}
+      options = root ? { root:, **parse_options } : parse_options
       inputs.each do |input|
         want = Differential.interpreted(grammar, input, **options)
         got = Differential.generated(parser, input, **options)

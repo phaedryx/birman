@@ -88,6 +88,9 @@ module Birman
       in [:lexeme, inner]        then nullable_node?(inner)
       in [:text | :spanned, inner] then nullable_node?(inner)
       in [:upto, _] then true # the terminator may be right here
+      # An inner that commits at its start fails there, so the sync search
+      # starts here: it may stop here, or the input may end here.
+      in [:recover, inner, _] then nullable_node?(inner) || commits_at_start?(inner)
       else false
       end
     end
@@ -96,13 +99,40 @@ module Birman
 
     # Least fixpoint: start with no rule nullable and add rules until
     # nothing changes, so a rule that only calls itself stays non-nullable.
+    # Which rules can commit at their start (see commits_at_start?) grows
+    # alongside: each answer can turn the other's on, through a recover
+    # or a nullable prefix before a commit.
     def nullable_rules
       @nullable = {}
+      @committing = {}
       loop do
         grown = @rules.reject { |name, ast| @nullable.key?(name) || !nullable_node?(ast) }
-        return @nullable if grown.empty?
+        committing = @rules.reject { |name, ast| @committing.key?(name) || !commits_at_start?(ast) }
+        return @nullable if grown.empty? && committing.empty?
 
         grown.each_key { @nullable[_1] = true }
+        committing.each_key { @committing[_1] = true }
+      end
+    end
+
+    # Can node fail committed (see Combinators#commit) where it starts,
+    # having consumed nothing? A recover around it then catches that
+    # failure, and finds its sync point, at its own start: it matches
+    # empty, and runs `to` there. Lookaheads and recovers catch a commit
+    # failure inside them, so it never gets out of them.
+    def commits_at_start?(node) # rubocop:disable Metrics
+      case node
+      in [:ref, name] then @committing.key?(name)
+      in [:seq, commit_at, parts]
+        (commit_at && parts.take(commit_at).all? { nullable_node?(_1) }) ||
+          leading(parts).any? { commits_at_start?(_1) }
+      in [:choice, alts] then alts.any? { commits_at_start?(_1) }
+      in [:rep, _, 0, _] then false
+      in [:rep, _, _, inner] then commits_at_start?(inner)
+      in [:both, _, right] then commits_at_start?(right)
+      in [:action | :quiet | :lexeme | :text | :spanned, inner] then commits_at_start?(inner)
+      in [:label | :check, _, inner] then commits_at_start?(inner)
+      else false # :str, :pat, lookaheads, :upto, :recover; a custom matcher's own AST
       end
     end
 
@@ -126,6 +156,7 @@ module Birman
       in [:lexeme, inner]      then calls(inner) + (@ignore && nullable_node?(inner) ? [@ignore] : [])
       in [:text | :spanned, inner] then calls(inner)
       in [:upto, stop] then calls(stop) # tried first where it starts
+      in [:recover, inner, sync] then calls(inner) + (commits_at_start?(inner) ? calls(sync) : [])
       else []
       end
     end
@@ -171,13 +202,16 @@ module Birman
     end
 
     # Can node match while its calls to the cycle's rules at its start
-    # fail?
+    # fail? A recover follows only its inner matcher, though it can also
+    # match by recovering: a gap that can miss a "no base case" error,
+    # never one that gives a wrong parse.
     def seedable?(node, cycle) # rubocop:disable Metrics
       case node
       in [:ref, name] then !cycle.include?(name)
       in [:choice, alts] then alts.any? { seedable?(_1, cycle) }
       in [:seq, _, parts] then leading(parts).all? { seedable?(_1, cycle) }
       in [:rep, 0, _, _] | [:rep, _, 0, _] | [:not, _] | [:upto, _] then true
+      in [:recover, inner, _] then seedable?(inner, cycle)
       in [:rep | :label | :check, *] | [:and | :action | :quiet | :lexeme, _]
         seedable?(node.last, cycle) # a wrapper: its inner node is its last element
       in [:both, left, right] then seedable?(left, cycle) && seedable?(right, cycle)
@@ -191,6 +225,7 @@ module Birman
       case node
       in [:choice, alts] then alts
       in [:action | :quiet, _] | [:label | :check, _, _] then alternatives(node.last)
+      in [:recover, inner, _] then alternatives(inner)
       else [node]
       end
     end

@@ -101,6 +101,14 @@ module Birman
 
   extend Nodes
 
+  # Where a recovering parse skipped past an error: it stands in the
+  # tree for what couldn't be parsed, and its span covers the skipped
+  # text. failure is the Failure that was recovered from.
+  # [class.ErrorNode]
+  # purpose = "Stands in the tree for input a recovering parse skipped"
+  # fields = ["failure: Birman::Failure (the error recovered from)"]
+  ErrorNode = node(:failure)
+
   # Build a node (or any Data class) from a hash of fields, attaching a
   # span (see Context#span) when the class supports one.
   def self.build(node, fields, ctx, from, to)

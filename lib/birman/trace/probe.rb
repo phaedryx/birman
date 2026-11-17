@@ -29,7 +29,7 @@ module Birman
       # its own faster way, and a custom matcher's insides are its own.
       KINDS = { Choice => :choice, Seq => :seq, Pick => :seq, Rep => :rep, SepBy => :sep_by,
                 Operators => :operators, Maybe => :maybe, Label => :label, Check => :check,
-                Quiet => :quiet, Not => :not, And => :and, Both => :both }.freeze
+                Quiet => :quiet, Not => :not, And => :and, Both => :both, Recover => :recover }.freeze
 
       # With fold, a rule's body that is a seq or a choice (seen through
       # transparent wrappers) gets no node: its parts or alternatives are
@@ -41,11 +41,15 @@ module Birman
         kind = KINDS[matcher.class]
         return Probe.new(matcher, :leaf, describe(matcher)) unless kind
 
-        inner = rebuild(matcher, false)
+        inner = kind == :recover ? recovering(matcher) : rebuild(matcher, false)
         return inner if fold && %i[choice seq].include?(kind)
 
-        Probe.new(inner, kind, describe(matcher))
+        Probe.new(inner, kind, kind == :recover ? "recover" : describe(matcher))
       end
+
+      # A recover with only what it recovers from instrumented: its sync
+      # point is searched for as upto does, with no attempts shown.
+      def recovering(matcher) = matcher.with(inner: call(matcher.inner))
 
       # matcher with every matcher among its members instrumented.
       def rebuild(matcher, fold)

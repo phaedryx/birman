@@ -32,11 +32,18 @@ module Birman
     # or copied constant with one of these names would sit in the same
     # lexical scope and shadow it, so it's refused.
     RESERVED_CONSTANTS = %w[
-      BirmanRT Parser Node Span Spanned Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19 TWO64
-      CHUNK_LIMIT FLOAT_CHUNK LOOKAHEAD_DEPTH
+      BirmanRT Parser Node Span Spanned Success Failure Committed TooDeep FAIL IN_PROGRESS ABSENT NONE TEN19
+      TWO64 CHUNK_LIMIT FLOAT_CHUNK LOOKAHEAD_DEPTH
       StringScanner Hash Array String Integer Float Symbol Regexp Kernel Encoding
       StandardError ArgumentError RangeError TypeError FloatDomainError SystemStackError
     ].freeze
+
+    # The runtime's constants only a grammar that recovers gets (see
+    # runtime), reserved only there.
+    RECOVERY_CONSTANTS = %w[ErrorNode].freeze
+
+    # The constants reserved in a grammar that recovers or not.
+    def self.reserved_constants(recovers) = recovers ? RESERVED_CONSTANTS + RECOVERY_CONSTANTS : RESERVED_CONSTANTS
 
     # Spinel allows 64 begin blocks active at once and exits the process
     # past that. Each lookahead (absent, present, &) holds one while its
@@ -78,7 +85,7 @@ module Birman
       emitter = emit
       check_namespace(emitter.node_names)
       body = [*emitter.node_classes, parser_class(emitter)].join("\n")
-      wrap_in_namespace("#{runtime}\n#{body}")
+      wrap_in_namespace("#{runtime(emitter.recovers?)}\n#{body}")
     end
 
     private
@@ -124,8 +131,15 @@ module Birman
       RUBY
     end
 
-    # The runtime file, after its require.
-    def runtime = File.read(RUNTIME).split(/^require "strscan"\n\n/, 2).last
+    # The runtime file, after its require. Its recover sections (see
+    # there) are kept, without their marker lines, only for a grammar
+    # that recovers: any other gets the runtime it got before recover.
+    def runtime(recovers)
+      source = File.read(RUNTIME).split(/^require "strscan"\n\n/, 2).last
+      # A blank line before a section goes with it: there's one after.
+      recover = %r{^(\n?)[ \t]*# <recover>\n(.*?)^[ \t]*# </recover>\n}m
+      source.gsub(recover) { recovers ? ::Regexp.last_match(1) + ::Regexp.last_match(2) : "" }
+    end
 
     def parser_class(emitter)
       <<~RUBY

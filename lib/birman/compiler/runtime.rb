@@ -15,6 +15,11 @@
 #   - fail_at, merge and the save/restore of @furthest/@expected around a
 #     rule call do what Birman::Context's do, so the parser reports the
 #     same errors as the interpreter.
+#
+# Lines between a "# <recover>" line and a "# </recover>" line are for
+# grammars that use recover (Matcher#recover): the generator leaves them
+# out of every other parser, which is then just what it was before
+# recover existed.
 
 require "strscan"
 
@@ -62,6 +67,35 @@ module BirmanRT
       ""
     end
   end
+
+  # <recover>
+  # Birman::ErrorNode: where a recovering parse skipped past an error,
+  # spanning the text it skipped. failure is the Failure recovered from.
+  class ErrorNode < Node
+    attr_reader :failure
+
+    def initialize(failure, span)
+      @failure = failure
+      @span = span
+    end
+
+    def ==(other)
+      other.is_a?(ErrorNode) && @failure.same?(other.failure)
+    end
+
+    def inspect
+      "(ErrorNode #{@failure.inspect})"
+    end
+
+    # The failure's fields one by one, rather than its inspect, which
+    # shows only the start of the input.
+    def dump
+      f = @failure
+      "(ErrorNode[#{@span.byte_from},#{@span.byte_to}] Failure[#{f.pos} #{f.expected.inspect} #{f.committed} " \
+        "#{f.reason.inspect}])"
+    end
+  end
+  # </recover>
 
   class Span
     attr_reader :input, :byte_from, :byte_to
@@ -186,7 +220,44 @@ module BirmanRT
       @expected = expected
       @committed = committed
       @reason = reason
+      # <recover>
+      @errors = []
+      @value = nil
+      # </recover>
     end
+
+    # <recover>
+    # What a recovering parse built around its errors, else nil.
+    attr_reader :value
+
+    # Every error a recovering parse found, in input order; just this
+    # one otherwise.
+    def errors
+      @errors.empty? ? [self] : @errors
+    end
+
+    # This Failure, listing errors and the value built around them (see
+    # BirmanRT.recovered).
+    def recovered(errors, value)
+      @errors = errors
+      @value = value
+      self
+    end
+
+    # Equal fields, as Birman::Failure's ==.
+    def same?(other)
+      @input == other.input && @byte_pos == other.byte_pos && @expected == other.expected &&
+        @committed == other.committed && @reason == other.reason
+    end
+
+    # Birman::Failure#inspect: only the input's first 40 characters.
+    def inspect
+      shown = @input.size > 40 ? "#{@input[0, 40]}..." : @input
+      reason = @reason.nil? ? "" : " reason=#{@reason.inspect}"
+      "#<data Birman::Failure pos=#{@pos} expected=#{@expected.inspect} committed=#{@committed}#{reason} " \
+        "input=#{shown.inspect}>"
+    end
+    # </recover>
 
     def success?
       false
@@ -256,6 +327,28 @@ module BirmanRT
       "#{@expected[0, @expected.size - 1].join(", ")} or #{@expected[@expected.size - 1]}"
     end
   end
+
+  # <recover>
+  # Birman::Failure.recovered: a Failure reading as the first of errors
+  # in input order (sorted by position, stably), listing them all, with
+  # the value the grammar built around them.
+  def self.recovered(errors, value)
+    sorted = errors.dup
+    i = 1
+    while i < sorted.size
+      e = sorted[i]
+      j = i - 1
+      while j >= 0 && sorted[j].byte_pos > e.byte_pos
+        sorted[j + 1] = sorted[j]
+        j -= 1
+      end
+      sorted[j + 1] = e
+      i += 1
+    end
+    first = sorted[0]
+    Failure.new(first.input, first.byte_pos, first.expected, first.committed, first.reason).recovered(sorted, value)
+  end
+  # </recover>
 
   # The String a parse reads: Birman.read_input. A String as it is;
   # the file to_path names, read whole and taken as UTF-8, valid or
@@ -683,7 +776,84 @@ module BirmanRT
       @in_progress_at = []
       @round = 0 # growth rounds of left-recursive cycles so far
       @lookaheads = 0
+      # <recover>
+      @recovered = [] # the ErrorNodes recovered from, as Birman::Context's
+      @log_mark = 0 # how many: the mark that rollback_to takes
+      # </recover>
     end
+
+    # <recover>
+    # The error log, as Birman::Context's: record_error, replay_errors
+    # and rollback_to are its record, replay and rollback. Generated code
+    # takes a mark by reading @log_mark, and asks whether anything was
+    # recorded since one (Context#recovered_since?) by comparing it.
+    def record_error(node)
+      @recovered << node
+      @log_mark += 1
+    end
+
+    def replay_errors(errors)
+      @recovered.concat(errors)
+      @log_mark += errors.size
+    end
+
+    # Drops the errors recorded since mark; FAIL, for a match that fails
+    # to return.
+    #: (Integer) -> Integer
+    def rollback_to(mark)
+      return FAIL if @log_mark == mark
+
+      @recovered.pop while @recovered.size > mark
+      @log_mark = mark
+      FAIL
+    end
+
+    # Every key of hash one of members? (For .to over a value that
+    # recovered: see To.)
+    def known_keys?(hash, members)
+      keys = hash.keys
+      i = 0
+      while i < keys.size
+        return false unless members.include?(keys[i])
+
+        i += 1
+      end
+      true
+    end
+
+    # The errors recorded since mark, taken out of the log for a memo
+    # entry to carry (Context#with_errors); empty if there are none.
+    def take_errors(mark)
+      errors = @recovered[mark, @recovered.size - mark]
+      rollback_to(mark)
+      errors
+    end
+
+    # The parse's result, as Grammar#__match_all and #__failed make it:
+    # after recoveries, a Failure listing their errors, with the value
+    # (for a match) or the final failure (else) among them.
+    def parse_result(value, byte_pos)
+      return Success.new(value, @input, byte_pos) if @recovered.empty?
+
+      BirmanRT.recovered(recovered_failures, value)
+    end
+
+    def parse_failure(failure)
+      return failure if @recovered.empty?
+
+      BirmanRT.recovered(recovered_failures << failure, nil)
+    end
+
+    def recovered_failures
+      failures = []
+      i = 0
+      while i < @recovered.size
+        failures << @recovered[i].failure
+        i += 1
+      end
+      failures
+    end
+    # </recover>
 
     #: (Integer, String) -> Integer
     def fail_at(pos, what)

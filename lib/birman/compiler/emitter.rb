@@ -10,6 +10,13 @@ module Birman
     # its match ended, or FAIL. A matcher whose value something reads
     # leaves it in its own instance variable, which the caller copies
     # straight away: the next match may overwrite it.
+    #
+    # A grammar that recovers (Matcher#recover) gets the error log
+    # Birman::Context keeps: a matcher that can record errors takes a
+    # mark (@log_mark) where Birman's takes one, and rolls back or skips
+    # user code where it does; a rule that can carries its errors in its
+    # memo (@mr_). Nothing else changes, so a grammar that doesn't
+    # recover generates what it did before recover existed.
     # [class.Compiler.Emitter]
     # purpose = "Turns each matcher into a method of the generated Parser"
     class Emitter
@@ -50,8 +57,9 @@ module Birman
         @roots = roots
         @read_rules = [grammar.class.root, *roots]
         @types = Types.new(grammar, roots)
-        @nodes = Nodes.new
-        @actions = Actions.new(grammar)
+        @recovers = @types.any_recovers?
+        @nodes = Nodes.new(recovers: @recovers)
+        @actions = Actions.new(grammar, recovers: @recovers)
         @methods = []
         @compiled = {}
         @taken = {}
@@ -59,6 +67,9 @@ module Birman
         @rules = {}
         @ignores = []
       end
+
+      # Does any rule the parser reaches recover?
+      def recovers? = @recovers
 
       def compile
         root = @grammar.class.root or raise Error, "#{@grammar.class} has no root rule"
@@ -96,6 +107,14 @@ module Birman
         shared = (@actions.constant_names & @nodes.names).first
         raise Error, "#{shared} is both a node class and a constant copied actions read" if shared
       end
+
+      # Can matcher change the error log (see Types#recovers?)? Only then
+      # does it take a mark and roll back to it.
+      def logs?(matcher) = @recovers && @types.recovers?(matcher)
+
+      # Does rule name's memo entry carry errors (@mr_, and in a cycle
+      # led by another rule @rx_ and @bx_ too)?
+      def carries?(name) = logs?(Ref.new(name))
 
       # A rule's name as part of a Ruby identifier: rule(:valid?) is ref_valid_3f.
       def ident(name) = name.to_s.gsub(/[^A-Za-z0-9_]/) { format("_%02x", _1.ord) }
@@ -152,6 +171,7 @@ module Birman
         when Operators then operators(matcher, want, name)
         when Lexeme then lexeme(matcher, want, name)
         when Quiet then quiet(matcher, want, name)
+        when Recover then recover(matcher, want, name)
         when Ref then ref(matcher, want)
         when Map
           raise Error, "rule :#{@rule} uses .map with a block, which can't be compiled; " \
@@ -322,7 +342,7 @@ module Birman
       def seq(matcher, want, name, build: nil)
         wanted = seq_wanted(matcher, want || build)
         define(:seq, matcher, want, name) do |v|
-          lines, locals = steps(matcher.parts, matcher.commit_at, wanted)
+          lines, locals = steps(matcher.parts, matcher.commit_at, wanted, logs?(matcher))
           lines << "#{v} = #{build ? build.call(locals) : seq_value(matcher, locals)}" if v
           [*lines, "q"].join("\n")
         end
@@ -350,22 +370,26 @@ module Birman
       def hash_key(key) = key.is_a?(Symbol) && key.match?(/\A[a-z_]\w*\z/) ? "#{key}:" : "#{key.inspect} =>"
 
       # The parts in order from p, ending at q. A part that fails before
-      # commit_at fails the sequence; one at or after it ends the parse.
+      # commit_at fails the sequence, dropping the errors recorded since
+      # it began (logs); one at or after it ends the parse.
       # Returns the lines and {index => local} for the wanted values.
-      def steps(parts, commit_at, wanted)
+      def steps(parts, commit_at, wanted, logs) # rubocop:disable Metrics
         locals = {}
+        failed = logs ? "rollback_to(m)" : "FAIL"
         lines = parts.each_with_index.flat_map do |part, i|
           keep = wanted.include?(i)
           locals[i] = "v#{i}" if keep
-          step(compile_matcher(part, keep), part, i.zero? ? "p" : "q", commit_at && i >= commit_at, keep && "v#{i}")
+          step(compile_matcher(part, keep), part, i.zero? ? "p" : "q", commit_at && i >= commit_at, keep && "v#{i}",
+               failed)
         end
         lines.unshift("q = p") if parts.empty?
+        lines.unshift("m = @log_mark") if logs
         [lines, locals]
       end
 
-      def step(call, part, at, committed, local)
+      def step(call, part, at, committed, local, failed) # rubocop:disable Metrics/ParameterLists
         keep = local ? ["#{local} = #{call.value}"] : []
-        return ["q = #{call.name}(#{at})", "return FAIL if q == FAIL\n", *keep] unless committed
+        return ["q = #{call.name}(#{at})", "return #{failed} if q == FAIL\n", *keep] unless committed
 
         ["r = #{call.name}(#{at})", "commit_failure(#{at}, #{expected(part)}) if r == FAIL", *keep, "q = r"]
       end
@@ -373,13 +397,15 @@ module Birman
       def pick(matcher, want, name)
         wanted = want ? [matcher.index] : []
         define(:pick, matcher, want, name) do |v|
-          lines, locals = steps(matcher.parts, nil, wanted)
+          lines, locals = steps(matcher.parts, nil, wanted, logs?(matcher))
           lines << "#{v} = #{locals.fetch(matcher.index)}" if v
           [*lines, "q"].join("\n")
         end
       end
 
+      # A separator and item dropped (logs) take their errors with them.
       def sep_by(matcher, want, name)
+        logs = logs?(matcher)
         define(:sep_by, matcher, want, name) do |v|
           item = compile_matcher(matcher.item, want)
           sep = compile_matcher(matcher.sep, false)
@@ -388,11 +414,11 @@ module Birman
             #{sep_by_none(matcher, v)}
             #{"values = [#{item.value}]" if v}
             while true
-              s = #{sep.name}(q)
+              #{"k = @log_mark\n  " if logs}s = #{sep.name}(q)
               break if s == FAIL
 
               r = #{item.name}(s)
-              #{"q = s if r == FAIL # a trailing separator\n  " if matcher.trailing}break if r == FAIL || r == q
+              #{"q = s if r == FAIL # a trailing separator\n  " if matcher.trailing}#{sep_by_stop(matcher, logs)}
 
               #{"values << #{item.value}" if v}
               q = r
@@ -401,6 +427,12 @@ module Birman
             q
           RUBY
         end
+      end
+
+      def sep_by_stop(matcher, logs)
+        return "break if r == FAIL || r == q" unless logs
+
+        "#{"break if r == FAIL\n  " if matcher.trailing}if r == FAIL || r == q\n    rollback_to(k)\n    break\n  end"
       end
 
       def sep_by_none(matcher, value)
@@ -423,14 +455,17 @@ module Birman
         end
       end
 
-      def rep(matcher, want, name)
+      # Too few matches, or an empty one after real ones, drop their
+      # errors (logs).
+      def rep(matcher, want, name) # rubocop:disable Metrics
+        logs = logs?(matcher)
         define(:rep, matcher, want, name) do |v|
           inner = compile_matcher(matcher.inner, want)
           <<~RUBY
-            n = 0
+            #{"m = @log_mark\n" if logs}n = 0
             #{"values = []" if v}
             while #{matcher.max ? "n < #{matcher.max}" : "true"}
-              r = #{inner.name}(p)
+              #{"k = @log_mark\n  " if logs}r = #{inner.name}(p)
               break if r == FAIL
 
               # Matching nothing ends the loop, but counts as the first match.
@@ -438,14 +473,14 @@ module Birman
                 if n.zero?
                   #{"values << #{inner.value}" if v}
                   n = 1
-                end
+                #{"else\n      rollback_to(k)\n    " if logs}end
                 break
               end
               #{"values << #{inner.value}" if v}
               n += 1
               p = r
             end
-            #{"return FAIL if n < #{matcher.min}" if matcher.min.positive?}
+            #{"return #{logs ? "rollback_to(m)" : "FAIL"} if n < #{matcher.min}" if matcher.min.positive?}
             #{"#{v} = values" if v}
             p
           RUBY
@@ -468,34 +503,35 @@ module Birman
       def negative(matcher, want, name)
         define(:not, matcher, false, name, value: want ? "nil" : nil) do
           inner = compile_matcher(matcher.inner, false)
-          "#{SAVE}#{lookahead(inner)}@furthest = of\n@expected = oe\nq == FAIL ? p : FAIL"
+          "#{SAVE}#{lookahead(inner, logs?(matcher))}@furthest = of\n@expected = oe\nq == FAIL ? p : FAIL"
         end
       end
 
       # A commit failure inside a lookahead is just a failure. The rules it
       # unwound through are left in progress, so they're abandoned. Each
       # active lookahead holds one of Spinel's 64 begin blocks, so they're
-      # counted (see Compiler::LOOKAHEAD_DEPTH).
-      def lookahead(inner)
+      # counted (see Compiler::LOOKAHEAD_DEPTH). Errors recovered from
+      # inside it are dropped (logs).
+      def lookahead(inner, logs)
         <<~RUBY
           raise TooDeep, "lookaheads nested too deeply" if @lookaheads >= LOOKAHEAD_DEPTH
 
           @lookaheads += 1
           depth = @in_progress_at.size
-          begin
+          #{"m = @log_mark\n" if logs}begin
             q = #{inner.name}(p)
           rescue Committed
             abandon(depth)
             q = FAIL
           end
-          @lookaheads -= 1
+          @lookaheads -= 1#{"\nrollback_to(m)" if logs}
         RUBY
       end
 
       def positive(matcher, want, name)
         define(:and, matcher, false, name, value: want ? "nil" : nil) do
           inner = compile_matcher(matcher.inner, false)
-          "#{SAVE}#{lookahead(inner)}peek_end(p, q, of, oe, #{expected(matcher.inner)}) ? p : FAIL"
+          "#{SAVE}#{lookahead(inner, logs?(matcher))}peek_end(p, q, of, oe, #{expected(matcher.inner)}) ? p : FAIL"
         end
       end
 
@@ -503,7 +539,8 @@ module Birman
         define(:both, matcher, want, name) do |v|
           left = compile_matcher(matcher.left, false)
           right = compile_matcher(matcher.right, want)
-          "#{SAVE}#{lookahead(left)}return FAIL unless peek_end(p, q, of, oe, #{expected(matcher.left)})\n\n" \
+          "#{SAVE}#{lookahead(left, logs?(matcher.left))}" \
+            "return FAIL unless peek_end(p, q, of, oe, #{expected(matcher.left)})\n\n" \
             "q = #{right.name}(p)\n#{"#{v} = #{right.value} if q != FAIL\n" if v}q"
         end
       end
@@ -511,19 +548,33 @@ module Birman
       # --- Values ---
 
       def const(matcher, want)
+        return recovering_const(matcher) if want && logs?(matcher.inner)
+
         inner = compile_matcher(matcher.inner, false)
         return inner unless want
 
-        unless Literals.literal?(matcher.constant)
-          raise Error, "rule :#{@rule} uses .means(#{matcher.constant.inspect}), which isn't a literal"
-        end
+        Call.new(inner.name, constant(matcher))
+      end
 
-        Call.new(inner.name, matcher.constant.inspect)
+      def constant(matcher)
+        return matcher.constant.inspect if Literals.literal?(matcher.constant)
+
+        raise Error, "rule :#{@rule} uses .means(#{matcher.constant.inspect}), which isn't a literal"
+      end
+
+      # .means over a match that may recover: its value is the constant,
+      # or the inner value if errors were recorded in it.
+      def recovering_const(matcher)
+        define(:means, matcher, true) do |v|
+          inner = compile_matcher(matcher.inner, true)
+          "m = @log_mark\nq = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n" \
+            "#{v} = @log_mark > m ? #{inner.value} : #{constant(matcher)}\nq"
+        end
       end
 
       # Send and Action. Both run even when nothing reads their value, as
       # the interpreter's do: either may raise (an action checking its
-      # value, nil.upcase).
+      # value, nil.upcase). Not over errors (logs): the value is left alone.
       def transform(matcher, want, name)
         check_send(matcher) if matcher.is_a?(Send)
 
@@ -531,7 +582,11 @@ module Birman
         define(kind, matcher, want, name) do |v|
           inner = compile_matcher(matcher.inner, true)
           call = apply(matcher, inner.value)
-          "q = #{inner.name}(p)\n#{"#{v} = " if v}#{call} if q != FAIL\nq"
+          next "q = #{inner.name}(p)\n#{"#{v} = " if v}#{call} if q != FAIL\nq" unless logs?(matcher.inner)
+          next "m = @log_mark\nq = #{inner.name}(p)\n#{call} if q != FAIL && @log_mark == m\nq" unless v
+
+          "m = @log_mark\nq = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n" \
+            "#{v} = @log_mark > m ? #{inner.value} : #{call}\nq"
         end
       end
 
@@ -573,18 +628,56 @@ module Birman
 
       # --- Nodes ---
 
-      def to(matcher, want, name)
+      def to(matcher, want, name) # rubocop:disable Metrics/AbcSize
         return compile_matcher(matcher.inner, false) unless want
 
         node = @nodes.name_for(matcher.node, @rule)
         keys = hash_keys(matcher.inner)
         return seq_node(matcher, node, name) if keys.is_a?(Array) && direct_seq?(matcher.inner)
+        return recovering_to(matcher, node, keys, name) if logs?(matcher.inner)
 
         define(:to, matcher, true, name) do |v|
           inner = compile_matcher(matcher.inner, true)
           args = node_args(matcher.node, keys, inner.value)
           value = "x = #{inner.value}\n" if keys == :unknown && !matcher.node.members.empty?
           "q = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\n#{value}#{v} = #{node_call(node, args, "span(p, q)")}\nq"
+        end
+      end
+
+      # .to over a match that may recover, as To: without errors the node
+      # is built as ever (keys are the Hash's then); with them, from
+      # whatever the value turned out to be, if its fields fit the node,
+      # else the value is passed on. (A direct seq of named parts always
+      # fits: seq_node builds it either way.)
+      def recovering_to(matcher, node, keys, name)
+        define(:to, matcher, true, name) do |v|
+          inner = compile_matcher(matcher.inner, true)
+          built = node_call(node, node_args(matcher.node, keys, "x"), "span(p, q)")
+          rebuilt = node_call(node, recovered_fields(matcher.node), "span(p, q)")
+          "m = @log_mark\nq = #{inner.name}(p)\nreturn FAIL if q == FAIL\n\nx = #{inner.value}\n" \
+            "if @log_mark == m\n  #{v} = #{built}\nelsif #{fits(matcher.node)}\n  #{v} = #{rebuilt}\n" \
+            "else\n  #{v} = x\nend\nq"
+        end
+      end
+
+      # Whether node can be built from x (see To#fits?): a Hash with no
+      # field node lacks and every one without a default; anything else
+      # fills the first field, so the rest need defaults.
+      def fits(node)
+        members = node.members
+        optional = @nodes.defaults(node).keys
+        checks = ["known_keys?(x, #{members.inspect})", *(members - optional).map { "x.key?(#{_1.inspect})" }]
+        hash = members.empty? ? "x.empty?" : checks.join(" && ")
+        "(x.is_a?(Hash) ? #{hash} : #{(members.drop(1) - optional).empty?})"
+      end
+
+      # Node fields from x, a Hash or not, as Birman.build fills them;
+      # fits has made sure no field without a default is left out.
+      def recovered_fields(node)
+        defaults = @nodes.defaults(node)
+        node.members.each_with_index.map do |member, i|
+          default = defaults.fetch(member, "nil")
+          "x.is_a?(Hash) ? (x.key?(#{member.inspect}) ? x[#{member.inspect}] : #{default}) : #{i.zero? ? "x" : default}"
         end
       end
 
@@ -638,7 +731,7 @@ module Birman
           keys = matcher.parts.filter_map(&:capture_key)
           keys.empty? ? nil : keys.uniq
         when Pick then hash_keys(matcher.parts[matcher.index], seen)
-        when Label, Check, Quiet, Named, Lexeme then hash_keys(matcher.inner, seen)
+        when Label, Check, Quiet, Named, Lexeme, Recover then hash_keys(matcher.inner, seen) # see recovering_to
         when Both then hash_keys(matcher.right, seen)
         when Captures then matcher.pat.re.names.map(&:to_sym)
         when Lit, Nocase, Str, Pat, Rep, SepBy, Not, And, To, Text, SpannedMatcher, Upto then nil
@@ -705,13 +798,23 @@ module Birman
         Call.new(call.name, want ? climb.value : nil)
       end
 
+      # An operator dropped (logs) takes the errors recorded since it
+      # began with it, as Operators' operand_at, prefix_at and
+      # suffix_step do: m marks where the prefix, or this trip round the
+      # operator loop, began.
       def climb_body(matcher, value, climb)
+        logs = logs?(matcher)
         operand = compile_matcher(matcher.operand, true)
         bare = "q = #{operand.name}(p)\nreturn FAIL if q == FAIL\n\nleft = #{operand.value}\n"
         slot = if matcher.prefixes.empty? then bare
-               else "#{prefix_slot(matcher.prefixes, climb, "@v_#{climb}")}if q == FAIL\n#{indent(bare)}end\n"
+               else "#{prefix_slot(matcher.prefixes, climb, "@v_#{climb}", logs)}if q == FAIL\n#{indent(bare)}end\n"
                end
-        "#{slot}#{suffix_loop(matcher.suffixes, climb, "@v_#{climb}")}#{value} = left\nq"
+        "#{slot}#{suffix_loop(matcher.suffixes, climb, "@v_#{climb}", logs)}#{value} = left\nq"
+      end
+
+      # break if cond, dropping the operator's errors (see climb_body).
+      def drop_if(cond, logs)
+        logs ? "if #{cond}\n  rollback_to(m)\n  break\nend\n" : "break if #{cond}\n"
       end
 
       # The first entry matching at at sets k and op, as Operators'
@@ -727,41 +830,43 @@ module Birman
       # The operand slot's prefixed form: the quiet prefix choice (one that
       # consumes nothing is no match), then the operand at its rank. q is
       # FAIL if there's none, for the bare operand to try.
-      def prefix_slot(entries, climb, right)
+      def prefix_slot(entries, climb, right, logs)
+        dropped = "  else\n    rollback_to(m)\n" if logs
         branches = entries.each_with_index.map do |entry, i|
           node = @nodes.name_for(entry.node, @rule)
           args = operator_fields(entry, "op" => "op", "operand" => right)
           "#{i.zero? ? "if" : "elsif"} k == #{i + 1}\n  r = #{climb}(o, #{entry.rank})\n  " \
-            "if r != FAIL\n    left = #{node}.new(#{args}, span(p, r))\n    q = r\n  end\n"
+            "if r != FAIL\n    left = #{node}.new(#{args}, span(p, r))\n    q = r\n#{dropped}  end\n"
         end
-        "k = 0\n#{SAVE}#{entry_choice(entries, "p")}@furthest = of\n@expected = oe\nk = 0 if k != 0 && o == p\n" \
-          "q = FAIL\n#{branches.join}end\n"
+        empty = logs ? "if k != 0 && o == p\n  k = 0\n  rollback_to(m)\nend\n" : "k = 0 if k != 0 && o == p\n"
+        "#{"m = @log_mark\n" if logs}k = 0\n#{SAVE}#{entry_choice(entries, "p")}@furthest = of\n@expected = oe\n" \
+          "#{empty}q = FAIL\n#{branches.join}end\n"
       end
 
       # The operator loop: the suffix choice under the "operator" label,
       # then the winner's rank and fixity, as Operators#suffix_step.
-      def suffix_loop(entries, climb, right)
+      def suffix_loop(entries, climb, right, logs)
         return "" if entries.empty?
 
-        branches = entries.each_with_index.map { |entry, i| suffix_branch(entry, i, climb, right) }
-        save = "of = @furthest\noe = @expected\n@furthest = q\n@expected = NONE\nk = 0\n"
+        branches = entries.each_with_index.map { |entry, i| suffix_branch(entry, i, climb, right, logs) }
+        save = "#{"m = @log_mark\n" if logs}of = @furthest\noe = @expected\n@furthest = q\n@expected = NONE\nk = 0\n"
         body = "#{save}#{entry_choice(entries, "q")}label_end(q, k == 0 ? FAIL : o, of, oe, \"operator\")\n" \
                "break if k == 0\n\ns = q\n#{branches.join}end\nq = s\n"
         "while true\n#{indent(body)}end\n"
       end
 
-      def suffix_branch(entry, index, climb, right)
+      def suffix_branch(entry, index, climb, right, logs)
         node = @nodes.name_for(entry.node, @rule)
-        head = "#{index.zero? ? "if" : "elsif"} k == #{index + 1}\n  break if min > #{entry.rank}\n"
+        head = "#{index.zero? ? "if" : "elsif"} k == #{index + 1}\n#{indent(drop_if("min > #{entry.rank}", logs))}"
         if entry.fixity == :postfix
           args = operator_fields(entry, "op" => "op", "operand" => "left")
-          return "#{head}  break if o == q\n\n  left = #{node}.new(#{args}, span(p, o))\n  s = o\n"
+          return "#{head}#{indent(drop_if("o == q", logs))}\n  left = #{node}.new(#{args}, span(p, o))\n  s = o\n"
         end
 
         rank = entry.fixity == :left ? entry.rank + 1 : entry.rank
-        head += "  break if o == p\n" if entry.fixity == :right
+        head += indent(drop_if("o == p", logs)) if entry.fixity == :right
         args = operator_fields(entry, "op" => "op", "left" => "left", "right" => "right")
-        "#{head}  r = #{climb}(o, #{rank})\n  break if r == FAIL || r == q\n\n  right = #{right}\n  " \
+        "#{head}  r = #{climb}(o, #{rank})\n#{indent(drop_if("r == FAIL || r == q", logs))}\n  right = #{right}\n  " \
           "left = #{node}.new(#{args}, span(p, r))\n  s = r\n"
       end
 
@@ -781,7 +886,8 @@ module Birman
 
       # The predicate runs whether or not anything reads the value (so the
       # inner value is always kept), as an action does, but only after a
-      # match: after a failure the value variable is stale.
+      # match: after a failure the value variable is stale. Over errors
+      # (logs) it passes without running.
       # `? true : false` keeps ok a bool for Spinel.
       def check(matcher, want, name)
         inner = nil
@@ -789,7 +895,9 @@ module Birman
           inner = compile_matcher(matcher.inner, true)
           predicate = plain_name(matcher)
           @actions.copy(predicate, @rule, "check")
-          "#{SAVE}q = #{inner.name}(p)\nok = q == FAIL || (#{predicate}(#{inner.value}) ? true : false)\n" \
+          skip = "@log_mark > m || " if logs?(matcher.inner) # passes over errors
+          "#{"m = @log_mark\n" if skip}#{SAVE}q = #{inner.name}(p)\n" \
+            "ok = q == FAIL || #{skip}(#{predicate}(#{inner.value}) ? true : false)\n" \
             "check_end(p, q, ok, of, oe, #{matcher.name.inspect})"
         end
         Call.new(call.name, want ? inner.value : nil) # check_end leaves values alone
@@ -802,6 +910,55 @@ module Birman
           "#{SAVE}q = #{inner.name}(p)\n@furthest = of\n@expected = oe\nq"
         end
         Call.new(call.name, inner.value)
+      end
+
+      # Matcher#recover: inner, isolated, with a commit failure in it
+      # caught, as a lookahead catches one (so it holds a begin block, and
+      # counts against LOOKAHEAD_DEPTH). A failure that committed or got
+      # past p is recorded as an ErrorNode spanning p to where the sync
+      # point is found from it (or the end), and the match ends there;
+      # what inner expected isn't merged outward then. Else it's inner's.
+      def recover(matcher, want, name)
+        define(:recover, matcher, want, name) do |v| # rubocop:disable Metrics/BlockLength
+          inner = compile_matcher(matcher.inner, want)
+          search = compile_matcher(Upto.new(matcher.sync), false)
+          <<~RUBY
+            raise TooDeep, "lookaheads nested too deeply" if @lookaheads >= LOOKAHEAD_DEPTH
+
+            #{SAVE.chomp}
+            @lookaheads += 1
+            depth = @in_progress_at.size
+            committed = false
+            begin
+              q = #{inner.name}(p)
+            rescue Committed => e
+              abandon(depth)
+              committed = true
+              @furthest = e.pos
+              @expected = e.expected
+              q = FAIL
+            end
+            @lookaheads -= 1
+            f = @furthest
+            ex = @expected
+            @furthest = of
+            @expected = oe
+            if q != FAIL || (!committed && f <= p)
+              merge(f, ex)
+              #{"#{v} = #{inner.value} if q != FAIL\n  " if v}return q
+            end
+
+            @furthest = f
+            @expected = NONE
+            s = #{search.name}(f)
+            @furthest = of
+            @expected = oe
+            s = @len if s == FAIL
+            node = ErrorNode.new(failure(f, ex, committed), span(p, s))
+            record_error(node)
+            #{"#{v} = node\n" if v}s
+          RUBY
+        end
       end
 
       def lexeme(matcher, want, name)
@@ -839,6 +996,8 @@ module Birman
       def parse_method
         start = ignore_rule ? "start = ref_#{ident(ignore_rule)}(from)\nstart = from if start == FAIL" : "start = from"
         roots = [@grammar.class.root, *@roots].uniq
+        # After recoveries, a Failure listing the errors (see parse_result).
+        failed = @recovers ? ->(failure) { "parse_failure(#{failure})" } : ->(failure) { failure }
         <<~RUBY
           # Grammar#parse: Success(value) if all of the input parses (or,
           # with consume: false, a prefix of it), else Failure. root: is
@@ -857,11 +1016,11 @@ module Birman
             q = FAIL
           #{indent(entry_matches(roots))}
             fail_at(q, "end of input") if q != FAIL
-            failure(@furthest, @expected, false)
+            #{failed.call("failure(@furthest, @expected, false)")}
           rescue Committed => e
-            failure(e.pos, e.expected, true)
+            #{failed.call("failure(e.pos, e.expected, true)")}
           rescue SystemStackError, TooDeep
-            failure_because(@position, "input is nested too deeply")
+            #{failed.call("failure_because(@position, \"input is nested too deeply\")")}
           end
         RUBY
       end
@@ -882,8 +1041,10 @@ module Birman
       def entry_matches(roots)
         branches = roots.each_with_index.map do |name, i|
           id = ident(name)
+          value = "@v_ref_#{id}"
+          result = @recovers ? "parse_result(#{value}, token_end(q))" : "Success.new(#{value}, @input, token_end(q))"
           "#{i.zero? ? "if" : "elsif"} entry == #{i}\n  q = ref_#{id}(start)\n  " \
-            "return Success.new(@v_ref_#{id}, @input, token_end(q)) if q != FAIL && (q == @len || !consume)\n"
+            "return #{result} if q != FAIL && (q == @len || !consume)\n"
         end
         "#{branches.join}end\n"
       end
@@ -908,7 +1069,8 @@ module Birman
 
       def init_memos
         lines = @rules.keys.flat_map do |name|
-          (@valued.include?(name) ? %w[mp mv mf me] : %w[mp mf me]).map { "@#{_1}_#{ident(name)} = {}\n" }
+          tables = @valued.include?(name) ? %w[mp mv mf me] : %w[mp mf me]
+          (carries?(name) ? [*tables, "mr"] : tables).map { "@#{_1}_#{ident(name)} = {}\n" }
         end
         lines += @rules.keys.flat_map { round_memos(_1) }
         "def init_memos\n#{indent(lines.join)}end\n"
@@ -918,12 +1080,13 @@ module Birman
       # rules keep a memo for the round (see in_round) and their longest
       # match over the growth's rounds in @bp_, @bv_, @bf_ and @be_ (see
       # growing_ref_method).
-      def round_memos(name)
+      def round_memos(name) # rubocop:disable Metrics/PerceivedComplexity
         leader = @analysis.leader(name)
         tables = if leader.nil? then []
                  elsif leader == name then leads_others?(name) ? %w[gp] : []
                  else @valued.include?(name) ? %w[rr rp rv rf re bp bv bf be] : %w[rr rp rf re bp bf be]
                  end
+        tables += %w[rx bx] if leader && leader != name && carries?(name)
         tables.map { "@#{_1}_#{ident(name)} = {}\n" }
       end
 
@@ -938,13 +1101,14 @@ module Birman
       # matched in the leader's round while it grows at p (in_round), and
       # entered from outside, takes its longest match from the leader's
       # rounds if its own match grew the leader there (adopt).
-      def ref_method(name, call)
+      def ref_method(name, call) # rubocop:disable Metrics
         leader = @analysis.leader(name)
         return growing_ref_method(name, call) if leader == name
 
         valued = @valued.include?(name)
         id = ident(name)
         hit = leader ? "unless q.nil? || q == ABSENT || q == IN_PROGRESS" : "unless q.nil? || q == ABSENT"
+        carries = carries?(name)
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
@@ -952,7 +1116,7 @@ module Birman
             #{hit}
               left_recursion(#{name.to_s.inspect}) if q == IN_PROGRESS
           #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
-              merge(@mf_#{id}[p], @me_#{id}[p])
+              merge(@mf_#{id}[p], @me_#{id}[p])#{replay("@mr_#{id}", 2) if carries}
               return q
             end#{"\n#{indent(in_round(name, leader, call)).chomp}" if leader}
             @mp_#{id}[p] = IN_PROGRESS
@@ -963,9 +1127,9 @@ module Birman
             @expected = NONE
             @in_progress << @mp_#{id}
             @in_progress_at << p
-            q = #{call.name}(p)
+            #{"mark = @log_mark\n  " if carries}q = #{call.name}(p)
             @in_progress.pop
-            @in_progress_at.pop
+            @in_progress_at.pop#{"\n  x = @log_mark > mark ? take_errors(mark) : nil" if carries}
             f = @furthest
             ex = @expected
             @furthest = of
@@ -973,11 +1137,18 @@ module Birman
             @mp_#{id}[p] = q
           #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @mv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
             @mf_#{id}[p] = f
-            @me_#{id}[p] = ex#{"\n#{indent(adopt(name, leader)).chomp}" if leader}
-            merge(f, ex)
+            @me_#{id}[p] = ex#{"\n  @mr_#{id}[p] = x" if carries}#{"\n#{indent(adopt(name, leader)).chomp}" if leader}
+            merge(f, ex)#{"\n  replay_errors(x) unless x.nil?" if carries}
             q
           end
         RUBY
+      end
+
+      # Records again the errors a memo entry in table carries (see
+      # Birman::Context#replay), at depth (in twos of spaces).
+      def replay(table, depth)
+        pad = "  " * depth
+        "\n#{pad}e = #{table}[p]\n#{pad}replay_errors(e) unless e.nil?"
       end
 
       # The middle of Ref for a rule in a cycle led by another rule, as
@@ -988,9 +1159,10 @@ module Birman
       # failure tracking merged into the caller's. A match that gets
       # further than the rule's longest so far in this growth (ABSENT
       # since the leader began it: even a failure beats that) replaces it.
-      def in_round(name, leader, call)
+      def in_round(name, leader, call) # rubocop:disable Metrics
         valued = @valued.include?(name)
         id = ident(name)
+        carries = carries?(name)
         <<~RUBY
           g = @gp_#{ident(leader)}[p]
           unless g.nil? || g <= 0
@@ -998,7 +1170,7 @@ module Birman
             unless r.nil? || r != g
               q = @rp_#{id}[p]
           #{"    @v_ref_#{id} = @rv_#{id}[p] if q != FAIL" if valued}
-              merge(@rf_#{id}[p], @re_#{id}[p])
+              merge(@rf_#{id}[p], @re_#{id}[p])#{replay("@rx_#{id}", 2) if carries}
               return q
             end
             @position = p
@@ -1006,7 +1178,7 @@ module Birman
             oe = @expected
             @furthest = p
             @expected = NONE
-            q = #{call.name}(p)
+            #{"mark = @log_mark\n  " if carries}q = #{call.name}(p)#{"\n  x = @log_mark > mark ? take_errors(mark) : nil" if carries}
           #{indent("if q != FAIL\n  @v_ref_#{id} = #{call.value || "nil"}\n  @rv_#{id}[p] = @v_ref_#{id}\nend").chomp if valued}
             f = @furthest
             ex = @expected
@@ -1015,16 +1187,16 @@ module Birman
             @rr_#{id}[p] = g
             @rp_#{id}[p] = q
             @rf_#{id}[p] = f
-            @re_#{id}[p] = ex
+            @re_#{id}[p] = ex#{"\n  @rx_#{id}[p] = x" if carries}
             b = @bp_#{id}[p]
             if b == ABSENT
-              @bp_#{id}[p] = q
+              @bp_#{id}[p] = q#{"\n    @bx_#{id}[p] = x" if carries}
           #{"    @bv_#{id}[p] = @v_ref_#{id} if q != FAIL" if valued}
               @bf_#{id}[p] = f
               @be_#{id}[p] = ex
             else
               if q > b
-                @bp_#{id}[p] = q
+                @bp_#{id}[p] = q#{"\n      @bx_#{id}[p] = x" if carries}
           #{"      @bv_#{id}[p] = @v_ref_#{id} if q != FAIL" if valued}
               end
               bf = @bf_#{id}[p]
@@ -1035,7 +1207,7 @@ module Birman
                 @be_#{id}[p] = fold_expected(@be_#{id}[p], ex)
               end
             end
-            merge(f, ex)
+            merge(f, ex)#{"\n  replay_errors(x) unless x.nil?" if carries}
             return q
           end
         RUBY
@@ -1063,7 +1235,7 @@ module Birman
               f = @bf_#{id}[p]
               ex = @be_#{id}[p]
               @mf_#{id}[p] = f
-              @me_#{id}[p] = ex
+              @me_#{id}[p] = ex#{"\n    x = @bx_#{id}[p]\n    @mr_#{id}[p] = x" if carries?(name)}
             end
           end
         RUBY
@@ -1101,7 +1273,7 @@ module Birman
               @mp_#{id}[p] = b
           #{"    @mv_#{id}[p] = @bv_#{id}[p] if b != FAIL" if valued}
               @mf_#{id}[p] = @bf_#{id}[p]
-              @me_#{id}[p] = @be_#{id}[p]
+              @me_#{id}[p] = @be_#{id}[p]#{"\n    @mr_#{id}[p] = @bx_#{id}[p]" if carries?(name)}
             end
           end
         RUBY
@@ -1126,23 +1298,24 @@ module Birman
       # entry at p (see Birman::Context#publish). A lookahead that
       # catches a commit failure mid-growth abandons the entry (ABSENT),
       # seed, round number and all.
-      def growing_ref_method(name, call)
+      def growing_ref_method(name, call) # rubocop:disable Metrics
         valued = @valued.include?(name)
         id = ident(name)
         marks = leads_others?(name)
         forget, publish = longest_lines(name)
+        carries = carries?(name)
         <<~RUBY
           #{POSITION.chomp}
           def ref_#{id}(p)
             q = @mp_#{id}[p]
             unless q.nil? || q == ABSENT
           #{"    @v_ref_#{id} = @mv_#{id}[p] if q != FAIL" if valued}
-              merge(@mf_#{id}[p], @me_#{id}[p])
+              merge(@mf_#{id}[p], @me_#{id}[p])#{replay("@mr_#{id}", 2) if carries}
               return q
             end
             @mp_#{id}[p] = FAIL
             @mf_#{id}[p] = p
-            @me_#{id}[p] = NONE
+            @me_#{id}[p] = NONE#{"\n  @mr_#{id}[p] = nil" if carries}
             @position = p
             of = @furthest
             oe = @expected
@@ -1150,7 +1323,7 @@ module Birman
             @expected = NONE
             @in_progress << @mp_#{id}
             @in_progress_at << p#{"\n  @in_progress << @gp_#{id}\n  @in_progress_at << p" if marks}#{forget}
-            while true#{"\n    @round += 1\n    @gp_#{id}[p] = @round" if marks}
+            #{"mark = @log_mark\n  " if carries}while true#{"\n    @round += 1\n    @gp_#{id}[p] = @round" if marks}
               af = @furthest
               ae = @expected
               @furthest = p
@@ -1161,9 +1334,8 @@ module Birman
               @furthest = af
               @expected = ae
               merge(f, ex)
-              break if q <= @mp_#{id}[p]
-
-              @mp_#{id}[p] = q
+              #{grown(id, carries)}
+              @mp_#{id}[p] = q#{"\n    @mr_#{id}[p] = @log_mark > mark ? take_errors(mark) : nil" if carries}
           #{"    @mv_#{id}[p] = #{call.value || "nil"}" if valued}
             end
             @in_progress.pop
@@ -1176,10 +1348,20 @@ module Birman
             @expected = oe
             @mf_#{id}[p] = f
             @me_#{id}[p] = ex
-            merge(f, ex)
+            merge(f, ex)#{replay("@mr_#{id}", 1) if carries}
             q
           end
         RUBY
+      end
+
+      # The end of a growth round that got no further, dropping its
+      # errors if the leader carries some (see Birman::Context#grow); a
+      # round that did get further takes its errors out of the log, for
+      # the next round's call to itself to replay as the seed's.
+      def grown(id, carries)
+        return "break if q <= @mp_#{id}[p]\n" unless carries
+
+        "if q <= @mp_#{id}[p]\n      rollback_to(mark)\n      break\n    end\n"
       end
     end
   end

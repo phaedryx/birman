@@ -25,6 +25,12 @@ module Birman
         fold_expected large_integer
       ].freeze
 
+      # The error log's, which only a grammar that recovers has (see
+      # Compiler#runtime), so only there are they reserved.
+      RECOVERY_METHODS = %i[
+        record_error replay_errors rollback_to take_errors parse_result parse_failure recovered_failures known_keys?
+      ].freeze
+
       # Methods the generated parser's runtime provides as Birman::Grammar
       # does, which copied methods may call and actions may name.
       PROVIDED = %i[large_integer].freeze
@@ -33,10 +39,12 @@ module Birman
       # Float::NAN, which have no literal.
       FLOAT_CONSTANTS = %i[INFINITY NAN].freeze
 
-      def initialize(grammar)
+      # recovers: whether the grammar recovers, which reserves more names.
+      def initialize(grammar, recovers: false)
         @grammar = grammar
+        @runtime_methods = recovers ? RUNTIME_METHODS + RECOVERY_METHODS : RUNTIME_METHODS
         @methods = {}
-        @constants = CopiedConstants.new
+        @constants = CopiedConstants.new(Compiler.reserved_constants(recovers))
         @trees = {}
       end
 
@@ -65,7 +73,7 @@ module Birman
         unless @grammar.respond_to?(name, true)
           raise Error, "rule :#{rule} uses .#{form}(:#{name}), but the grammar has no method #{name}"
         end
-        if RESERVED.match?(name) || RUNTIME_METHODS.include?(name)
+        if RESERVED.match?(name) || @runtime_methods.include?(name)
           raise Error, "the grammar method #{name} would clash with the generated parser's own #{name}"
         end
 
@@ -229,7 +237,9 @@ module Birman
     # up lexically from where the method was written; core classes are
     # left as they are, and anything else is refused.
     class CopiedConstants
-      def initialize
+      # reserved: the constant names the generated parser needs.
+      def initialize(reserved)
+        @reserved = reserved
         @constants = {}
       end
 
@@ -260,7 +270,7 @@ module Birman
       end
 
       def check_constant(name, owner, value, rule)
-        if RESERVED_CONSTANTS.include?(name.to_s)
+        if @reserved.include?(name.to_s)
           raise Error, "rule :#{rule}: copied methods read #{owner}::#{name}, a name the generated parser needs"
         end
         unless Literals.literal?(value)

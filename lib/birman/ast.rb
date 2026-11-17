@@ -8,7 +8,8 @@ module Birman
   #   [:rep, min, max, inner]  [:not, inner]  [:and, inner]
   #   [:both, left, right]  [:action, inner]  [:label, name, inner]
   #   [:check, name, inner]  [:quiet, inner]  [:lexeme, inner]
-  #   [:text, inner]  [:spanned, inner]
+  #   [:text, inner]  [:spanned, inner]  [:upto, stop]
+  #   [:recover, inner, to]
   #
   # A lexeme is inner, then the grammar's ignore rule. Literals are
   # lexemes too, but show as [:str, text] (or [:istr, text] for a
@@ -38,7 +39,7 @@ module Birman
   #   a*  a+  a?  a{2,3}    !a  not      &a  lookahead / guard
   #
   # Actions, labels, text and spanned don't change what's accepted, so
-  # they're omitted.
+  # they're omitted. A recover shows as what it recovers from.
   # Checks do, but by running Ruby on the value, which EBNF can't show
   # (`&{name}` would only repeat the error message), so they're omitted
   # too: the EBNF accepts a superset of what the grammar does.
@@ -69,6 +70,7 @@ module Birman
       in [:quiet, inner]     then expr(inner, prec)
       in [:lexeme, inner]    then expr(inner, prec)
       in [:text | :spanned, inner] then expr(inner, prec)
+      in [:recover, inner, _] then expr(inner, prec)
       in [:both, [:not, guard], right]
         wrap("!#{expr(guard, ATOM)} #{expr(right, PREFIX)}", prec > SEQ)
       in [:choice, alts]     then wrap(alts.map { expr(_1, SEQ) }.join(" / "), prec > CHOICE)

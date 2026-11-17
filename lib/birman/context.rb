@@ -25,7 +25,7 @@ module Birman
     # left_recursion: the grammar's analysis for the rule the parse starts
     # at (see Grammar#left_recursion). from: the byte offset it starts
     # at; nothing before it is matched, but positions count from 0.
-    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0)
+    def initialize(input, grammar, ignore_rule, left_recursion = grammar.left_recursion, from = 0) # rubocop:disable Metrics/MethodLength
       @input = input
       @from = from
       @grammar = grammar
@@ -41,6 +41,7 @@ module Birman
       @furthest = from
       @expected = NOTHING_EXPECTED
       @token_ends = {}
+      @log_mark = 0
     end
 
     # Where the parse begins: past whatever the ignore rule (if any)
@@ -129,6 +130,57 @@ module Birman
       end
     end
 
+    # The ErrorNodes of the failures recovered from so far (see
+    # Matcher#recover), in the order recorded; nil until the first.
+    # log_mark: how many there are, for rollback and recovered_since?.
+    # A counter kept beside the log, so every matcher that may backtrack
+    # can read it at its start for the price of an attr_reader.
+    attr_reader :recovered, :log_mark
+
+    def record(node)
+      (@recovered ||= []) << node
+      @log_mark += 1
+    end
+
+    # Record again the errors a rule's memo entry carries (see memoize):
+    # a call answered from the memo recovered from them as much as the
+    # call that computed it did.
+    def replay(errors)
+      (@recovered ||= []).concat(errors)
+      @log_mark += errors.size
+    end
+
+    # Drop the errors recorded since mark: the match that recorded them
+    # has been backtracked over. Returns nil, for a matcher that fails
+    # to return.
+    def rollback(mark)
+      return if @log_mark == mark
+
+      @recovered.pop while @recovered.size > mark
+      @log_mark = mark
+      nil
+    end
+
+    # Was an error recorded since mark?
+    def recovered_since?(mark) = @log_mark > mark
+
+    # Run a recover's inner match isolated from pos, returning [result,
+    # furthest, expected, committed]: a commit failure inside it is
+    # caught, as a lookahead catches one, its diagnostics taken as the
+    # attempt's.
+    def recover_failure(pos)
+      committed = false
+      result = isolate(pos) do
+        yield
+      rescue Committed => e
+        committed = true
+        @furthest = e.pos
+        @expected = e.expected
+        nil
+      end
+      [result, isolated_furthest, isolated_expected, committed]
+    end
+
     # Input was left over after the root rule matched up to pos.
     def end_of_input(pos) = fail_at(pos, "end of input")
 
@@ -139,10 +191,13 @@ module Birman
 
     # A positive lookahead: does matcher match at pos? Nothing is
     # consumed, and failures inside it describe input the parse never
-    # moves past, so they're dropped. If it fails, that's recorded at
-    # pos, as what it expected there or as the lookahead itself.
+    # moves past, so they're dropped, as are errors recovered from in it.
+    # If it fails, that's recorded at pos, as what it expected there or
+    # as the lookahead itself.
     def peek?(matcher, pos)
+      mark = log_mark
       result = isolate(pos) { lookahead { matcher.match(self, pos) } }
+      rollback(mark)
       return true if result
 
       furthest = isolated_furthest
@@ -157,7 +212,10 @@ module Birman
     end
 
     # Rule name's memo entry at pos, computed by the block the first
-    # time. The block returns [result, furthest, expected].
+    # time. The block returns [result, furthest, expected]; if the rule
+    # recorded errors (see Matcher#recover), the entry gets them as a
+    # fourth element, and they're taken out of the log, for the caller
+    # to replay whether the entry was computed or found.
     #
     # A cycle of rules that call each other before consuming input (left
     # recursion) is grown from a seed at its leader (see
@@ -212,9 +270,15 @@ module Birman
 
     # The memo is a Hash per rule, keyed by position, so no key arrays.
     # (A round's table is keyed by rule instead.)
+    #
+    # The rule's errors go in its entry (see with_errors). Not on a
+    # commit failure: no entry is made, and the recover that catches it
+    # keeps what was recorded.
     def compute(table, key)
       table[key] = IN_PROGRESS
-      table[key] = yield
+      mark = @log_mark
+      entry = yield
+      table[key] = @log_mark == mark ? entry : with_errors(entry, mark)
     ensure
       # A commit failure caught by a lookahead unwinds through here; the
       # rule may be tried again at this position afterwards.
@@ -245,12 +309,27 @@ module Birman
       longest = @longest[@growing[name]][pos]
       best = longest[name]
       longest[name] = if best
-                        [end_of(entry) > end_of(best) ? entry[0] : best[0], *further(best[1..], entry[1], entry[2])]
+                        kept = end_of(entry) > end_of(best) ? entry : best
+                        carrying(kept[3], [kept[0], *further(best[1..2], entry[1], entry[2])])
                       else
                         entry
                       end
       entry
     end
+
+    # The entry, with the errors recorded since mark (there are some) as
+    # its fourth element, taken out of the log. It appends to the
+    # block's entry in place, and returns it. Callers check for none
+    # first, inline: memoize runs for every rule call, and a grammar that
+    # never recovers should build and call no more than it did.
+    def with_errors(entry, mark)
+      entry << @recovered[mark..].freeze
+      rollback(mark)
+      entry
+    end
+
+    # A rebuilt entry, given the errors (if any) of the one it replaces.
+    def carrying(errors, entry) = errors ? entry << errors : entry
 
     # Where a memo entry's match ended; a failure ends before anything.
     def end_of(entry) = entry[0]&.pos || -1
@@ -265,7 +344,7 @@ module Birman
     # that may already have taken what the rule needed.
     def publish(longest, pos, furthest, expected)
       longest.each do |rule, entry|
-        entry = longest[rule] = [entry[0], *further([furthest, expected], entry[1], entry[2])]
+        entry = longest[rule] = carrying(entry[3], [entry[0], *further([furthest, expected], entry[1], entry[2])])
         table = @memo[rule] ||= {}
         table[pos] = entry unless table.key?(pos)
       end
@@ -301,6 +380,14 @@ module Birman
     # Each attempt's diagnostics are kept, not just the best one's: the
     # last attempt, which got no further, is usually the one that knows
     # what was missing ("1 +" expected a number after the "+").
+    #
+    # Errors are the best round's only. A round that gets further hands
+    # its errors to the seed, out of the log, and the next round's call
+    # to itself replays them (see Ref): so every round starts with the
+    # log as it was before the first, and records its seed's errors and
+    # its own, each once. The round that gets no further is dropped with
+    # its errors, and the final entry carries the best round's, as
+    # compute's would.
     def grow(name, table, pos) # rubocop:disable Metrics
       seeds = @seeds[name] ||= {}
       seeds[pos] = best = [nil, pos, NOTHING_EXPECTED]
@@ -309,17 +396,20 @@ module Birman
       longest = @longest[name]
       longest[pos] = {} if longest
       diagnostics = [pos, NOTHING_EXPECTED]
+      mark = @log_mark
       # Not loop: its block adds frames to every level of nesting.
       while true # rubocop:disable Style/InfiniteLoop
         rounds[pos] = {} if rounds
         result, furthest, expected = yield
         diagnostics = further(diagnostics, furthest, expected)
-        break unless result && result.pos > (best[0]&.pos || -1)
+        break rollback(mark) unless result && result.pos > (best[0]&.pos || -1)
 
-        seeds[pos] = best = [result, pos, NOTHING_EXPECTED]
+        best = [result, pos, NOTHING_EXPECTED]
+        best = with_errors(best, mark) if @log_mark > mark
+        seeds[pos] = best
       end
       publish(longest[pos], pos, *diagnostics) if longest
-      table[pos] = [best[0], *diagnostics]
+      table[pos] = carrying(best[3], [best[0], *diagnostics])
     ensure
       seeds&.delete(pos) # nil if the stack ran out before it was set
       rounds&.delete(pos)
